@@ -62,6 +62,7 @@ docs/       Phase 1 architecture, roadmap, hardware baseline, master prompt
 protocol/   Protocol suite specifications (discovery, control, identity)
 hub/        OpenAudioLink Hub (.NET 8 solution: service, API, web UI, tests)
 firmware/   ESP32 firmware (ESP-IDF test node and shared components)
+enclosures/ Parametric 3D-printable enclosures (OpenSCAD source)
 ```
 
 Build instructions are in `CONTRIBUTING.md`. Licensed under the MIT License.
