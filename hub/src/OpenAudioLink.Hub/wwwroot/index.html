@@ -173,10 +173,16 @@
       let text = 'Not streaming.';
       if (status.running) {
         text = `${status.description} as ${status.encoding} to ` +
-          `${status.destination}:${status.port} — ${status.packetsSent.toLocaleString()} packets sent`;
-        text += status.underrunSamples > 0
-          ? `, ${status.underrunSamples.toLocaleString()} samples of silence inserted (capture not keeping up).`
-          : '.';
+          `${status.destination}:${status.port} — ${(status.packetsSent ?? 0).toLocaleString()} packets sent`;
+        if (status.underrunSamples > 0) {
+          text += `, ${status.underrunSamples.toLocaleString()} samples of silence inserted`;
+        }
+        if (status.sendErrors > 0) {
+          text += `, ${status.sendErrors.toLocaleString()} send errors`;
+        }
+        text += '.';
+      } else if (status.error) {
+        text = `Stream stopped: ${status.error}`;
       }
       document.getElementById('tone-status').textContent = text;
     }

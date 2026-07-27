@@ -13,7 +13,9 @@ public sealed record StreamStatus(
     int Port,
     string Encoding,
     long PacketsSent,
-    long UnderrunSamples);
+    long UnderrunSamples,
+    long SendErrors = 0,
+    string? Error = null);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -129,6 +131,24 @@ public sealed class RtpStreamer : IAsyncDisposable
             socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
         }
 
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows fails the *next* operation on a UDP socket with
+            // WSAECONNRESET once an ICMP port-unreachable comes back, which
+            // happens whenever the receiver is not listening yet, restarts, or
+            // closes. Left enabled it kills a live stream for something that is
+            // not the sender's fault, so turn it off (SIO_UDP_CONNRESET).
+            const int SioUdpConnReset = unchecked((int)0x9800000C);
+            try
+            {
+                socket.Client.IOControl(SioUdpConnReset, [0, 0, 0, 0], null);
+            }
+            catch (SocketException ex)
+            {
+                _logger.LogDebug(ex, "Could not disable UDP connection reset");
+            }
+        }
+
         var endpoint = new IPEndPoint(destination, port);
         var packetizer = new RtpAudioPacketizer(format);
         var samples = new float[format.SamplesPerPacket];
@@ -136,6 +156,7 @@ public sealed class RtpStreamer : IAsyncDisposable
 
         var clock = Stopwatch.StartNew();
         long packetsSent = 0;
+        long sendErrors = 0;
         double packetMs = format.PacketMilliseconds;
 
         try
@@ -155,7 +176,22 @@ public sealed class RtpStreamer : IAsyncDisposable
                 {
                     source.ReadFrames(samples);
                     int length = packetizer.WritePacket(samples, packet);
-                    await socket.SendAsync(packet.AsMemory(0, length), endpoint, cancellationToken);
+
+                    try
+                    {
+                        await socket.SendAsync(packet.AsMemory(0, length), endpoint, cancellationToken);
+                    }
+                    catch (SocketException ex)
+                    {
+                        // A single failed datagram must not end a live stream:
+                        // the network may be briefly unavailable or the
+                        // receiver may be restarting. Count it and keep going.
+                        if (sendErrors++ == 0)
+                        {
+                            _logger.LogWarning(ex, "Send failed; continuing");
+                        }
+                    }
+
                     packetsSent++;
                 }
 
@@ -163,6 +199,7 @@ public sealed class RtpStreamer : IAsyncDisposable
                 {
                     PacketsSent = packetsSent,
                     UnderrunSamples = source.UnderrunSamples,
+                    SendErrors = sendErrors,
                 };
                 await Task.Delay(1, cancellationToken);
             }
@@ -172,8 +209,10 @@ public sealed class RtpStreamer : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            // Surfaced in the status so the UI can say why a stream stopped,
+            // instead of the counter simply freezing.
             _logger.LogError(ex, "Stream failed");
-            _status = _status with { Running = false };
+            _status = _status with { Running = false, Error = ex.Message };
         }
     }
 
