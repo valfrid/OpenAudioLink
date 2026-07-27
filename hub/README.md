@@ -4,9 +4,11 @@ The Hub is the centre of an OpenAudioLink system. Per the Phase 1
 architecture it implements the Controller, the Producer for Windows-hosted
 sources, and the Provisioner.
 
-Current state: Phase 2.2 skeleton — health endpoint, JSON configuration
-storage, device inventory, discovery listener/announcer and a web UI shell.
-Audio capture, RTP production, USB flashing and OTA come in later phases.
+Current state: health endpoint, JSON configuration storage, device
+inventory, discovery listener/announcer, web UI, device commands
+(reboot) and OTA management (upload firmware images, push updates to
+devices, which pull them from `/firmware/{file}`). Audio capture, RTP
+production and USB flashing come in later phases.
 
 ## Projects
 

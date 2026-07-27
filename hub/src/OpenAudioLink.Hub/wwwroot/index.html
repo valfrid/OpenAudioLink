@@ -14,7 +14,7 @@
     body {
       font-family: system-ui, sans-serif;
       margin: 0 auto;
-      max-width: 56rem;
+      max-width: 64rem;
       padding: 1.5rem;
       line-height: 1.5;
     }
@@ -27,6 +27,7 @@
       margin-bottom: 1.25rem;
     }
     h1 { font-size: 1.25rem; margin: 0; }
+    h2 { font-size: 1rem; margin: 2rem 0 0.5rem; }
     #hub-info { color: var(--muted); font-size: 0.85rem; }
     table { width: 100%; border-collapse: collapse; }
     th, td {
@@ -36,6 +37,13 @@
       font-size: 0.9rem;
     }
     th { color: var(--muted); font-weight: 600; }
+    button {
+      font: inherit;
+      font-size: 0.85rem;
+      padding: 0.2rem 0.7rem;
+      cursor: pointer;
+    }
+    select { font: inherit; font-size: 0.85rem; max-width: 14rem; }
     .dot {
       display: inline-block;
       width: 0.6rem;
@@ -45,7 +53,10 @@
       background: #c94f4f;
     }
     .dot.online { background: #3aa655; }
-    #empty { color: var(--muted); padding: 2rem 0; text-align: center; }
+    .empty { color: var(--muted); padding: 1.5rem 0; text-align: center; }
+    #message { color: var(--muted); font-size: 0.85rem; min-height: 1.2rem; }
+    .fw-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0 1rem; }
+    code { font-size: 0.85em; }
   </style>
 </head>
 <body>
@@ -54,18 +65,37 @@
     <span id="hub-info">connecting…</span>
   </header>
 
+  <h2>Devices</h2>
   <table id="devices" hidden>
     <thead>
       <tr>
         <th>Status</th><th>Name</th><th>Role</th><th>Hardware</th>
-        <th>Firmware</th><th>Address</th><th>Id</th>
+        <th>Firmware</th><th>Address</th><th>Actions</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
-  <p id="empty">No devices discovered yet.</p>
+  <p id="devices-empty" class="empty">No devices discovered yet.</p>
+
+  <h2>Firmware</h2>
+  <div class="fw-bar">
+    <input type="file" id="fw-file" accept=".bin">
+    <button id="fw-upload">Upload</button>
+    <label>Update image: <select id="fw-select"></select></label>
+  </div>
+  <table id="firmware" hidden>
+    <thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p id="firmware-empty" class="empty">No firmware uploaded yet.</p>
+
+  <p id="message"></p>
 
   <script>
+    const esc = s => String(s).replace(/[&<>"']/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const say = text => { document.getElementById('message').textContent = text; };
+
     async function refreshHealth() {
       try {
         const health = await (await fetch('/api/health')).json();
@@ -84,23 +114,79 @@
         return;
       }
       const table = document.getElementById('devices');
-      const empty = document.getElementById('empty');
       table.hidden = devices.length === 0;
-      empty.hidden = devices.length !== 0;
-      const esc = s => String(s).replace(/[&<>"']/g,
-        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      const rows = devices.map(d => {
+      document.getElementById('devices-empty').hidden = devices.length !== 0;
+      table.querySelector('tbody').innerHTML = devices.map(d => {
         const dot = `<span class="dot${d.online ? ' online' : ''}"></span>${d.online ? 'online' : 'offline'}`;
+        const disabled = d.online ? '' : ' disabled';
+        const actions = d.role === 'hub' ? '' :
+          `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
+          `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button>`;
         return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(d.role)}</td>` +
           `<td>${esc(d.hardwareProfile)}</td><td>${esc(d.firmwareVersion)}</td>` +
-          `<td>${esc(d.address)}</td><td><code>${esc(d.id)}</code></td></tr>`;
-      });
-      table.querySelector('tbody').innerHTML = rows.join('');
+          `<td>${esc(d.address)}</td><td>${actions}</td></tr>`;
+      }).join('');
     }
+
+    async function refreshFirmware() {
+      let images = [];
+      try {
+        images = await (await fetch('/api/firmware')).json();
+      } catch {
+        return;
+      }
+      const table = document.getElementById('firmware');
+      table.hidden = images.length === 0;
+      document.getElementById('firmware-empty').hidden = images.length !== 0;
+      table.querySelector('tbody').innerHTML = images.map(f =>
+        `<tr><td>${esc(f.file)}</td><td>${(f.size / 1024).toFixed(0)} KiB</td>` +
+        `<td><code>${esc(f.sha256.slice(0, 16))}…</code></td></tr>`).join('');
+      const select = document.getElementById('fw-select');
+      const current = select.value;
+      select.innerHTML = images.map(f =>
+        `<option value="${esc(f.file)}">${esc(f.file)}</option>`).join('');
+      if ([...select.options].some(o => o.value === current)) select.value = current;
+    }
+
+    document.getElementById('fw-upload').addEventListener('click', async () => {
+      const input = document.getElementById('fw-file');
+      if (!input.files.length) { say('Choose a .bin file first.'); return; }
+      const data = new FormData();
+      data.append('file', input.files[0]);
+      say('Uploading…');
+      const response = await fetch('/api/firmware', { method: 'POST', body: data });
+      say(response.ok ? 'Firmware uploaded.' : 'Upload failed.');
+      refreshFirmware();
+    });
+
+    document.getElementById('devices').addEventListener('click', async event => {
+      const button = event.target.closest('button[data-cmd]');
+      if (!button) return;
+      const id = button.dataset.id;
+      if (button.dataset.cmd === 'reboot') {
+        say('Rebooting device…');
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
+        say(response.ok ? 'Device is rebooting.' : 'Reboot request failed.');
+      } else {
+        const file = document.getElementById('fw-select').value;
+        if (!file) { say('Upload a firmware image first.'); return; }
+        say(`Starting update to ${file}…`);
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/ota`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file }),
+        });
+        say(response.ok
+          ? 'Update started; the device installs it and reboots (watch its firmware version).'
+          : 'Update request failed.');
+      }
+    });
 
     refreshHealth();
     refreshDevices();
+    refreshFirmware();
     setInterval(refreshDevices, 2000);
+    setInterval(refreshFirmware, 10000);
   </script>
 </body>
 </html>

@@ -14,7 +14,7 @@ conforming implementation may replace the reference one.
 | Device identity  | (model, not a wire protocol) | `IDENTITY.md` | Draft v0.1 |
 | Control / status | HTTP/JSON over TCP   | `CONTROL.md`     | Draft v0.1    |
 | Audio transport  | RTP over UDP         | not yet written  | Phase 3       |
-| OTA over IP      | HTTP/JSON            | not yet written  | Phase 2.6     |
+| OTA over IP      | HTTP/JSON            | `OTA.md`         | Draft v0.1    |
 | USB provisioning | USB serial           | not yet written  | Phase 2.5     |
 
 ## Port assignments

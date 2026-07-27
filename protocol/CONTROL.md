@@ -35,6 +35,7 @@ configuration — never audio.
 | GET    | `/config`         | Read configuration                          |
 | PUT    | `/config`         | Write configuration                         |
 | POST   | `/factory-reset`  | Request factory reset (clears identity, Wi-Fi, config) |
+| POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 
 ### GET /status
 

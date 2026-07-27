@@ -13,8 +13,8 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
       - name: Build
@@ -28,8 +28,8 @@ jobs:
     name: Hub win-x64 package
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
       - name: Publish self-contained win-x64
@@ -39,7 +39,7 @@ jobs:
           -p:PublishSingleFile=true
           --output publish
         working-directory: hub
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: OpenAudioLink-Hub-win-x64
           path: hub/publish
@@ -51,10 +51,22 @@ jobs:
       matrix:
         target: [esp32c3, esp32s3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.3.1
           target: ${{ matrix.target }}
           path: firmware/testnode
+          command: >
+            idf.py build &&
+            cd build &&
+            esptool.py --chip ${{ matrix.target }} merge_bin
+            -o testnode-${{ matrix.target }}-flash.bin @flash_args &&
+            cp oal_testnode.bin testnode-${{ matrix.target }}-ota.bin
+      - uses: actions/upload-artifact@v5
+        with:
+          name: testnode-${{ matrix.target }}
+          path: |
+            firmware/testnode/build/testnode-${{ matrix.target }}-flash.bin
+            firmware/testnode/build/testnode-${{ matrix.target }}-ota.bin

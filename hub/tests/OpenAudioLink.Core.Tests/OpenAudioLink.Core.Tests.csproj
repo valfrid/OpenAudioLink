@@ -6,6 +6,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OpenAudioLink.Core\OpenAudioLink.Core.csproj" />
+    <ProjectReference Include="..\..\src\OpenAudioLink.Hub\OpenAudioLink.Hub.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
