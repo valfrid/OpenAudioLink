@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Protocol;
@@ -119,11 +120,44 @@ app.MapPost("/api/devices/{id}/ota",
 
 app.MapGet("/api/test-tone", (TestToneStreamer streamer) => Results.Ok(streamer.Status));
 
-app.MapPost("/api/test-tone", async (TestToneRequest request, TestToneStreamer streamer) =>
+app.MapPost("/api/test-tone", async (
+    TestToneRequest request, HttpContext context, DeviceRegistry registry, TestToneStreamer streamer) =>
 {
-    if (!IPAddress.TryParse(request.Address, out var destination))
+    // Destination precedence: a named device (address follows the device if
+    // DHCP moves it), an explicit address, or the caller itself — so the
+    // browser can start a tone aimed at the machine it is running on.
+    IPAddress? destination;
+    if (!string.IsNullOrWhiteSpace(request.DeviceId))
     {
-        return Results.BadRequest(new { error = "address must be an IPv4 address" });
+        if (!registry.TryGet(request.DeviceId, out var device)
+            || !IPAddress.TryParse(device.Address, out destination))
+        {
+            return Results.BadRequest(new { error = "unknown device" });
+        }
+    }
+    else if (!string.IsNullOrWhiteSpace(request.Address))
+    {
+        if (!IPAddress.TryParse(request.Address, out destination))
+        {
+            return Results.BadRequest(new { error = "address must be an IP address" });
+        }
+    }
+    else
+    {
+        destination = context.Connection.RemoteIpAddress;
+        if (destination is not null && destination.IsIPv4MappedToIPv6)
+        {
+            destination = destination.MapToIPv4();
+        }
+        if (IPAddress.IPv6Loopback.Equals(destination))
+        {
+            destination = IPAddress.Loopback;
+        }
+    }
+
+    if (destination is null || destination.AddressFamily != AddressFamily.InterNetwork)
+    {
+        return Results.BadRequest(new { error = "could not determine an IPv4 destination" });
     }
 
     var port = request.Port ?? 41100;
@@ -184,4 +218,9 @@ app.Run();
 internal sealed record OtaRequest(string? File);
 
 internal sealed record TestToneRequest(
-    string? Address, int? Port, string? Encoding, double? FrequencyHz, int? PacketMilliseconds);
+    string? Address,
+    string? DeviceId,
+    int? Port,
+    string? Encoding,
+    double? FrequencyHz,
+    int? PacketMilliseconds);

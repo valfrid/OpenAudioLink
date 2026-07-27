@@ -48,17 +48,35 @@ startup, and announces itself every 5 seconds.
 Persistent Hub state (identity, name) is stored as JSON in the data
 directory (`Hub:DataDirectory`, default `./data` next to the binary).
 
-## Verifying the audio path without hardware
+## Test tone
 
-The Hub can stream a generated tone as RTP, so the wire format can be
-proven before capture code or receiver hardware exists. Start one aimed
-at the machine running your player:
+The Hub can stream a generated sine tone as RTP. It is a permanent
+diagnostic, not a development stopgap: sending a tone to a receiver
+answers "is this speaker working?" without involving any source, and
+sending one to your own machine proves the Hub's output path.
+
+In the web UI, the **Test tone** section streams either to a discovered
+receiver or to the computer you are browsing from. Addressing a device by
+name rather than address means the tone follows it if DHCP moves it.
+
+The same thing over the API — with no destination given, the tone is sent
+to whoever made the request:
 
 ```bash
 curl -X POST http://localhost:41080/api/test-tone \
+  -H "Content-Type: application/json" -d '{}'
+
+# or explicitly, by device or by address
+curl -X POST http://localhost:41080/api/test-tone \
   -H "Content-Type: application/json" \
-  -d '{"address":"192.168.1.20","port":41100}'
+  -d '{"deviceId":"mac-a0b1c2d3e4f5","frequencyHz":1000}'
 ```
+
+Because RTP here is push-based, nothing streams until asked and the Hub
+must know where to send: a player cannot "connect" to the Hub, it only
+listens for packets that arrive.
+
+### Receiving it on a computer
 
 Receive it with **GStreamer**, which has the most dependable L24 support:
 
