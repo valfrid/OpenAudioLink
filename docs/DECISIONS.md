@@ -123,8 +123,13 @@ Current split:
 | Analog line-in (vinyl, TV, mixer) | ESP32 + ADC | Needs only capture; no PC justified |
 | Spotify Connect | Windows | Cannot run on ESP32 — the reason the Hub exists |
 | Windows system audio | Windows | Is the PC's own output by definition |
-| Internet radio | Either | Feasible on ESP32; see below |
+| Internet radio | Windows (preferred) | Technically feasible on ESP32, but see the load and sample-rate notes below |
 | DAB/DAB+ | ESP32 + tuner module | Terrestrial radio needs RF hardware, not a PC |
+
+Internet radio is **not scheduled**, and when it arrives the Windows Hub
+is the intended host. An ESP32 implementation stays possible but is not
+the plan: decoding competes with replication on one chip and one radio,
+and a PC already has the headroom that makes stream buffering robust.
 
 ### Internet radio and DAB are future Producer roles
 
