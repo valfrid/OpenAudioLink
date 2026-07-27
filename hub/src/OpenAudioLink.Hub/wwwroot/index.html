@@ -88,6 +88,7 @@
   </p>
   <div class="fw-bar">
     <label>To <select id="tone-target"></select></label>
+    <label>or IP <input id="tone-address" type="text" placeholder="192.168.1.20" size="14"></label>
     <label>Port <input id="tone-port" type="number" value="41100" min="1" max="65535"></label>
     <label>Format
       <select id="tone-encoding">
@@ -156,7 +157,7 @@
 
       const target = document.getElementById('tone-target');
       const selected = target.value;
-      const options = ['<option value="">This computer</option>'].concat(
+      const options = ['<option value="">This computer (the one showing this page)</option>'].concat(
         devices.filter(d => d.role !== 'hub' && d.online)
           .map(d => `<option value="${esc(d.id)}">${esc(d.name)} (${esc(d.address)})</option>`));
       target.innerHTML = options.join('');
@@ -243,8 +244,12 @@
 
     async function startStream(kind) {
       const target = document.getElementById('tone-target').value;
+      // A typed address wins over the dropdown, so an explicit destination is
+      // never silently ignored.
+      const address = document.getElementById('tone-address').value.trim();
       const body = {
-        deviceId: target || null,
+        address: address || null,
+        deviceId: address ? null : (target || null),
         port: Number(document.getElementById('tone-port').value),
         encoding: document.getElementById('tone-encoding').value,
         frequencyHz: Number(document.getElementById('tone-frequency').value),
