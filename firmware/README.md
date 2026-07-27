@@ -27,12 +27,17 @@ reference platform is the ESP32-S3.
    <https://espressif.github.io/esptool-js/> in Chrome or Edge, connect the
    board over USB, choose the `...-flash.bin` file at address `0x0`, and
    program it. No installed tools required.
-3. **Join your Wi-Fi**: the node boots into a setup access point named
+3. **Watch it boot** (optional): the console is on the native USB port, so
+   the same connection used for flashing shows the log at 115200 baud. In
+   esptool-js use the separate **Console** section — the Connect button in
+   the programmer forces download mode, in which the application never
+   runs.
+4. **Join your Wi-Fi**: the node boots into a setup access point named
    `OpenAudioLink-XXXXXX`. Connect to it with a phone or laptop, open
    <http://192.168.4.1/>, and enter your network name and password. The
    node saves them and reboots onto your network. Credentials stay on the
    device — they are never part of the repository or the images.
-4. **Verify**: the node appears in the Hub web UI within a few seconds.
+5. **Verify**: the node appears in the Hub web UI within a few seconds.
    From there you can reboot it or push the `...-ota.bin` of a newer build
    over the air — no USB needed again.
 
