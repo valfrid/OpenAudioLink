@@ -1,3 +1,5 @@
+using System.Net;
+using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Protocol;
 using OpenAudioLink.Hub;
@@ -28,6 +30,7 @@ builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(configStore.LoadOrCreate());
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
+builder.Services.AddSingleton<TestToneStreamer>();
 builder.Services.AddHttpClient<DeviceCommandClient>();
 builder.Services.AddHostedService<DiscoveryService>();
 
@@ -110,6 +113,75 @@ app.MapPost("/api/devices/{id}/ota",
     return ok ? Results.Ok(new { status = "accepted" }) : Results.StatusCode(502);
 });
 
+// --- Audio path bring-up (Phase 3) -----------------------------------
+// A generated tone streamed as RTP, so the wire format can be verified
+// with third-party receivers before capture or receiver hardware exists.
+
+app.MapGet("/api/test-tone", (TestToneStreamer streamer) => Results.Ok(streamer.Status));
+
+app.MapPost("/api/test-tone", async (TestToneRequest request, TestToneStreamer streamer) =>
+{
+    if (!IPAddress.TryParse(request.Address, out var destination))
+    {
+        return Results.BadRequest(new { error = "address must be an IPv4 address" });
+    }
+
+    var port = request.Port ?? 41100;
+    if (port is < 1 or > 65535)
+    {
+        return Results.BadRequest(new { error = "port out of range" });
+    }
+
+    var format = new AudioStreamFormat
+    {
+        Encoding = string.Equals(request.Encoding, "L16", StringComparison.OrdinalIgnoreCase)
+            ? PcmEncoding.L16
+            : PcmEncoding.L24,
+        PacketMilliseconds = request.PacketMilliseconds ?? 5,
+    };
+
+    try
+    {
+        format.Validate();
+        var status = await streamer.StartAsync(destination, port, format, request.FrequencyHz ?? 1000.0);
+        return Results.Ok(status);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapDelete("/api/test-tone", async (TestToneStreamer streamer) =>
+{
+    await streamer.StopAsync();
+    return Results.Ok(streamer.Status);
+});
+
+// SDP for the running stream, so receivers can be pointed at a URL:
+//   ffplay -protocol_whitelist file,rtp,udp,http -i http://<hub>:41080/api/test-tone.sdp
+app.MapGet("/api/test-tone.sdp", (HttpContext context, TestToneStreamer streamer) =>
+{
+    var status = streamer.Status;
+    if (!status.Running || status.Destination is null)
+    {
+        return Results.NotFound(new { error = "no stream is running" });
+    }
+
+    var format = new AudioStreamFormat
+    {
+        Encoding = status.Encoding == "L16" ? PcmEncoding.L16 : PcmEncoding.L24,
+    };
+    var origin = context.Connection.LocalIpAddress?.ToString() ?? "0.0.0.0";
+    var sdp = SessionDescription.Build(
+        format, origin, status.Destination, status.Port, sessionName: "OpenAudioLink Test Tone");
+
+    return Results.Text(sdp, "application/sdp");
+});
+
 app.Run();
 
 internal sealed record OtaRequest(string? File);
+
+internal sealed record TestToneRequest(
+    string? Address, int? Port, string? Encoding, double? FrequencyHz, int? PacketMilliseconds);

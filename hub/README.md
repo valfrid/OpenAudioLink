@@ -48,6 +48,41 @@ startup, and announces itself every 5 seconds.
 Persistent Hub state (identity, name) is stored as JSON in the data
 directory (`Hub:DataDirectory`, default `./data` next to the binary).
 
+## Verifying the audio path without hardware
+
+The Hub can stream a generated tone as RTP, so the wire format can be
+proven before capture code or receiver hardware exists. Start one aimed
+at the machine running your player:
+
+```bash
+curl -X POST http://localhost:41080/api/test-tone \
+  -H "Content-Type: application/json" \
+  -d '{"address":"192.168.1.20","port":41100}'
+```
+
+Receive it with **GStreamer**, which has the most dependable L24 support:
+
+```bash
+gst-launch-1.0 udpsrc port=41100 \
+  caps="application/x-rtp,media=(string)audio,clock-rate=(int)48000,\
+encoding-name=(string)L24,channels=(int)2,payload=(int)96" \
+  ! rtpjitterbuffer ! rtpL24depay ! audioconvert ! autoaudiosink
+```
+
+or with **ffplay**, pointing at the Hub's generated SDP:
+
+```bash
+ffplay -protocol_whitelist file,rtp,udp,http -i http://localhost:41080/api/test-tone.sdp
+```
+
+**VLC** does not reliably handle L24; start the stream with
+`"encoding":"L16"` for it, then open the same SDP URL. Stop with
+`curl -X DELETE http://localhost:41080/api/test-tone`.
+
+Hearing a clean 1 kHz tone proves packetisation, byte order, timestamps
+and pacing end to end. Wireshark (*Decode As → RTP*, then *Telephony →
+RTP → Stream Analysis*) separates format problems from packet loss.
+
 ## Tests
 
 ```bash
