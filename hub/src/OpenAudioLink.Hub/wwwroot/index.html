@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenAudioLink Hub</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --accent: #2b7de9;
+      --muted: #7a8494;
+      --border: color-mix(in srgb, currentColor 18%, transparent);
+    }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0 auto;
+      max-width: 56rem;
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    h1 { font-size: 1.25rem; margin: 0; }
+    #hub-info { color: var(--muted); font-size: 0.85rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .dot {
+      display: inline-block;
+      width: 0.6rem;
+      height: 0.6rem;
+      border-radius: 50%;
+      margin-right: 0.4rem;
+      background: #c94f4f;
+    }
+    .dot.online { background: #3aa655; }
+    #empty { color: var(--muted); padding: 2rem 0; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenAudioLink</h1>
+    <span id="hub-info">connecting…</span>
+  </header>
+
+  <table id="devices" hidden>
+    <thead>
+      <tr>
+        <th>Status</th><th>Name</th><th>Role</th><th>Hardware</th>
+        <th>Firmware</th><th>Address</th><th>Id</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <p id="empty">No devices discovered yet.</p>
+
+  <script>
+    async function refreshHealth() {
+      try {
+        const health = await (await fetch('/api/health')).json();
+        document.getElementById('hub-info').textContent =
+          `${health.name} · v${health.version} · protocol ${health.protocol}`;
+      } catch {
+        document.getElementById('hub-info').textContent = 'hub unreachable';
+      }
+    }
+
+    async function refreshDevices() {
+      let devices = [];
+      try {
+        devices = await (await fetch('/api/devices')).json();
+      } catch {
+        return;
+      }
+      const table = document.getElementById('devices');
+      const empty = document.getElementById('empty');
+      table.hidden = devices.length === 0;
+      empty.hidden = devices.length !== 0;
+      const esc = s => String(s).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const rows = devices.map(d => {
+        const dot = `<span class="dot${d.online ? ' online' : ''}"></span>${d.online ? 'online' : 'offline'}`;
+        return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(d.role)}</td>` +
+          `<td>${esc(d.hardwareProfile)}</td><td>${esc(d.firmwareVersion)}</td>` +
+          `<td>${esc(d.address)}</td><td><code>${esc(d.id)}</code></td></tr>`;
+      });
+      table.querySelector('tbody').innerHTML = rows.join('');
+    }
+
+    refreshHealth();
+    refreshDevices();
+    setInterval(refreshDevices, 2000);
+  </script>
+</body>
+</html>

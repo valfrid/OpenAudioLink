@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>OpenAudioLink.Core</RootNamespace>
+    <Description>OpenAudioLink device model and protocol-suite implementation.</Description>
+  </PropertyGroup>
+
+</Project>
