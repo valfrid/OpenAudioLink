@@ -280,6 +280,14 @@
     setInterval(refreshDevices, 2000);
     setInterval(refreshTone, 2000);
     setInterval(refreshFirmware, 10000);
+
+    // Browsers throttle timers in background tabs, often to once a minute, so
+    // the counters appear frozen after switching away even though the stream
+    // is fine. Refresh the moment the page is looked at again.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { refreshTone(); refreshDevices(); }
+    });
+    window.addEventListener('focus', () => { refreshTone(); refreshDevices(); });
   </script>
 </body>
 </html>
