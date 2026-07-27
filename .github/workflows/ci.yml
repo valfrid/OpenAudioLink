@@ -48,6 +48,7 @@ jobs:
     name: Firmware testnode (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         target: [esp32c3, esp32s3]
     steps:
