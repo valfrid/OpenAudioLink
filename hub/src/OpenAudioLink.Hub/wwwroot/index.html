@@ -157,8 +157,11 @@
 
       const target = document.getElementById('tone-target');
       const selected = target.value;
+      // Any discovered machine is a valid destination, including another
+      // Hub — a PC running a player is exactly what you target when
+      // checking the audio path across the network.
       const options = ['<option value="">This computer (the one showing this page)</option>'].concat(
-        devices.filter(d => d.role !== 'hub' && d.online)
+        devices.filter(d => d.online)
           .map(d => `<option value="${esc(d.id)}">${esc(d.name)} (${esc(d.address)})</option>`));
       target.innerHTML = options.join('');
       if ([...target.options].some(o => o.value === selected)) target.value = selected;
