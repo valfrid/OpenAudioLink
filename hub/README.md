@@ -16,6 +16,25 @@ The UI is a **web application** served by the Hub itself at
 reachable from any device on the network, so a phone or tablet works as
 a remote control.
 
+## What has been verified
+
+Exercised end to end against GStreamer as an independent receiver:
+
+- 1 kHz test tone, L24, decoded correctly — proving packetisation, RTP
+  timestamps, big-endian byte order and send pacing.
+- System audio captured with WASAPI loopback and played back at correct
+  pitch and speed, with local playback unaffected.
+- The same, from a Hub on one machine to a player on another over Wi-Fi,
+  including discovery finding the remote machine.
+
+Not yet exercised: the ESP32 receiver, more than one receiver at a time,
+sustained multi-hour streaming, and clock synchronisation between
+receivers.
+
+Known limitation: a stream has a **single destination**. The
+architecture calls for one Producer feeding several Consumers, which is
+not implemented yet.
+
 ## Projects
 
 | Project                    | Purpose                                            |
