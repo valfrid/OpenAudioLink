@@ -1,0 +1,2 @@
+# OpenAudioLink test node defaults.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

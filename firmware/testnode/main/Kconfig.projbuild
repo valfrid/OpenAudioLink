@@ -1,0 +1,21 @@
+menu "OpenAudioLink Test Node"
+
+    config OAL_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            SSID of the network to join. Leave empty to boot without
+            connecting (useful for build tests). Runtime USB provisioning
+            replaces this setting in Phase 2.5.
+
+    config OAL_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+
+    config OAL_NODE_NAME
+        string "Node name"
+        default "testnode"
+        help
+            Human-readable name announced during discovery.
+
+endmenu
