@@ -32,6 +32,13 @@ the opposite of the local-first goal. The role model already allows this:
 roles are logical, and Controller was only ever "normally implemented by
 the Hub".
 
+This is a return rather than a new direction. The founding use case was a
+wireless link from a vinyl rig to party speakers, with no PC anywhere in
+it. The Hub was added later to solve a specific problem — Spotify Connect
+cannot run on an ESP — and it grew into the system's centre by accident
+of description rather than by design. Windows earns its place by hosting
+sources the ESP platform cannot, not by being required.
+
 ### Consequences
 
 - The Analog Source firmware grows a discovery **registry** (it already
@@ -95,3 +102,60 @@ hardware rather than assuming.
 - L16 is a legitimate reduction for an analog source: vinyl's noise
   floor sits well inside 16 bits, and it cuts roughly a third of the
   bandwidth while allowing longer packets within the MTU.
+
+---
+
+## 3. Where a source lives is a capability question, not a hierarchy
+
+**Date:** 2026-07-27
+**Status:** accepted (principle); specific sources not yet scheduled
+
+### Decision
+
+A source belongs on whichever platform can host it. Nothing about being
+a Producer implies a Hub, and nothing about needing a PC makes the PC
+central.
+
+Current split:
+
+| Source | Platform | Why |
+| ------ | -------- | --- |
+| Analog line-in (vinyl, TV, mixer) | ESP32 + ADC | Needs only capture; no PC justified |
+| Spotify Connect | Windows | Cannot run on ESP32 — the reason the Hub exists |
+| Windows system audio | Windows | Is the PC's own output by definition |
+| Internet radio | Either | Feasible on ESP32; see below |
+| DAB/DAB+ | ESP32 + tuner module | Terrestrial radio needs RF hardware, not a PC |
+
+### Internet radio and DAB are future Producer roles
+
+Both slot into the existing role model without architectural change: a
+node fetches or tunes, decodes to PCM, packetises, and sends RTP. The
+receiver never learns the difference, which is the point of keeping
+Consumers simple.
+
+They are not the same engineering problem, despite both being "digital
+radio":
+
+- **Internet radio** is pure software — HTTP/Icecast fetch plus MP3 or
+  AAC decode. Well proven on ESP32, and ESP32-S3 with PSRAM suits it
+  because buffering against network stalls is what makes it robust.
+- **DAB/DAB+** is terrestrial and needs an RF tuner module (Si468x or a
+  similar DAB receiver) delivering PCM over I²S. From the ESP's side it
+  then resembles the Analog Source: audio arrives, gets packetised, gets
+  sent.
+
+### Two things to weigh before committing to internet radio on ESP32
+
+**Load.** Decoding is far heavier than analog capture, which is only DMA
+in. An internet-radio node does HTTP receive, decode, packetise and then
+replicate to every receiver — all on one chip, competing for the same
+Wi-Fi radio. Unicast replication cost applies on top of decode cost, so
+this is the source most likely to need multicast or a lower receiver
+count.
+
+**Sample rate.** Broadcast streams are commonly 44.1 kHz while the
+reference format is 48 kHz. Either the source resamples (costly on an
+ESP32) or the stream advertises 44.1 kHz and receivers reconfigure I²S
+per stream. The protocol already carries the rate, so both are legal;
+the choice is about where the cost lands. This is worth settling before
+implementation rather than during it.
