@@ -27,13 +27,14 @@ Exercised end to end against GStreamer as an independent receiver:
 - The same, from a Hub on one machine to a player on another over Wi-Fi,
   including discovery finding the remote machine.
 
-Not yet exercised: the ESP32 receiver, more than one receiver at a time,
-sustained multi-hour streaming, and clock synchronisation between
-receivers.
+Not yet exercised: the ESP32 receiver, multi-destination streaming
+against real receivers, sustained multi-hour streaming, and clock
+synchronisation between receivers.
 
-Known limitation: a stream has a **single destination**. The
-architecture calls for one Producer feeding several Consumers, which is
-not implemented yet.
+A stream may have several destinations, each receiving identical packets
+by unicast replication. Planning threshold is about **4 receivers** per
+Producer over Wi-Fi, capped at 8 per stream; see `docs/DECISIONS.md` for
+why, and for when multicast is the better choice.
 
 ## Projects
 

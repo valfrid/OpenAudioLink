@@ -81,14 +81,15 @@
 
   <h2>Streaming</h2>
   <p class="hint">
-    Streams audio as RTP to a receiver, or to a computer running a player
-    such as GStreamer or ffplay. One stream runs at a time. The test tone
-    is a diagnostic — it answers "is this speaker working?" without
-    involving a source.
+    Streams audio as RTP to one or more receivers, or to a computer running
+    a player such as GStreamer or ffplay. Select several destinations with
+    Ctrl+click, or list addresses separated by commas. One stream runs at a
+    time. The test tone is a diagnostic — it answers "is this speaker
+    working?" without involving a source.
   </p>
   <div class="fw-bar">
-    <label>To <select id="tone-target"></select></label>
-    <label>or IP <input id="tone-address" type="text" placeholder="192.168.1.20" size="14"></label>
+    <label>To <select id="tone-target" multiple size="4"></select></label>
+    <label>or IPs <input id="tone-address" type="text" placeholder="192.168.1.20, 192.168.1.21" size="26"></label>
     <label>Port <input id="tone-port" type="number" value="41100" min="1" max="65535"></label>
     <label>Format
       <select id="tone-encoding">
@@ -156,7 +157,7 @@
       }).join('');
 
       const target = document.getElementById('tone-target');
-      const selected = target.value;
+      const selected = [...target.selectedOptions].map(o => o.value);
       // Any discovered machine is a valid destination, including another
       // Hub — a PC running a player is exactly what you target when
       // checking the audio path across the network.
@@ -164,7 +165,9 @@
         devices.filter(d => d.online)
           .map(d => `<option value="${esc(d.id)}">${esc(d.name)} (${esc(d.address)})</option>`));
       target.innerHTML = options.join('');
-      if ([...target.options].some(o => o.value === selected)) target.value = selected;
+      for (const option of target.options) {
+        option.selected = selected.includes(option.value);
+      }
     }
 
     async function refreshTone() {
@@ -176,8 +179,9 @@
       }
       let text = 'Not streaming.';
       if (status.running) {
+        const where = (status.destinations ?? []).join(', ');
         text = `${status.description} as ${status.encoding} to ` +
-          `${status.destination}:${status.port} — ${(status.packetsSent ?? 0).toLocaleString()} packets sent`;
+          `${where}:${status.port} — ${(status.packetsSent ?? 0).toLocaleString()} packets sent`;
         if (status.underrunSamples > 0) {
           text += `, ${status.underrunSamples.toLocaleString()} samples of silence inserted`;
         }
@@ -246,13 +250,15 @@
     });
 
     async function startStream(kind) {
-      const target = document.getElementById('tone-target').value;
-      // A typed address wins over the dropdown, so an explicit destination is
-      // never silently ignored.
-      const address = document.getElementById('tone-address').value.trim();
+      // Selected devices and typed addresses combine, so you can stream to a
+      // discovered receiver and a PC running a player at the same time.
+      const selected = [...document.getElementById('tone-target').selectedOptions]
+        .map(o => o.value).filter(v => v);
+      const typed = document.getElementById('tone-address').value
+        .split(',').map(v => v.trim()).filter(v => v);
+      const destinations = selected.concat(typed);
       const body = {
-        address: address || null,
-        deviceId: address ? null : (target || null),
+        destinations: destinations.length ? destinations : null,
         port: Number(document.getElementById('tone-port').value),
         encoding: document.getElementById('tone-encoding').value,
         frequencyHz: Number(document.getElementById('tone-frequency').value),
@@ -264,7 +270,9 @@
         body: JSON.stringify(body),
       });
       if (response.ok) {
-        say(target ? 'Stream started.' : 'Stream started — point your player at this computer.');
+        say(destinations.length
+          ? `Stream started to ${destinations.length} destination(s).`
+          : 'Stream started — point your player at this computer.');
       } else {
         const error = await response.json().catch(() => ({}));
         say(`Could not start stream: ${error.error ?? response.status}`);

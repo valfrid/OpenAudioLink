@@ -118,44 +118,79 @@ app.MapPost("/api/devices/{id}/ota",
 // One stream at a time, from either a generated tone (diagnostics) or
 // this computer's audio (the real Producer path).
 
-static IResult ResolveDestination(
-    string? deviceId, string? address, HttpContext context, DeviceRegistry registry, out IPAddress? destination)
+static IResult ResolveDestinations(
+    StreamRequest request, HttpContext context, DeviceRegistry registry, out List<IPAddress> destinations)
 {
-    // Precedence: a named device (so the address follows the device if
-    // DHCP moves it), an explicit address, or the caller itself — which
-    // lets the browser aim a stream at the machine it is running on.
-    destination = null;
+    // Each entry is either a device id or an IP address. Naming a device
+    // means the address follows it if DHCP moves it; a literal address
+    // covers machines that are not OpenAudioLink devices at all, such as a
+    // PC running a player. With none given, the caller is the destination,
+    // so a browser can aim a stream at the machine showing the page.
+    destinations = [];
 
-    if (!string.IsNullOrWhiteSpace(deviceId))
+    var requested = new List<string>();
+    if (request.Destinations is { Count: > 0 })
     {
-        if (!registry.TryGet(deviceId, out var device) || !IPAddress.TryParse(device.Address, out destination))
-        {
-            return Results.BadRequest(new { error = "unknown device" });
-        }
+        requested.AddRange(request.Destinations);
     }
-    else if (!string.IsNullOrWhiteSpace(address))
+    if (!string.IsNullOrWhiteSpace(request.DeviceId))
     {
-        if (!IPAddress.TryParse(address, out destination))
-        {
-            return Results.BadRequest(new { error = "address must be an IP address" });
-        }
+        requested.Add(request.DeviceId);
     }
-    else
+    if (!string.IsNullOrWhiteSpace(request.Address))
     {
-        destination = context.Connection.RemoteIpAddress;
-        if (destination is not null && destination.IsIPv4MappedToIPv6)
-        {
-            destination = destination.MapToIPv4();
-        }
-        if (IPAddress.IPv6Loopback.Equals(destination))
-        {
-            destination = IPAddress.Loopback;
-        }
+        requested.Add(request.Address);
     }
 
-    if (destination is null || destination.AddressFamily != AddressFamily.InterNetwork)
+    if (requested.Count == 0)
     {
-        return Results.BadRequest(new { error = "could not determine an IPv4 destination" });
+        var caller = context.Connection.RemoteIpAddress;
+        if (caller is not null && caller.IsIPv4MappedToIPv6)
+        {
+            caller = caller.MapToIPv4();
+        }
+        if (IPAddress.IPv6Loopback.Equals(caller))
+        {
+            caller = IPAddress.Loopback;
+        }
+        if (caller is null || caller.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return Results.BadRequest(new { error = "could not determine an IPv4 destination" });
+        }
+        destinations.Add(caller);
+        return Results.Empty;
+    }
+
+    // Replication cost is linear per receiver, so a runaway list is capped
+    // rather than quietly overloading the sender. See docs/DECISIONS.md.
+    if (requested.Count > StreamLimits.MaxDestinations)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"at most {StreamLimits.MaxDestinations} destinations per stream",
+        });
+    }
+
+    foreach (var entry in requested.Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        IPAddress? resolved;
+        if (registry.TryGet(entry, out var device))
+        {
+            if (!IPAddress.TryParse(device.Address, out resolved))
+            {
+                return Results.BadRequest(new { error = $"device '{entry}' has no usable address" });
+            }
+        }
+        else if (!IPAddress.TryParse(entry, out resolved))
+        {
+            return Results.BadRequest(new { error = $"'{entry}' is neither a known device nor an IP address" });
+        }
+
+        if (resolved.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return Results.BadRequest(new { error = $"'{entry}' is not an IPv4 address" });
+        }
+        destinations.Add(resolved);
     }
 
     return Results.Empty;
@@ -180,8 +215,8 @@ app.MapDelete("/api/stream", async (RtpStreamer streamer) =>
 app.MapPost("/api/stream/test-tone", async (
     StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer) =>
 {
-    var failure = ResolveDestination(request.DeviceId, request.Address, context, registry, out var destination);
-    if (destination is null)
+    var failure = ResolveDestinations(request, context, registry, out var destinations);
+    if (destinations.Count == 0)
     {
         return failure;
     }
@@ -197,7 +232,7 @@ app.MapPost("/api/stream/test-tone", async (
         var format = BuildFormat(request);
         format.Validate();
         var tone = new SineToneSource(format, request.FrequencyHz ?? 1000.0);
-        return Results.Ok(await streamer.StartAsync("test-tone", tone, destination, port, format));
+        return Results.Ok(await streamer.StartAsync("test-tone", tone, destinations, port, format));
     }
     catch (ArgumentException ex)
     {
@@ -213,8 +248,8 @@ app.MapPost("/api/stream/system-audio", async (
         return Results.BadRequest(new { error = "system audio capture requires Windows" });
     }
 
-    var failure = ResolveDestination(request.DeviceId, request.Address, context, registry, out var destination);
-    if (destination is null)
+    var failure = ResolveDestinations(request, context, registry, out var destinations);
+    if (destinations.Count == 0)
     {
         return failure;
     }
@@ -230,7 +265,7 @@ app.MapPost("/api/stream/system-audio", async (
         var format = BuildFormat(request);
         format.Validate();
         var capture = new SystemAudioSource(format);
-        return Results.Ok(await streamer.StartAsync("system-audio", capture, destination, port, format));
+        return Results.Ok(await streamer.StartAsync("system-audio", capture, destinations, port, format));
     }
     catch (ArgumentException ex)
     {
@@ -249,14 +284,16 @@ app.MapPost("/api/stream/system-audio", async (
 app.MapGet("/api/stream.sdp", (HttpContext context, RtpStreamer streamer) =>
 {
     var status = streamer.Status;
-    if (!status.Running || status.Destination is null)
+    if (!status.Running || status.Destinations.Count == 0)
     {
         return Results.NotFound(new { error = "no stream is running" });
     }
 
+    // Describes the first destination; every destination receives the
+    // identical stream, so the description differs only in its address.
     var origin = context.Connection.LocalIpAddress?.ToString() ?? "0.0.0.0";
     var sdp = SessionDescription.Build(
-        streamer.Format, origin, status.Destination, status.Port,
+        streamer.Format, origin, status.Destinations[0], status.Port,
         sessionName: $"OpenAudioLink {status.Description}");
 
     return Results.Text(sdp, "application/sdp");
@@ -266,7 +303,18 @@ app.Run();
 
 internal sealed record OtaRequest(string? File);
 
+internal static class StreamLimits
+{
+    /// <summary>
+    /// Planning threshold from docs/DECISIONS.md: unicast replication
+    /// costs roughly 2.37 Mbit/s and 200 packets/s per receiver, so a
+    /// stream is capped rather than allowed to overload its sender.
+    /// </summary>
+    public const int MaxDestinations = 8;
+}
+
 internal sealed record StreamRequest(
+    IReadOnlyList<string>? Destinations,
     string? Address,
     string? DeviceId,
     int? Port,
