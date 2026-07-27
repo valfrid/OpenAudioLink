@@ -87,6 +87,36 @@ Requirements and current limits:
 One stream runs at a time — starting system audio replaces a running
 test tone, and vice versa.
 
+### Testing it on one machine
+
+Playing the stream back through the speakers that are being captured
+creates a **feedback loop** — the audio is captured, sent, played, and
+captured again. To test on a single machine, record to a file instead:
+
+```text
+set PATH=%PATH%;C:\Program Files\gstreamer\1.0\msvc_x86_64\bin
+cd /d %USERPROFILE%\Desktop
+gst-launch-1.0 -e udpsrc port=41100 caps="application/x-rtp,media=(string)audio,clock-rate=(int)48000,encoding-name=(string)L24,channels=(int)2,payload=(int)96" ! rtpjitterbuffer ! rtpL24depay ! audioconvert ! wavenc ! filesink location=capture.wav
+```
+
+Play something, let it run, then Ctrl+C and play `capture.wav`.
+
+Three things that catch people out:
+
+- **Run from a writable directory.** GStreamer's install folder is under
+  `C:\Program Files`, which is write-protected, so a relative
+  `location=` there fails with "Permission denied". Hence the `cd`
+  above; the `set PATH` keeps the tools available afterwards.
+- **`-e` is required.** Without it Ctrl+C skips the end-of-stream, and
+  `wavenc` never goes back to fix the header — the file will not play.
+  After Ctrl+C, wait for `Freeing pipeline ...` rather than pressing it
+  again.
+- **Use forward slashes** in any absolute `location=` path.
+  `gst-launch` treats backslash as an escape character.
+
+Alternatively, run the receiver on a second machine and there is no
+feedback path at all.
+
 ## Test tone
 
 The Hub can stream a generated sine tone as RTP. It is a permanent
