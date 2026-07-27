@@ -78,7 +78,28 @@ listens for packets that arrive.
 
 ### Receiving it on a computer
 
-Receive it with **GStreamer**, which has the most dependable L24 support:
+**GStreamer** has the most dependable L24 support and is the recommended
+receiver. On Windows, install the **MSVC 64-bit runtime** package from
+<https://gstreamer.freedesktop.org/download/> and choose the **Complete**
+install — a typical install can omit plugin sets, and `rtpL24depay` lives
+in gst-plugins-good. Confirm it is present before anything else:
+
+```text
+gst-inspect-1.0 rtpL24depay
+```
+
+If that reports "no such element", the plugin set is missing; rerun the
+installer and pick Complete. If the command is not found at all, add the
+bin directory to PATH — by default
+`C:\gstreamer\1.0\msvc_x86_64\bin`.
+
+Then, as a single line (Windows `cmd`, or any shell):
+
+```text
+gst-launch-1.0 udpsrc port=41100 caps="application/x-rtp,media=(string)audio,clock-rate=(int)48000,encoding-name=(string)L24,channels=(int)2,payload=(int)96" ! rtpjitterbuffer ! rtpL24depay ! audioconvert ! autoaudiosink
+```
+
+The same broken across lines for readability on Linux and macOS:
 
 ```bash
 gst-launch-1.0 udpsrc port=41100 \
@@ -87,19 +108,33 @@ encoding-name=(string)L24,channels=(int)2,payload=(int)96" \
   ! rtpjitterbuffer ! rtpL24depay ! audioconvert ! autoaudiosink
 ```
 
-or with **ffplay**, pointing at the Hub's generated SDP:
+**ffplay** is a lighter alternative — a zip rather than an installer —
+and can be pointed straight at the Hub's generated SDP:
 
-```bash
+```text
 ffplay -protocol_whitelist file,rtp,udp,http -i http://localhost:41080/api/test-tone.sdp
 ```
 
-**VLC** does not reliably handle L24; start the stream with
-`"encoding":"L16"` for it, then open the same SDP URL. Stop with
-`curl -X DELETE http://localhost:41080/api/test-tone`.
+**VLC** does not reliably handle L24; select the L16 format in the UI (or
+`"encoding":"L16"` over the API), then open the same SDP URL.
 
 Hearing a clean 1 kHz tone proves packetisation, byte order, timestamps
 and pacing end to end. Wireshark (*Decode As → RTP*, then *Telephony →
 RTP → Stream Analysis*) separates format problems from packet loss.
+
+### If nothing plays
+
+- **Run the Hub and the player on the same machine first.** That removes
+  the network and the firewall from the picture entirely; the UI's
+  "This computer" default resolves to loopback when you browse from the
+  same PC.
+- **Windows Firewall** silently blocks inbound UDP from another machine.
+  Allow the receiving application on private networks, or test locally
+  first.
+- **Check packets are arriving at all** with Wireshark filtered on
+  `udp.port == 41100`. Packets arriving but no sound points at the
+  pipeline or plugin; no packets points at the network, the firewall, or
+  a stream that was never started.
 
 ## Tests
 
