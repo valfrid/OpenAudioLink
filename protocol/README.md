@@ -13,7 +13,7 @@ conforming implementation may replace the reference one.
 | Device discovery | UDP multicast, JSON  | `DISCOVERY.md`   | Draft v0.1    |
 | Device identity  | (model, not a wire protocol) | `IDENTITY.md` | Draft v0.1 |
 | Control / status | HTTP/JSON over TCP   | `CONTROL.md`     | Draft v0.1    |
-| Audio transport  | RTP over UDP         | not yet written  | Phase 3       |
+| Audio transport  | RTP over UDP         | `AUDIO-RTP.md`   | Draft v0.1    |
 | OTA over IP      | HTTP/JSON            | `OTA.md`         | Draft v0.1    |
 | USB provisioning | USB serial           | not yet written  | Phase 2.5     |
 
@@ -44,3 +44,6 @@ conforming implementation may replace the reference one.
 - Receivers are simple Consumers and never need to know what the source is.
 - Reference audio format: stereo, 48 kHz, 24-bit PCM, RTP/UDP, I²S at the
   hardware boundary.
+- The audio payload is a standard format (`L24`, an AES67 subset), not a
+  private one, so any conforming RTP receiver can decode an OpenAudioLink
+  stream and third-party software can verify a Producer.
