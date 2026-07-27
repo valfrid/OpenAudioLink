@@ -79,11 +79,12 @@
   </table>
   <p id="devices-empty" class="empty">No devices discovered yet.</p>
 
-  <h2>Test tone</h2>
+  <h2>Streaming</h2>
   <p class="hint">
-    Streams a sine tone as RTP to check an audio path. Send it to a receiver
-    to confirm a speaker works, or to this computer to check the Hub's own
-    output with a player such as GStreamer or ffplay.
+    Streams audio as RTP to a receiver, or to a computer running a player
+    such as GStreamer or ffplay. One stream runs at a time. The test tone
+    is a diagnostic — it answers "is this speaker working?" without
+    involving a source.
   </p>
   <div class="fw-bar">
     <label>To <select id="tone-target"></select></label>
@@ -94,8 +95,11 @@
         <option value="L16">L16 (16-bit)</option>
       </select>
     </label>
-    <label>Hz <input id="tone-frequency" type="number" value="1000" min="20" max="20000"></label>
-    <button id="tone-start">Start</button>
+    <label>Tone Hz <input id="tone-frequency" type="number" value="1000" min="20" max="20000"></label>
+  </div>
+  <div class="fw-bar">
+    <button id="tone-start">Start test tone</button>
+    <button id="system-start">Stream this computer's audio</button>
     <button id="tone-stop">Stop</button>
   </div>
   <p id="tone-status" class="hint">Not streaming.</p>
@@ -162,14 +166,19 @@
     async function refreshTone() {
       let status;
       try {
-        status = await (await fetch('/api/test-tone')).json();
+        status = await (await fetch('/api/stream')).json();
       } catch {
         return;
       }
-      document.getElementById('tone-status').textContent = status.running
-        ? `Streaming ${status.frequencyHz} Hz ${status.encoding} to ` +
-          `${status.destination}:${status.port} — ${status.packetsSent.toLocaleString()} packets sent.`
-        : 'Not streaming.';
+      let text = 'Not streaming.';
+      if (status.running) {
+        text = `${status.description} as ${status.encoding} to ` +
+          `${status.destination}:${status.port} — ${status.packetsSent.toLocaleString()} packets sent`;
+        text += status.underrunSamples > 0
+          ? `, ${status.underrunSamples.toLocaleString()} samples of silence inserted (capture not keeping up).`
+          : '.';
+      }
+      document.getElementById('tone-status').textContent = text;
     }
 
     async function refreshFirmware() {
@@ -226,7 +235,7 @@
       }
     });
 
-    document.getElementById('tone-start').addEventListener('click', async () => {
+    async function startStream(kind) {
       const target = document.getElementById('tone-target').value;
       const body = {
         deviceId: target || null,
@@ -234,24 +243,27 @@
         encoding: document.getElementById('tone-encoding').value,
         frequencyHz: Number(document.getElementById('tone-frequency').value),
       };
-      say('Starting test tone…');
-      const response = await fetch('/api/test-tone', {
+      say('Starting stream…');
+      const response = await fetch(`/api/stream/${kind}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (response.ok) {
-        say(target ? 'Test tone started.' : 'Test tone started — point your player at this computer.');
+        say(target ? 'Stream started.' : 'Stream started — point your player at this computer.');
       } else {
         const error = await response.json().catch(() => ({}));
-        say(`Could not start test tone: ${error.error ?? response.status}`);
+        say(`Could not start stream: ${error.error ?? response.status}`);
       }
       refreshTone();
-    });
+    }
+
+    document.getElementById('tone-start').addEventListener('click', () => startStream('test-tone'));
+    document.getElementById('system-start').addEventListener('click', () => startStream('system-audio'));
 
     document.getElementById('tone-stop').addEventListener('click', async () => {
-      await fetch('/api/test-tone', { method: 'DELETE' });
-      say('Test tone stopped.');
+      await fetch('/api/stream', { method: 'DELETE' });
+      say('Stream stopped.');
       refreshTone();
     });
 

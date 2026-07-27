@@ -5,61 +5,73 @@ using OpenAudioLink.Core.Audio;
 
 namespace OpenAudioLink.Hub.Services;
 
-public sealed record TestToneStatus(
+public sealed record StreamStatus(
     bool Running,
+    string? Source,
+    string? Description,
     string? Destination,
     int Port,
     string Encoding,
-    double FrequencyHz,
-    long PacketsSent);
+    long PacketsSent,
+    long UnderrunSamples);
 
 /// <summary>
-/// Streams a generated tone as RTP so the audio path can be verified
-/// before any capture or receiver hardware exists: point GStreamer,
-/// ffplay or an AES67 receiver at it and the wire format is proven.
+/// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
 ///
 /// Pacing is catch-up based. System timers are not reliable at 5 ms, so
 /// the loop sends however many packets the elapsed time says are due
 /// rather than assuming one per tick. RTP timestamps come from the frame
 /// counter, so a late or bursty send is still correctly timed audio.
 /// </summary>
-public sealed class TestToneStreamer : IAsyncDisposable
+public sealed class RtpStreamer : IAsyncDisposable
 {
-    private readonly ILogger<TestToneStreamer> _logger;
+    private readonly ILogger<RtpStreamer> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private CancellationTokenSource? _cancellation;
     private Task? _worker;
-    private TestToneStatus _status = new(false, null, 0, "L24", 0, 0);
+    private AudioStreamFormat _format = new();
+    private StreamStatus _status = new(false, null, null, null, 0, "L24", 0, 0);
 
-    public TestToneStreamer(ILogger<TestToneStreamer> logger)
+    public RtpStreamer(ILogger<RtpStreamer> logger)
     {
         _logger = logger;
     }
 
-    public TestToneStatus Status => _status;
+    public StreamStatus Status => _status;
 
-    public async Task<TestToneStatus> StartAsync(
-        IPAddress destination, int port, AudioStreamFormat format, double frequencyHz)
+    public AudioStreamFormat Format => _format;
+
+    /// <summary>
+    /// Starts streaming, replacing any stream already running. The
+    /// streamer takes ownership of <paramref name="source"/> and disposes
+    /// it when the stream stops.
+    /// </summary>
+    public async Task<StreamStatus> StartAsync(
+        string sourceKind, IAudioSource source, IPAddress destination, int port, AudioStreamFormat format)
     {
+        ArgumentNullException.ThrowIfNull(source);
         format.Validate();
-
-        // Built here rather than in the worker so invalid arguments surface
-        // to the caller instead of failing silently after a 200 response.
-        var tone = new SineToneSource(format, frequencyHz);
 
         await _gate.WaitAsync();
         try
         {
             await StopCoreAsync();
 
+            _format = format;
             _cancellation = new CancellationTokenSource();
-            _status = new TestToneStatus(true, destination.ToString(), port, format.RtpmapName, frequencyHz, 0);
-            _worker = Task.Run(() => RunAsync(destination, port, format, tone, _cancellation.Token));
+            _status = new StreamStatus(
+                true, sourceKind, source.Description, destination.ToString(), port, format.RtpmapName, 0, 0);
+            _worker = Task.Run(() => RunAsync(source, destination, port, format, _cancellation.Token));
 
-            _logger.LogInformation("Test tone started: {Frequency} Hz {Encoding} to {Destination}:{Port}",
-                frequencyHz, format.RtpmapName, destination, port);
+            _logger.LogInformation("Streaming {Description} as {Encoding} to {Destination}:{Port}",
+                source.Description, format.RtpmapName, destination, port);
             return _status;
+        }
+        catch
+        {
+            source.Dispose();
+            throw;
         }
         finally
         {
@@ -103,12 +115,14 @@ public sealed class TestToneStreamer : IAsyncDisposable
         _cancellation = null;
         _worker = null;
         _status = _status with { Running = false };
-        _logger.LogInformation("Test tone stopped after {Packets} packets", _status.PacketsSent);
+        _logger.LogInformation("Stream stopped after {Packets} packets", _status.PacketsSent);
     }
 
     private async Task RunAsync(
-        IPAddress destination, int port, AudioStreamFormat format, SineToneSource tone, CancellationToken cancellationToken)
+        IAudioSource source, IPAddress destination, int port, AudioStreamFormat format,
+        CancellationToken cancellationToken)
     {
+        using var owned = source;
         using var socket = new UdpClient(AddressFamily.InterNetwork);
         if (IsMulticast(destination))
         {
@@ -139,13 +153,17 @@ public sealed class TestToneStreamer : IAsyncDisposable
 
                 while (packetsSent < due && !cancellationToken.IsCancellationRequested)
                 {
-                    tone.ReadFrames(samples);
+                    source.ReadFrames(samples);
                     int length = packetizer.WritePacket(samples, packet);
                     await socket.SendAsync(packet.AsMemory(0, length), endpoint, cancellationToken);
                     packetsSent++;
                 }
 
-                _status = _status with { PacketsSent = packetsSent };
+                _status = _status with
+                {
+                    PacketsSent = packetsSent,
+                    UnderrunSamples = source.UnderrunSamples,
+                };
                 await Task.Delay(1, cancellationToken);
             }
         }
@@ -154,7 +172,7 @@ public sealed class TestToneStreamer : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Test tone stream failed");
+            _logger.LogError(ex, "Stream failed");
             _status = _status with { Running = false };
         }
     }

@@ -8,7 +8,7 @@ namespace OpenAudioLink.Core.Audio;
 /// shape makes byte-order and channel-order mistakes obvious on a scope
 /// or spectrum view (see docs/HARDWARE.md).
 /// </summary>
-public sealed class SineToneSource
+public sealed class SineToneSource : IAudioSource
 {
     private readonly double _radiansPerFrame;
     private readonly int _channels;
@@ -28,6 +28,13 @@ public sealed class SineToneSource
         _radiansPerFrame = 2.0 * Math.PI * frequencyHz / format.SampleRate;
         _channels = format.Channels;
         _amplitude = amplitude;
+        Description = $"{frequencyHz:0.#} Hz test tone";
+    }
+
+    public string Description { get; }
+
+    public void Dispose()
+    {
     }
 
     /// <summary>

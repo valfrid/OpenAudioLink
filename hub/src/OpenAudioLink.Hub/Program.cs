@@ -31,7 +31,7 @@ builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(configStore.LoadOrCreate());
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
-builder.Services.AddSingleton<TestToneStreamer>();
+builder.Services.AddSingleton<RtpStreamer>();
 builder.Services.AddHttpClient<DeviceCommandClient>();
 builder.Services.AddHostedService<DiscoveryService>();
 
@@ -114,30 +114,28 @@ app.MapPost("/api/devices/{id}/ota",
     return ok ? Results.Ok(new { status = "accepted" }) : Results.StatusCode(502);
 });
 
-// --- Audio path bring-up (Phase 3) -----------------------------------
-// A generated tone streamed as RTP, so the wire format can be verified
-// with third-party receivers before capture or receiver hardware exists.
+// --- Audio streaming (Phase 3) ---------------------------------------
+// One stream at a time, from either a generated tone (diagnostics) or
+// this computer's audio (the real Producer path).
 
-app.MapGet("/api/test-tone", (TestToneStreamer streamer) => Results.Ok(streamer.Status));
-
-app.MapPost("/api/test-tone", async (
-    TestToneRequest request, HttpContext context, DeviceRegistry registry, TestToneStreamer streamer) =>
+static IResult ResolveDestination(
+    string? deviceId, string? address, HttpContext context, DeviceRegistry registry, out IPAddress? destination)
 {
-    // Destination precedence: a named device (address follows the device if
-    // DHCP moves it), an explicit address, or the caller itself — so the
-    // browser can start a tone aimed at the machine it is running on.
-    IPAddress? destination;
-    if (!string.IsNullOrWhiteSpace(request.DeviceId))
+    // Precedence: a named device (so the address follows the device if
+    // DHCP moves it), an explicit address, or the caller itself — which
+    // lets the browser aim a stream at the machine it is running on.
+    destination = null;
+
+    if (!string.IsNullOrWhiteSpace(deviceId))
     {
-        if (!registry.TryGet(request.DeviceId, out var device)
-            || !IPAddress.TryParse(device.Address, out destination))
+        if (!registry.TryGet(deviceId, out var device) || !IPAddress.TryParse(device.Address, out destination))
         {
             return Results.BadRequest(new { error = "unknown device" });
         }
     }
-    else if (!string.IsNullOrWhiteSpace(request.Address))
+    else if (!string.IsNullOrWhiteSpace(address))
     {
-        if (!IPAddress.TryParse(request.Address, out destination))
+        if (!IPAddress.TryParse(address, out destination))
         {
             return Results.BadRequest(new { error = "address must be an IP address" });
         }
@@ -160,25 +158,46 @@ app.MapPost("/api/test-tone", async (
         return Results.BadRequest(new { error = "could not determine an IPv4 destination" });
     }
 
+    return Results.Empty;
+}
+
+static AudioStreamFormat BuildFormat(StreamRequest request) => new()
+{
+    Encoding = string.Equals(request.Encoding, "L16", StringComparison.OrdinalIgnoreCase)
+        ? PcmEncoding.L16
+        : PcmEncoding.L24,
+    PacketMilliseconds = request.PacketMilliseconds ?? 5,
+};
+
+app.MapGet("/api/stream", (RtpStreamer streamer) => Results.Ok(streamer.Status));
+
+app.MapDelete("/api/stream", async (RtpStreamer streamer) =>
+{
+    await streamer.StopAsync();
+    return Results.Ok(streamer.Status);
+});
+
+app.MapPost("/api/stream/test-tone", async (
+    StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer) =>
+{
+    var failure = ResolveDestination(request.DeviceId, request.Address, context, registry, out var destination);
+    if (destination is null)
+    {
+        return failure;
+    }
+
     var port = request.Port ?? 41100;
     if (port is < 1 or > 65535)
     {
         return Results.BadRequest(new { error = "port out of range" });
     }
 
-    var format = new AudioStreamFormat
-    {
-        Encoding = string.Equals(request.Encoding, "L16", StringComparison.OrdinalIgnoreCase)
-            ? PcmEncoding.L16
-            : PcmEncoding.L24,
-        PacketMilliseconds = request.PacketMilliseconds ?? 5,
-    };
-
     try
     {
+        var format = BuildFormat(request);
         format.Validate();
-        var status = await streamer.StartAsync(destination, port, format, request.FrequencyHz ?? 1000.0);
-        return Results.Ok(status);
+        var tone = new SineToneSource(format, request.FrequencyHz ?? 1000.0);
+        return Results.Ok(await streamer.StartAsync("test-tone", tone, destination, port, format));
     }
     catch (ArgumentException ex)
     {
@@ -186,15 +205,48 @@ app.MapPost("/api/test-tone", async (
     }
 });
 
-app.MapDelete("/api/test-tone", async (TestToneStreamer streamer) =>
+app.MapPost("/api/stream/system-audio", async (
+    StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer) =>
 {
-    await streamer.StopAsync();
-    return Results.Ok(streamer.Status);
+    if (!OperatingSystem.IsWindows())
+    {
+        return Results.BadRequest(new { error = "system audio capture requires Windows" });
+    }
+
+    var failure = ResolveDestination(request.DeviceId, request.Address, context, registry, out var destination);
+    if (destination is null)
+    {
+        return failure;
+    }
+
+    var port = request.Port ?? 41100;
+    if (port is < 1 or > 65535)
+    {
+        return Results.BadRequest(new { error = "port out of range" });
+    }
+
+    try
+    {
+        var format = BuildFormat(request);
+        format.Validate();
+        var capture = new SystemAudioSource(format);
+        return Results.Ok(await streamer.StartAsync("system-audio", capture, destination, port, format));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (NotSupportedException ex)
+    {
+        // Endpoint sample-rate or format mismatch: the message tells the
+        // user exactly what to change in Windows Sound settings.
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 // SDP for the running stream, so receivers can be pointed at a URL:
-//   ffplay -protocol_whitelist file,rtp,udp,http -i http://<hub>:41080/api/test-tone.sdp
-app.MapGet("/api/test-tone.sdp", (HttpContext context, TestToneStreamer streamer) =>
+//   ffplay -protocol_whitelist file,rtp,udp,http -i http://<hub>:41080/api/stream.sdp
+app.MapGet("/api/stream.sdp", (HttpContext context, RtpStreamer streamer) =>
 {
     var status = streamer.Status;
     if (!status.Running || status.Destination is null)
@@ -202,13 +254,10 @@ app.MapGet("/api/test-tone.sdp", (HttpContext context, TestToneStreamer streamer
         return Results.NotFound(new { error = "no stream is running" });
     }
 
-    var format = new AudioStreamFormat
-    {
-        Encoding = status.Encoding == "L16" ? PcmEncoding.L16 : PcmEncoding.L24,
-    };
     var origin = context.Connection.LocalIpAddress?.ToString() ?? "0.0.0.0";
     var sdp = SessionDescription.Build(
-        format, origin, status.Destination, status.Port, sessionName: "OpenAudioLink Test Tone");
+        streamer.Format, origin, status.Destination, status.Port,
+        sessionName: $"OpenAudioLink {status.Description}");
 
     return Results.Text(sdp, "application/sdp");
 });
@@ -217,7 +266,7 @@ app.Run();
 
 internal sealed record OtaRequest(string? File);
 
-internal sealed record TestToneRequest(
+internal sealed record StreamRequest(
     string? Address,
     string? DeviceId,
     int? Port,

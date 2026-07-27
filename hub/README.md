@@ -6,9 +6,15 @@ sources, and the Provisioner.
 
 Current state: health endpoint, JSON configuration storage, device
 inventory, discovery listener/announcer, web UI, device commands
-(reboot) and OTA management (upload firmware images, push updates to
-devices, which pull them from `/firmware/{file}`). Audio capture, RTP
-production and USB flashing come in later phases.
+(reboot), OTA management (upload firmware images, push updates to
+devices, which pull them from `/firmware/{file}`), and RTP audio
+production from a test tone or from this computer's audio via WASAPI
+loopback. USB flashing and clock synchronisation come later.
+
+The UI is a **web application** served by the Hub itself at
+<http://localhost:41080> — there is no desktop window. That means it is
+reachable from any device on the network, so a phone or tablet works as
+a remote control.
 
 ## Projects
 
@@ -48,6 +54,39 @@ startup, and announces itself every 5 seconds.
 Persistent Hub state (identity, name) is stored as JSON in the data
 directory (`Hub:DataDirectory`, default `./data` next to the binary).
 
+## Streaming this computer's audio
+
+The Hub captures whatever is playing on the Windows default output device
+using WASAPI loopback and streams it as RTP. Local playback is
+unaffected: the PC keeps its own sound while receivers get a copy, and
+nothing is installed or reconfigured in Windows.
+
+In the web UI, **Streaming -> Stream this computer's audio**. Over the
+API:
+
+```bash
+curl -X POST http://localhost:41080/api/stream/system-audio \
+  -H "Content-Type: application/json" -d '{"deviceId":"mac-a0b1c2d3e4f5"}'
+```
+
+Requirements and current limits:
+
+- **Windows only.** Loopback capture is a Windows API; the endpoint
+  returns an error elsewhere.
+- **The output device must be at 48 kHz.** Resampling is not implemented
+  yet, so a mismatch is reported with the rate it found rather than
+  silently producing wrong-pitch audio. Set it under *Sound settings ->
+  Device properties -> Advanced*.
+- **A logged-in session is required.** Capture cannot reach the user's
+  audio endpoints from a session 0 service, so this works when the Hub
+  runs as a console application. See `docs/WINDOWS-AUDIO-CAPTURE.md`.
+- **Silence while nothing plays** is expected: loopback delivers no data
+  when the endpoint is idle, and the stream sends silence to keep
+  receivers' jitter buffers fed.
+
+One stream runs at a time — starting system audio replaces a running
+test tone, and vice versa.
+
 ## Test tone
 
 The Hub can stream a generated sine tone as RTP. It is a permanent
@@ -55,7 +94,7 @@ diagnostic, not a development stopgap: sending a tone to a receiver
 answers "is this speaker working?" without involving any source, and
 sending one to your own machine proves the Hub's output path.
 
-In the web UI, the **Test tone** section streams either to a discovered
+In the web UI, the **Streaming** section streams either to a discovered
 receiver or to the computer you are browsing from. Addressing a device by
 name rather than address means the tone follows it if DHCP moves it.
 
@@ -63,11 +102,11 @@ The same thing over the API — with no destination given, the tone is sent
 to whoever made the request:
 
 ```bash
-curl -X POST http://localhost:41080/api/test-tone \
+curl -X POST http://localhost:41080/api/stream/test-tone \
   -H "Content-Type: application/json" -d '{}'
 
 # or explicitly, by device or by address
-curl -X POST http://localhost:41080/api/test-tone \
+curl -X POST http://localhost:41080/api/stream/test-tone \
   -H "Content-Type: application/json" \
   -d '{"deviceId":"mac-a0b1c2d3e4f5","frequencyHz":1000}'
 ```
@@ -112,7 +151,7 @@ encoding-name=(string)L24,channels=(int)2,payload=(int)96" \
 and can be pointed straight at the Hub's generated SDP:
 
 ```text
-ffplay -protocol_whitelist file,rtp,udp,http -i http://localhost:41080/api/test-tone.sdp
+ffplay -protocol_whitelist file,rtp,udp,http -i http://localhost:41080/api/stream.sdp
 ```
 
 **VLC** does not reliably handle L24; select the L16 format in the UI (or
