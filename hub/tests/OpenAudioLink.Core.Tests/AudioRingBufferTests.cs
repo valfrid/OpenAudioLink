@@ -94,17 +94,21 @@ public class AudioRingBufferTests
     }
 
     [Fact]
-    public void Concurrent_write_and_read_lose_no_samples()
+    public async Task Concurrent_write_and_read_lose_no_samples()
     {
         var buffer = new AudioRingBuffer(4096);
-        const int total = 100_000;
+        // Sized so the total is an exact multiple of the chunk: the whole
+        // point is that the sample counts must balance precisely.
+        const int chunkSize = 64;
+        const int chunkCount = 1500;
+        const int total = chunkSize * chunkCount;
 
         var writer = Task.Run(() =>
         {
-            var chunk = new float[64];
-            for (int i = 0; i < total / chunk.Length; i++)
+            var chunk = new float[chunkSize];
+            Array.Fill(chunk, 1f);
+            for (int i = 0; i < chunkCount; i++)
             {
-                Array.Fill(chunk, 1f);
                 buffer.Write(chunk);
                 Thread.SpinWait(20);
             }
@@ -125,7 +129,7 @@ public class AudioRingBufferTests
             }
         });
 
-        Assert.True(Task.WaitAll([writer, reader], TimeSpan.FromSeconds(15)));
+        await Task.WhenAll(writer, reader).WaitAsync(TimeSpan.FromSeconds(15));
 
         // Every sample is either delivered or explicitly accounted for as
         // dropped; none may vanish silently.
