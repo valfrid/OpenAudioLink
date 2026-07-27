@@ -24,6 +24,26 @@ jobs:
         run: dotnet test --configuration Release --no-build --logger "console;verbosity=normal"
         working-directory: hub
 
+  hub-package:
+    name: Hub win-x64 package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Publish self-contained win-x64
+        run: >
+          dotnet publish src/OpenAudioLink.Hub --configuration Release
+          --runtime win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          --output publish
+        working-directory: hub
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenAudioLink-Hub-win-x64
+          path: hub/publish
+
   firmware:
     name: Firmware testnode (${{ matrix.target }})
     runs-on: ubuntu-latest

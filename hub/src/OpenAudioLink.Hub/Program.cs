@@ -4,7 +4,14 @@ using OpenAudioLink.Hub;
 using OpenAudioLink.Hub.Configuration;
 using OpenAudioLink.Hub.Services;
 
-var builder = WebApplication.CreateBuilder(args);
+// Anchor the content root to the executable so appsettings.json and wwwroot
+// are found regardless of the launch directory (double-click, shortcut,
+// Windows service).
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 // Runs as a plain console app during development and as a Windows service
 // when installed; UseWindowsService is a no-op on other platforms.

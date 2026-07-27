@@ -18,6 +18,17 @@ Audio capture, RTP production, USB flashing and OTA come in later phases.
 
 ## Running
 
+### Without any toolchain (Windows)
+
+Every CI run publishes a self-contained win-x64 build — no .NET installation
+required. On GitHub go to **Actions → the latest CI run → Artifacts** and
+download `OpenAudioLink-Hub-win-x64`, extract it, and run
+`OpenAudioLink.Hub.exe`. Windows Firewall will ask to allow network access
+on first start; allow it on private networks so discovery (UDP 41000) and
+the web UI (TCP 41080) work.
+
+### From source
+
 ```bash
 dotnet run --project src/OpenAudioLink.Hub
 ```
