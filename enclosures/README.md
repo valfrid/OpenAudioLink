@@ -31,10 +31,15 @@ enclosure until a coupon fits.
 
 These come from the architecture and the hardware, not from taste:
 
-- **Antenna clearance.** The ESP32-S3 antenna must not be buried in thick
-  plastic and must have no metal near it — no screws, foil or metallic
-  filament in that zone. A node that works on the bench and drops out
-  once boxed is nearly always this.
+- **Antenna mounting, not clearance.** The preferred board (Seeed XIAO
+  ESP32S3) has no PCB antenna — only a U.FL connector — so the enclosure
+  needs a way to get the antenna *outside*: a U.FL-to-SMA pigtail through
+  a bulkhead hole, or a retention point for the supplied flexible
+  antenna. This replaces the keep-out zone a PCB antenna would have
+  needed, and is the main reason that board was chosen.
+  The antenna is not optional: the board is effectively deaf without it.
+  Boards that do have a PCB antenna (the ESP32-S3 Super Mini) still need
+  that zone kept clear of thick plastic and any metal.
 - **USB must stay accessible.** The device lifecycle in
   `docs/ARCHITECTURE.md` ends in USB recovery, so the port has to be
   reachable without disassembling the enclosure.
@@ -54,3 +59,8 @@ the shell on soft pads.
 
 This needs confirming against the physical boards, because it decides the
 internal structure of both enclosures.
+
+The XIAO ESP32S3 is a different board again, and Seeed publish its
+dimensions and mechanical models — so unlike the anonymous modules it may
+not need measuring by hand at all. Confirm against the physical board on
+arrival.

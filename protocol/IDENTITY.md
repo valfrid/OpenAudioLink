@@ -41,10 +41,17 @@ Initial profiles:
 
 | Profile id         | Platform  | Audio hardware                | Purpose                     |
 | ------------------ | --------- | ----------------------------- | --------------------------- |
-| `esp32c3-devkit`   | ESP32-C3  | none                          | Temporary development only  |
-| `esp32s3-devkit`   | ESP32-S3  | none                          | Development                 |
-| `esp32s3-pcm5102a` | ESP32-S3  | PCM5102A stereo I²S DAC       | Reference Receiver          |
-| `esp32s3-pcm1808`  | ESP32-S3  | PCM1808 stereo I²S ADC        | Reference Analog Source     |
+| `xiao-esp32s3-pcm5102a` | XIAO ESP32S3 | PCM5102A stereo I²S DAC  | **Preferred Receiver**      |
+| `xiao-esp32s3-pcm1808`  | XIAO ESP32S3 | PCM1808 stereo I²S ADC   | **Preferred Analog Source** |
+| `xiao-esp32s3`     | XIAO ESP32S3 | none                       | Development                 |
+| `esp32s3-pcm5102a` | ESP32-S3 Super Mini | PCM5102A stereo I²S DAC | Secondary Receiver     |
+| `esp32s3-pcm1808`  | ESP32-S3 Super Mini | PCM1808 stereo I²S ADC  | Secondary Analog Source |
+| `esp32s3-devkit`   | ESP32-S3 Super Mini | none                    | Development             |
+| `esp32c3-devkit`   | ESP32-C3  | none                          | Temporary; removed once S3 is verified |
+
+The board is part of the profile, not just the audio hardware: pin
+mapping differs between boards, and the XIAO has an external antenna
+where the Super Mini has a PCB one.
 
 Hardware-profile definitions are versioned independently of firmware.
 

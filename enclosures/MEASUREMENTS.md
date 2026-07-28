@@ -35,7 +35,19 @@ outline of the plastic body, so measure both:
 
 ---
 
-## 1. ESP32-S3 Super Mini
+## 1. ESP32 board
+
+Two boards are in play. The **Seeed XIAO ESP32S3** is the preferred
+platform (`docs/DECISIONS.md` §6) and Seeed publish its mechanical data,
+so its dimensions may be taken from their drawings rather than measured —
+worth checking against the physical board when it arrives. Its antenna is
+external, so instead of a keep-out zone it needs a **U.FL pigtail route
+and a bulkhead or retention point** for the antenna.
+
+The table below is for the **ESP32-S3 Super Mini**, the secondary board
+already in hand.
+
+### 1a. ESP32-S3 Super Mini
 
 Orientation: component side up, **USB-C connector at the far edge (+Y)**.
 

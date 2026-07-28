@@ -283,3 +283,50 @@ C3 Super Mini.
 - Removing the C3 target is a deliberate step with a trigger — S3
   hardware verified — not a gradual drift. Until then both targets build
   in CI.
+
+---
+
+## 6. Seeed XIAO ESP32S3 is the preferred node hardware
+
+**Date:** 2026-07-27
+**Status:** accepted; two boards on order
+
+### Decision
+
+The **Seeed XIAO ESP32S3** becomes the preferred board for all nodes,
+receivers and sources alike. The generic ESP32-S3 Super Mini stays
+supported as a secondary profile; the ESP32-C3 remains temporary
+scaffolding per decision 5.
+
+### Why
+
+- **External U.FL antenna, and no PCB antenna at all.** This removes the
+  enclosure antenna keep-out constraint outright rather than requiring
+  design around it, and there is no antenna-selection resistor or GPIO
+  switch to get wrong because there is nothing to select.
+- **Dual-core 240 MHz Xtensa LX7**, which is the property decision 2
+  relies on: I²S servicing can run apart from Wi-Fi transmit bursts.
+- **A real vendor with published schematics, pinouts and mechanical
+  models.** Anonymous Super Mini boards vary between batches, which
+  undermines both hardware profiles and enclosure design. Seeed's
+  published dimensions feed the enclosure work directly.
+- **Integrated Li-Po charging**, which turns the standalone "party mode"
+  of decision 4 from a mains-tethered idea into a portable one.
+
+### Consequences
+
+- **The antenna is mandatory.** With no PCB fallback the board is
+  effectively deaf without it, and transmitting into an open connector is
+  bad for the power amplifier. Assembly and enclosure design must treat
+  the antenna as a required part, not an accessory.
+- New hardware profiles, since pin mapping differs from the Super Mini:
+  `xiao-esp32s3-pcm5102a` and `xiao-esp32s3-pcm1808`.
+- 11 exposed GPIOs — enough for either role (three I²S pins, plus two for
+  an optional I²C display) but with less spare than the Super Mini.
+- Larger flash than the `FH4R2` Super Mini eases the single-image
+  partition pressure from decision 5. **Confirm flash and PSRAM on
+  arrival**; XIAO variants differ, and the product listing does not state
+  them.
+- The enclosure gains an antenna mount — a U.FL pigtail to an SMA
+  bulkhead, or a retention point for the supplied flexible antenna — and
+  loses the keep-out zone.
