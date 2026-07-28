@@ -103,6 +103,19 @@ hardware rather than assuming.
   floor sits well inside 16 bits, and it cuts roughly a third of the
   bandwidth while allowing longer packets within the MTU.
 
+### Order of attack if a Producer runs out of capacity
+
+1. **Keep the ESP32-S3 baseline.** Its second core matters here: I2S DMA
+   servicing can run apart from Wi-Fi transmit bursts. The C6 is 2.4 GHz
+   only despite being Wi-Fi 6, and the dual-band C5 is single-core and
+   far less proven. No platform change without measurements demanding it.
+2. **Multicast**, which stops sender cost scaling with receiver count.
+3. **Router tuning** — a dedicated SSID on a clean channel removes most
+   contention without isolating anything.
+
+L16 and longer packets remain available at any point and are cheaper
+than all three.
+
 ---
 
 ## 3. Where a source lives is a capability question, not a hierarchy
@@ -164,3 +177,58 @@ ESP32) or the stream advertises 44.1 kHz and receivers reconfigure I²S
 per stream. The protocol already carries the rate, so both are legal;
 the choice is about where the cost lands. This is worth settling before
 implementation rather than during it.
+
+---
+
+## 4. Two deployment modes: infrastructure and standalone
+
+**Date:** 2026-07-27
+**Status:** accepted (principle); standalone mode not yet implemented
+
+### Decision
+
+OpenAudioLink supports two ways of being deployed, and neither is a
+degraded version of the other.
+
+**Infrastructure** — the permanent installation. Devices join an existing
+Wi-Fi network. A Hub may be present for Windows-hosted sources,
+provisioning and a richer UI, but is not required.
+
+**Standalone ("party mode")** — equipment carried to a venue with no
+usable network. The Producer creates its own access point, receivers join
+it, and the system works with nothing else present: no router, no Hub, no
+internet. Fewer receivers, by nature of the setting.
+
+### Why
+
+This was the founding use case in a different shape: a self-contained
+audio link that works wherever it is put down. It is also the strongest
+test of the Hub-optional decision — if standalone mode works, no hidden
+dependency on the Hub survived.
+
+### Consequences
+
+- The soft-AP already exists for provisioning; standalone mode reuses it
+  as an operating mode rather than a setup mode.
+- An ESP soft-AP realistically serves about four stations, which suits
+  the setting.
+- The Producer's radio does access-point duty *and* audio replication, so
+  the per-receiver ceiling is lower than in infrastructure mode. Fewer
+  speakers is not just typical here, it is a constraint.
+- The AP's DHCP server assigns addresses, and discovery works unchanged
+  because it is multicast on that subnet.
+
+### The open question: how a receiver picks its network
+
+A receiver configured for a home network must still join the party
+network without a laptop present. The likely answer is a fallback chain,
+the same shape as today's credentials-or-portal logic:
+
+```text
+configured network -> an OpenAudioLink access point -> own setup portal
+```
+
+This makes a receiver "follow" whichever OpenAudioLink Producer is
+present when its home network is not, with no interaction. It needs a
+well-known naming or beacon convention so a receiver can recognise an
+OpenAudioLink AP rather than any open network, which is not yet designed.
