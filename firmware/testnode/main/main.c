@@ -12,6 +12,7 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -47,9 +48,40 @@ static void heartbeat_task(void *arg)
     for (;;) {
         wifi_mode_t mode = WIFI_MODE_NULL;
         esp_wifi_get_mode(&mode);
-        ESP_LOGI(TAG, "alive: uptime %llus, free heap %u, wifi mode %d",
+
+        /* The state, not just a mode number: catching the boot log over
+         * native USB is unreliable because the port dies with every reset,
+         * so everything needed to diagnose the node is repeated here. */
+        char detail[128] = "";
+        if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
+                wifi_sta_list_t stations;
+                int clients = (esp_wifi_ap_get_sta_list(&stations) == ESP_OK)
+                    ? (int)stations.num : -1;
+                snprintf(detail, sizeof(detail), " | AP \"%s\" ch %d, %d client(s)",
+                         (char *)cfg.ap.ssid, (int)cfg.ap.channel, clients);
+            } else {
+                snprintf(detail, sizeof(detail), " | AP mode but no config readable");
+            }
+        } else if (mode == WIFI_MODE_STA) {
+            wifi_ap_record_t ap;
+            if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+                esp_netif_ip_info_t ip = { 0 };
+                esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                if (netif != NULL) {
+                    esp_netif_get_ip_info(netif, &ip);
+                }
+                snprintf(detail, sizeof(detail), " | joined \"%s\" rssi %d, ip " IPSTR,
+                         (char *)ap.ssid, ap.rssi, IP2STR(&ip.ip));
+            } else {
+                snprintf(detail, sizeof(detail), " | STA mode, not joined");
+            }
+        }
+
+        ESP_LOGI(TAG, "alive: uptime %llus, heap %u, mode %d%s",
                  (unsigned long long)(esp_timer_get_time() / 1000000),
-                 (unsigned int)esp_get_free_heap_size(), (int)mode);
+                 (unsigned int)esp_get_free_heap_size(), (int)mode, detail);
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
