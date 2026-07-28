@@ -33,15 +33,27 @@ static esp_err_t load_credentials(char *ssid, size_t ssid_len, char *password, s
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
     if (err != ESP_OK) {
+        ESP_LOGW(TAG, "no stored configuration (nvs_open: %s)", esp_err_to_name(err));
         return err;
     }
 
     err = nvs_get_str(nvs, "wifi_ssid", ssid, &ssid_len);
-    if (err == ESP_OK) {
-        err = nvs_get_str(nvs, "wifi_pass", password, &password_len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "no stored SSID (nvs_get_str: %s)", esp_err_to_name(err));
+        nvs_close(nvs);
+        return err;
     }
+
+    err = nvs_get_str(nvs, "wifi_pass", password, &password_len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "stored SSID but no password (nvs_get_str: %s)", esp_err_to_name(err));
+        nvs_close(nvs);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "loaded stored credentials for \"%s\"", ssid);
     nvs_close(nvs);
-    return err;
+    return ESP_OK;
 }
 
 esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password)
@@ -64,6 +76,10 @@ esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password)
         err = nvs_commit(nvs);
     }
     nvs_close(nvs);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "storing credentials failed: %s", esp_err_to_name(err));
+    }
     return err;
 }
 
@@ -153,17 +169,40 @@ static esp_err_t portal_get_handler(httpd_req_t *req)
 
 static esp_err_t portal_save_handler(httpd_req_t *req)
 {
-    char body[256];
-    int len = httpd_req_recv(req, body, sizeof(body) - 1);
-    if (len <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+    char body[512];
+    int received = 0;
+    int remaining = req->content_len;
+
+    ESP_LOGI(TAG, "save request, content length %d", remaining);
+
+    if (remaining <= 0 || remaining >= (int)sizeof(body)) {
+        ESP_LOGE(TAG, "unexpected body length %d", remaining);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body length");
         return ESP_FAIL;
     }
-    body[len] = '\0';
+
+    /* A form body can arrive in more than one chunk, so read until the
+     * declared content length is satisfied rather than assuming one read. */
+    while (remaining > 0) {
+        int len = httpd_req_recv(req, body + received, remaining);
+        if (len == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (len <= 0) {
+            ESP_LOGE(TAG, "receiving body failed after %d bytes", received);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "truncated body");
+            return ESP_FAIL;
+        }
+        received += len;
+        remaining -= len;
+    }
+    body[received] = '\0';
 
     char ssid[33] = { 0 };
     char password[65] = { 0 };
-    if (httpd_query_key_value(body, "ssid", ssid, sizeof(ssid)) != ESP_OK) {
+    esp_err_t parsed = httpd_query_key_value(body, "ssid", ssid, sizeof(ssid));
+    if (parsed != ESP_OK) {
+        ESP_LOGE(TAG, "no ssid field in body (%s)", esp_err_to_name(parsed));
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing ssid");
         return ESP_FAIL;
     }

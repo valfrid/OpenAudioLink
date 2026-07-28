@@ -58,6 +58,9 @@ void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        /* Loud on purpose: this wipes stored Wi-Fi credentials, so if it
+         * happens on every boot the device can never be provisioned. */
+        ESP_LOGW(TAG, "erasing NVS (%s) — stored configuration is lost", esp_err_to_name(err));
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
