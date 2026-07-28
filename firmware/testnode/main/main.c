@@ -12,7 +12,11 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
@@ -32,6 +36,24 @@ static const char *TAG = "oal_testnode";
 #define HARDWARE_PROFILE CONFIG_IDF_TARGET "-devkit"
 #endif
 
+/*
+ * A periodic sign of life. USB Serial/JTAG keeps no buffer for a terminal
+ * that attaches after boot, so without this a console opened at any point
+ * during normal running stays completely blank — indistinguishable from a
+ * dead board.
+ */
+static void heartbeat_task(void *arg)
+{
+    for (;;) {
+        wifi_mode_t mode = WIFI_MODE_NULL;
+        esp_wifi_get_mode(&mode);
+        ESP_LOGI(TAG, "alive: uptime %llus, free heap %u, wifi mode %d",
+                 (unsigned long long)(esp_timer_get_time() / 1000000),
+                 (unsigned int)esp_get_free_heap_size(), (int)mode);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -42,6 +64,10 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     ESP_LOGI(TAG, "OpenAudioLink test node %s (%s)", FIRMWARE_VERSION, HARDWARE_PROFILE);
+
+    /* Started before the network so a board that fails during Wi-Fi bring-up
+     * still reports that it is alive. */
+    xTaskCreate(heartbeat_task, "oal_heartbeat", 3072, NULL, 1, NULL);
 
     if (oal_wifi_start(CONFIG_OAL_WIFI_SSID, CONFIG_OAL_WIFI_PASSWORD) == OAL_WIFI_PORTAL) {
         /* Provisioning portal is running; normal operation starts after the

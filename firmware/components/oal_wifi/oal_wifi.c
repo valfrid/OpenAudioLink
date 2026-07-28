@@ -184,10 +184,22 @@ static esp_err_t portal_save_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/*
+ * Each step is logged and checked individually rather than wrapped in
+ * ESP_ERROR_CHECK: a device that cannot start its setup portal is
+ * unrecoverable in the field, so it must say which call failed instead of
+ * aborting silently.
+ */
 static void start_portal(void)
 {
+    esp_err_t err;
+
     uint8_t mac[6];
-    ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP));
+    err = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_read_mac failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     wifi_config_t config = { 0 };
     snprintf((char *)config.ap.ssid, sizeof(config.ap.ssid), "OpenAudioLink-%02X%02X%02X",
@@ -195,19 +207,41 @@ static void start_portal(void)
     config.ap.ssid_len = strlen((char *)config.ap.ssid);
     config.ap.authmode = WIFI_AUTH_OPEN;
     config.ap.max_connection = 4;
+    config.ap.channel = 1; /* explicit: 0 is not a valid channel on all IDF versions */
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &config));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_LOGI(TAG, "starting setup access point \"%s\"", (char *)config.ap.ssid);
+
+    err = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_mode failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = esp_wifi_set_config(WIFI_IF_AP, &config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_config failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "access point started");
 
     httpd_handle_t server = NULL;
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
-    ESP_ERROR_CHECK(httpd_start(&server, &server_config));
+    err = httpd_start(&server, &server_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = portal_get_handler };
     httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = portal_save_handler };
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &root));
-    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &save));
+    httpd_register_uri_handler(server, &root);
+    httpd_register_uri_handler(server, &save);
 
     ESP_LOGW(TAG, "provisioning portal up: connect to \"%s\" and open http://192.168.4.1/",
              (char *)config.ap.ssid);
