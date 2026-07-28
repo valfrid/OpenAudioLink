@@ -232,3 +232,54 @@ This makes a receiver "follow" whichever OpenAudioLink Producer is
 present when its home network is not, with no interaction. It needs a
 well-known naming or beacon convention so a receiver can recognise an
 OpenAudioLink AP rather than any open network, which is not yet designed.
+
+---
+
+## 5. One firmware image, role held in NVS
+
+**Date:** 2026-07-27
+**Status:** accepted; not yet implemented
+
+### Decision
+
+**ESP32-S3 is the baseline for every node**, receivers included. The
+ESP32-C3 is temporary scaffolding for pre-integration work while the S3
+audio boards are in transit, and its build target is **removed** once the
+S3 hardware is in hand and verified.
+
+A node runs **one firmware image**, with its role — receiver, analog
+source, or both — read from NVS at boot rather than compiled in. Role and
+hardware profile are written during provisioning, and default to receiver
+when unset.
+
+### Why
+
+Roles are logical, not device-bound, so baking a role into a binary
+contradicts the architecture. Beyond consistency it buys real things: OTA
+cannot push the wrong role to a device, the Hub's firmware store holds
+one image instead of several, and a node changes role by configuration
+instead of a USB trip.
+
+Staying on one chip is what keeps it to a *single* image for the whole
+system. Mixed silicon would mean two images forever, since different
+targets need different binaries regardless of how the role is chosen.
+
+A C3 is technically adequate as a receiver — one incoming stream, jitter
+buffer, I²S out, no replication. It is not adequate as a Producer feeding
+several rooms, and a device that cannot take a role is an asymmetry to be
+remembered forever. Where local status display is wanted, an external I²C
+OLED fits any board and is far more readable than the 72×40 panel on the
+C3 Super Mini.
+
+### Consequences
+
+- Provisioning writes role and hardware profile to NVS; discovery and
+  `/status` report the stored role rather than a compile-time constant.
+- The image must contain both roles' code, so it must fit the OTA slot
+  with margin. At the time of writing the app is ~979 KB in a 1 MB slot,
+  built at `-Og`. Size optimisation and checking whether the OTA path
+  drags in mbedTLS for HTTPS unused on a trusted LAN should both be done
+  **before** merging the roles, not after the slot overflows.
+- Removing the C3 target is a deliberate step with a trigger — S3
+  hardware verified — not a gradual drift. Until then both targets build
+  in CI.
