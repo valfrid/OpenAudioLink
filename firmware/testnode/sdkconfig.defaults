@@ -14,3 +14,10 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 # OTA images are fetched from the Hub over plain HTTP on the trusted local
 # network; TLS for OTA is revisited before 1.0.
 CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+
+# Mobile browsers send far more than the 512-byte default in request
+# headers (User-Agent, Accept, sec-ch-*), which the HTTP server rejects
+# with 431 before any handler runs — the provisioning form could not be
+# submitted from a phone.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024

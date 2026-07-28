@@ -167,13 +167,45 @@ static esp_err_t portal_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, PORTAL_PAGE, HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t portal_save_handler(httpd_req_t *req)
+/*
+ * Applies credentials from a urlencoded "ssid=...&password=..." string,
+ * whatever request shape delivered it.
+ */
+static esp_err_t apply_credentials(httpd_req_t *req, char *form)
+{
+    char ssid[33] = { 0 };
+    char password[65] = { 0 };
+
+    esp_err_t parsed = httpd_query_key_value(form, "ssid", ssid, sizeof(ssid));
+    if (parsed != ESP_OK) {
+        ESP_LOGE(TAG, "no ssid field in request (%s)", esp_err_to_name(parsed));
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing ssid");
+        return ESP_FAIL;
+    }
+    httpd_query_key_value(form, "password", password, sizeof(password));
+    url_decode(ssid);
+    url_decode(password);
+
+    if (oal_wifi_set_credentials(ssid, password) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not save");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "credentials saved for \"%s\", rebooting", ssid);
+    httpd_resp_send(req, "Saved. The device is rebooting and will join your network.",
+                    HTTPD_RESP_USE_STRLEN);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;
+}
+
+static esp_err_t portal_save_post_handler(httpd_req_t *req)
 {
     char body[512];
     int received = 0;
     int remaining = req->content_len;
 
-    ESP_LOGI(TAG, "save request, content length %d", remaining);
+    ESP_LOGI(TAG, "save (POST), content length %d", remaining);
 
     if (remaining <= 0 || remaining >= (int)sizeof(body)) {
         ESP_LOGE(TAG, "unexpected body length %d", remaining);
@@ -198,29 +230,27 @@ static esp_err_t portal_save_handler(httpd_req_t *req)
     }
     body[received] = '\0';
 
-    char ssid[33] = { 0 };
-    char password[65] = { 0 };
-    esp_err_t parsed = httpd_query_key_value(body, "ssid", ssid, sizeof(ssid));
-    if (parsed != ESP_OK) {
-        ESP_LOGE(TAG, "no ssid field in body (%s)", esp_err_to_name(parsed));
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing ssid");
-        return ESP_FAIL;
-    }
-    httpd_query_key_value(body, "password", password, sizeof(password));
-    url_decode(ssid);
-    url_decode(password);
+    return apply_credentials(req, body);
+}
 
-    if (oal_wifi_set_credentials(ssid, password) != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not save");
-        return ESP_FAIL;
+/*
+ * Some mobile browsers submit the form as GET, putting the fields in the
+ * query string. Rejecting that with 405 leaves the user unable to
+ * provision the device, so both shapes are accepted.
+ */
+static esp_err_t portal_save_get_handler(httpd_req_t *req)
+{
+    char query[512];
+
+    esp_err_t err = httpd_req_get_url_query_str(req, query, sizeof(query));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "save (GET) without usable query (%s); showing the form again",
+                 esp_err_to_name(err));
+        return httpd_resp_send(req, PORTAL_PAGE, HTTPD_RESP_USE_STRLEN);
     }
 
-    ESP_LOGI(TAG, "credentials saved for \"%s\", rebooting", ssid);
-    httpd_resp_send(req, "Saved. The device is rebooting and will join your network.",
-                    HTTPD_RESP_USE_STRLEN);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    esp_restart();
-    return ESP_OK;
+    ESP_LOGI(TAG, "save (GET), query length %d", (int)strlen(query));
+    return apply_credentials(req, query);
 }
 
 /*
@@ -278,9 +308,11 @@ static void start_portal(void)
     }
 
     httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = portal_get_handler };
-    httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = portal_save_handler };
+    httpd_uri_t save_post = { .uri = "/save", .method = HTTP_POST, .handler = portal_save_post_handler };
+    httpd_uri_t save_get = { .uri = "/save", .method = HTTP_GET, .handler = portal_save_get_handler };
     httpd_register_uri_handler(server, &root);
-    httpd_register_uri_handler(server, &save);
+    httpd_register_uri_handler(server, &save_post);
+    httpd_register_uri_handler(server, &save_get);
 
     ESP_LOGW(TAG, "provisioning portal up: connect to \"%s\" and open http://192.168.4.1/",
              (char *)config.ap.ssid);
