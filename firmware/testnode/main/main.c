@@ -61,7 +61,7 @@ static void heartbeat_task(void *arg)
         /* The state, not just a mode number: catching the boot log over
          * native USB is unreliable because the port dies with every reset,
          * so everything needed to diagnose the node is repeated here. */
-        char detail[128] = "";
+        char detail[160] = "";
         if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) {
             wifi_config_t cfg;
             if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
@@ -81,8 +81,16 @@ static void heartbeat_task(void *arg)
                 if (netif != NULL) {
                     esp_netif_get_ip_info(netif, &ip);
                 }
-                snprintf(detail, sizeof(detail), " | joined \"%s\" rssi %d, ip " IPSTR,
-                         (char *)ap.ssid, ap.rssi, IP2STR(&ip.ip));
+                /* The BSSID, not just the SSID: in a mesh every node
+                 * advertises the same name, so the BSSID is the only way
+                 * to tell which one this is and whether a weak signal
+                 * means "far from the right node" or "on the wrong one". */
+                snprintf(detail, sizeof(detail),
+                         " | joined \"%s\" bssid %02x:%02x:%02x:%02x:%02x:%02x"
+                         " ch %d rssi %d, ip " IPSTR,
+                         (char *)ap.ssid, ap.bssid[0], ap.bssid[1], ap.bssid[2],
+                         ap.bssid[3], ap.bssid[4], ap.bssid[5],
+                         (int)ap.primary, ap.rssi, IP2STR(&ip.ip));
             } else {
                 snprintf(detail, sizeof(detail), " | STA mode, not joined");
             }

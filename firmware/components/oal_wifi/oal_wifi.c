@@ -110,6 +110,26 @@ static bool try_station(const char *ssid, const char *password)
     strlcpy((char *)config.sta.ssid, ssid, sizeof(config.sta.ssid));
     strlcpy((char *)config.sta.password, password, sizeof(config.sta.password));
 
+    /*
+     * In a mesh every node advertises the same SSID under a different
+     * BSSID, so joining "the network" means choosing between them. The
+     * zeroed default is WIFI_FAST_SCAN, which takes the first node that
+     * answers and never compares — the driver's remembered channel is
+     * probed first, so a node that once landed on a distant mesh point
+     * returns to it after every reboot however close a stronger one is.
+     * sort_method has no effect in that mode; there is nothing to sort.
+     *
+     * Scan every channel and take the strongest instead. It costs a second
+     * or so at boot, which buys a receiver the link margin it needs: a
+     * stream is ~2.4 Mbit/s of unicast, and the difference between -55 and
+     * -77 dBm is the difference between headroom and dropouts.
+     */
+    config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+    /* Explicit: 0 here means "unset", and a literal 0 dBm floor would
+     * reject every real access point. */
+    config.sta.threshold.rssi = -127;
+
     s_retries = 0;
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
 
