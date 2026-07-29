@@ -19,21 +19,29 @@ namespace OpenAudioLink.Core.Tests;
 /// </summary>
 public class DiscoverySocketTests
 {
+    /// <summary>
+    /// Bound to loopback rather than any-address: the endpoint of a socket
+    /// bound to 0.0.0.0 is 0.0.0.0, and Windows rejects that as a send
+    /// destination where Linux quietly reads it as localhost.
+    /// </summary>
+    private static UdpClient LoopbackClient() => new(new IPEndPoint(IPAddress.Loopback, 0));
+
+    private static IPEndPoint EndpointOf(UdpClient client) => (IPEndPoint)client.Client.LocalEndPoint!;
+
     /// <summary>A loopback port with nothing listening on it.</summary>
     private static IPEndPoint ClosedPort()
     {
-        using var probe = new UdpClient(0, AddressFamily.InterNetwork);
-        var port = ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
-        return new IPEndPoint(IPAddress.Loopback, port);
+        using var probe = LoopbackClient();
+        return EndpointOf(probe);
     }
 
     [Fact]
     public async Task Sending_to_a_closed_port_does_not_break_later_sends()
     {
-        using var sender = new UdpClient(0, AddressFamily.InterNetwork);
+        using var sender = LoopbackClient();
         DiscoveryService.SuppressConnectionReset(sender.Client);
-        using var listener = new UdpClient(0, AddressFamily.InterNetwork);
-        var listenerEndpoint = (IPEndPoint)listener.Client.LocalEndPoint!;
+        using var listener = LoopbackClient();
+        var listenerEndpoint = EndpointOf(listener);
         var closed = ClosedPort();
 
         // Several times over, with time for the ICMP reply to come back
@@ -55,9 +63,9 @@ public class DiscoverySocketTests
     [Fact]
     public async Task Sending_to_a_closed_port_does_not_break_receiving()
     {
-        using var receiver = new UdpClient(0, AddressFamily.InterNetwork);
+        using var receiver = LoopbackClient();
         DiscoveryService.SuppressConnectionReset(receiver.Client);
-        var receiverEndpoint = (IPEndPoint)receiver.Client.LocalEndPoint!;
+        var receiverEndpoint = EndpointOf(receiver);
         var closed = ClosedPort();
 
         for (var i = 0; i < 3; i++)
@@ -66,7 +74,7 @@ public class DiscoverySocketTests
             await Task.Delay(50);
         }
 
-        using var sender = new UdpClient(0, AddressFamily.InterNetwork);
+        using var sender = LoopbackClient();
         await sender.SendAsync("announce"u8.ToArray(), receiverEndpoint);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -78,7 +86,7 @@ public class DiscoverySocketTests
     [Fact]
     public void Suppressing_connection_reset_never_throws()
     {
-        using var client = new UdpClient(0, AddressFamily.InterNetwork);
+        using var client = LoopbackClient();
         DiscoveryService.SuppressConnectionReset(client.Client);
     }
 }
