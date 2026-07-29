@@ -38,6 +38,35 @@ public sealed class DiscoveryService : BackgroundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Stops Windows reporting an ICMP port-unreachable as a socket error.
+    ///
+    /// Probing devices directly means sending to a device that may be
+    /// rebooting, and a rebooting device answers with ICMP port-unreachable.
+    /// Windows then fails the *next* operation on the socket with
+    /// WSAECONNRESET — so a node restarting after an update breaks the
+    /// socket the Hub uses to hear from every other device. Discovery is
+    /// exactly where this bites, because the Hub is obliged to talk to
+    /// devices that come and go.
+    /// </summary>
+    public static void SuppressConnectionReset(Socket socket, ILogger? logger = null)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        const int SioUdpConnReset = unchecked((int)0x9800000C);
+        try
+        {
+            socket.IOControl(SioUdpConnReset, [0, 0, 0, 0], null);
+        }
+        catch (SocketException ex)
+        {
+            logger?.LogDebug(ex, "Could not disable UDP connection reset");
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var client = new UdpClient();
@@ -45,14 +74,42 @@ public sealed class DiscoveryService : BackgroundService
         client.Client.Bind(new IPEndPoint(IPAddress.Any, ProtocolSuite.DiscoveryPort));
         client.JoinMulticastGroup(ProtocolSuite.DiscoveryMulticastGroup);
         client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
+        SuppressConnectionReset(client.Client, _logger);
 
         var groupEndpoint = new IPEndPoint(ProtocolSuite.DiscoveryMulticastGroup, ProtocolSuite.DiscoveryPort);
-        await client.SendAsync(new DiscoveryProbe { ProtocolVersion = ProtocolSuite.Version }.Serialize(), groupEndpoint, stoppingToken);
+        await TrySendAsync(
+            client, new DiscoveryProbe { ProtocolVersion = ProtocolSuite.Version }.Serialize(),
+            groupEndpoint, stoppingToken);
 
         await Task.WhenAll(
             ReceiveLoopAsync(client, stoppingToken),
             AnnounceLoopAsync(client, groupEndpoint, stoppingToken),
             ProbeLoopAsync(client, groupEndpoint, stoppingToken));
+    }
+
+    /// <summary>
+    /// Sends without letting one unreachable destination end a loop. A
+    /// device that is offline, rebooting, or gone must not stop the Hub
+    /// discovering everything else — and the whole point of these loops is
+    /// to keep running while devices come and go.
+    /// </summary>
+    private async Task<bool> TrySendAsync(
+        UdpClient client, byte[] payload, IPEndPoint destination, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await client.SendAsync(payload, destination, stoppingToken);
+            return true;
+        }
+        catch (SocketException ex)
+        {
+            _logger.LogDebug(ex, "Discovery send to {Destination} failed", destination);
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     private async Task ReceiveLoopAsync(UdpClient client, CancellationToken stoppingToken)
@@ -70,7 +127,11 @@ public sealed class DiscoveryService : BackgroundService
             }
             catch (SocketException ex)
             {
+                // Keep listening, but do not spin: if the socket is broken
+                // rather than merely interrupted, a bare continue would burn
+                // a core reporting the same error forever.
                 _logger.LogWarning(ex, "Discovery receive failed");
+                await Task.Delay(TimeSpan.FromMilliseconds(100), stoppingToken);
                 continue;
             }
 
@@ -87,7 +148,8 @@ public sealed class DiscoveryService : BackgroundService
                     break;
 
                 case DiscoveryProbe:
-                    await client.SendAsync(BuildAnnounce().Serialize(), datagram.RemoteEndPoint, stoppingToken);
+                    await TrySendAsync(
+                        client, BuildAnnounce().Serialize(), datagram.RemoteEndPoint, stoppingToken);
                     break;
             }
         }
@@ -108,14 +170,14 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                await client.SendAsync(probe, groupEndpoint, stoppingToken);
+                await TrySendAsync(client, probe, groupEndpoint, stoppingToken);
 
                 foreach (var device in _registry.Snapshot())
                 {
                     if (IPAddress.TryParse(device.Address, out var address))
                     {
-                        await client.SendAsync(
-                            probe, new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
+                        await TrySendAsync(
+                            client, probe, new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
                     }
                 }
             }
@@ -123,10 +185,6 @@ public sealed class DiscoveryService : BackgroundService
         }
         catch (OperationCanceledException)
         {
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Probe loop stopped");
         }
     }
 
@@ -137,7 +195,7 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                await client.SendAsync(BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
+                await TrySendAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));
         }
