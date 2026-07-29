@@ -62,11 +62,14 @@ install scripts. From an **elevated** PowerShell prompt, in the folder
 you extracted:
 
 ```powershell
-cd scripts
-Set-ExecutionPolicy -Scope Process -Bypass -Force
+cd <the folder you extracted>\scripts
+Set-ExecutionPolicy Bypass -Scope Process -Force
 Get-ChildItem -Recurse | Unblock-File
 .\install-service.ps1
 ```
+
+An elevated prompt opens in `system32`, so the `cd` is needed even if you
+were already in the right place.
 
 Three details that are easy to trip over, all of them PowerShell rather
 than us:
@@ -78,7 +81,12 @@ than us:
   execution-policy change above applies only to that one PowerShell
   process, leaving the machine's setting untouched.
 - **The prompt must be elevated**, or the script stops immediately —
-  registering a service and writing firewall rules both need it.
+  registering a service and writing firewall rules both need it. Use
+  right-click → *Run as administrator*; there is no way to elevate an
+  already-open prompt.
+- **`Bypass` is a value, not a switch**: it is
+  `Set-ExecutionPolicy Bypass -Scope Process`, not
+  `Set-ExecutionPolicy -Bypass`.
 
 That copies the Hub to `C:\Program Files\OpenAudioLink`, keeps its state
 in `C:\ProgramData\OpenAudioLink`, registers a service that starts
