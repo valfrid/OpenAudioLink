@@ -330,3 +330,43 @@ scaffolding per decision 5.
 - The enclosure gains an antenna mount — a U.FL pigtail to an SMA
   bulkhead, or a retention point for the supplied flexible antenna — and
   loses the keep-out zone.
+
+---
+
+## 7. Several Hub instances are legitimate; per-instance roles come later
+
+**Date:** 2026-07-27
+**Status:** accepted
+
+### Decision
+
+More than one Hub may run on a network, and that is a normal deployment
+rather than a mistake. The expected shape is a **server instance** doing
+Controller and Provisioner work as a Windows service, plus **desktop
+instances** acting as Producers for the audio playing on those PCs.
+
+Every instance currently offers every role it is capable of. Choosing
+which roles an instance takes — at startup or at runtime — is
+**deferred**; simplicity now is worth more than the configurability.
+
+### Why
+
+It falls out of the role model: roles are logical and a machine may
+implement several. It is also forced by a real constraint — capture
+cannot run in a Windows service, so any PC whose audio should be streamed
+needs its own Hub process in a logged-in session, regardless of what the
+server is doing.
+
+### Consequences
+
+- Each instance has its own identity, persisted in its data directory, so
+  they are distinguishable in discovery and the device list.
+- Several Hubs therefore appear as devices to each other. Harmless, but
+  the list is longer than a newcomer expects.
+- There is no notion of *the* Controller: whichever UI you use issues the
+  command. Fine for a single operator; it will need thought if two people
+  can act at once, which is the same arbitration question decision 1
+  answers for stream ownership.
+- Nothing prevents two instances streaming to the same receiver today.
+  The receiver-held claim from decision 1 is what will resolve that, and
+  it applies to Hubs exactly as it applies to ESP Producers.
