@@ -253,39 +253,12 @@ static esp_err_t portal_save_get_handler(httpd_req_t *req)
     return apply_credentials(req, query);
 }
 
-/*
- * Proves the radio works, independently of whether anything can see our
- * access point: if the node can hear other networks, receive is fine and
- * the problem is transmit, antenna or association. If it hears nothing at
- * all in a normal home, the radio itself is suspect.
- */
-static void log_radio_check(void)
+/* Cheap sanity value, and it costs nothing in plain AP mode. */
+static void log_tx_power(void)
 {
     int8_t power = 0;
     if (esp_wifi_get_max_tx_power(&power) == ESP_OK) {
-        ESP_LOGI(TAG, "radio check: max tx power %d (%.2f dBm)", power, power / 4.0);
-    }
-
-    wifi_scan_config_t scan = { .show_hidden = true };
-    esp_err_t err = esp_wifi_scan_start(&scan, true);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "radio check: scan failed: %s", esp_err_to_name(err));
-        return;
-    }
-
-    uint16_t count = 0;
-    esp_wifi_scan_get_ap_num(&count);
-
-    wifi_ap_record_t records[8];
-    uint16_t wanted = (count < 8) ? count : 8;
-    if (wanted > 0 && esp_wifi_scan_get_ap_records(&wanted, records) == ESP_OK) {
-        ESP_LOGI(TAG, "radio check: %u networks heard, showing %u", count, wanted);
-        for (uint16_t i = 0; i < wanted; i++) {
-            ESP_LOGI(TAG, "  \"%s\" ch %d rssi %d",
-                     (char *)records[i].ssid, records[i].primary, records[i].rssi);
-        }
-    } else {
-        ESP_LOGW(TAG, "radio check: heard nothing — receive path is suspect");
+        ESP_LOGI(TAG, "max tx power %d (%.2f dBm)", power, power / 4.0);
     }
 }
 
@@ -316,9 +289,10 @@ static void start_portal(void)
 
     ESP_LOGI(TAG, "starting setup access point \"%s\"", (char *)config.ap.ssid);
 
-    /* AP+STA rather than AP alone so the radio check below can scan; the
-     * access point runs exactly as before. */
-    err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    /* Plain AP, not AP+STA. With the station interface also up, clients
+     * associate but the access point's DHCP server never hands out a
+     * lease, so a phone joins and then gives up with no address. */
+    err = esp_wifi_set_mode(WIFI_MODE_AP);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_set_mode failed: %s", esp_err_to_name(err));
         return;
@@ -337,7 +311,7 @@ static void start_portal(void)
     }
     ESP_LOGI(TAG, "access point started");
 
-    log_radio_check();
+    log_tx_power();
 
     httpd_handle_t server = NULL;
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
