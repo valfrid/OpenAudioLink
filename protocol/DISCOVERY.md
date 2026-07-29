@@ -77,11 +77,21 @@ Sent by a Controller to the multicast group. No additional fields:
 Devices answer with a unicast `announce` to the datagram's source address and
 source port, after a random delay of 0–500 ms to avoid a reply burst.
 
+A Controller **should probe periodically**, not only at startup, and should
+send the probe by unicast to devices it already knows in addition to the
+multicast group. Multicast frames are unacknowledged and never retransmitted
+over Wi-Fi, so periodic announces alone make a healthy device appear to flap
+between online and offline. A unicast probe and the unicast announce it
+draws both get link-layer retries, which makes liveness reliable without
+changing the protocol.
+
 ## Liveness
 
 A Controller marks a device **online** when an announce arrives and
-**offline** when no announce has been received for 3 announce intervals plus
-one second (16 s). The device's IP address is taken from the most recent
+**offline** after 30 s of silence. The window is deliberately wider than
+three announce intervals because multicast loss is normal on Wi-Fi; with
+the Controller also probing directly, a device has several chances to
+report in before it is written off. The device's IP address is taken from the most recent
 announce datagram's source address.
 
 ## Receiver rules

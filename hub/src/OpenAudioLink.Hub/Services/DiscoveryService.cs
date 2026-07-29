@@ -19,6 +19,14 @@ public sealed class DiscoveryService : BackgroundService
 {
     public static readonly TimeSpan AnnounceInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How often the Hub asks devices to report in. Multicast announces are
+    /// unacknowledged and are lost often enough over Wi-Fi to make a device
+    /// appear to flap; a probe draws a *unicast* reply, which gets
+    /// link-layer retries like any other unicast frame.
+    /// </summary>
+    public static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(5);
+
     private readonly DeviceRegistry _registry;
     private readonly HubConfig _config;
     private readonly ILogger<DiscoveryService> _logger;
@@ -43,7 +51,8 @@ public sealed class DiscoveryService : BackgroundService
 
         await Task.WhenAll(
             ReceiveLoopAsync(client, stoppingToken),
-            AnnounceLoopAsync(client, groupEndpoint, stoppingToken));
+            AnnounceLoopAsync(client, groupEndpoint, stoppingToken),
+            ProbeLoopAsync(client, groupEndpoint, stoppingToken));
     }
 
     private async Task ReceiveLoopAsync(UdpClient client, CancellationToken stoppingToken)
@@ -81,6 +90,43 @@ public sealed class DiscoveryService : BackgroundService
                     await client.SendAsync(BuildAnnounce().Serialize(), datagram.RemoteEndPoint, stoppingToken);
                     break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Probes for devices repeatedly rather than only at startup. The
+    /// multicast probe finds devices that are new; the unicast probes to
+    /// devices already known keep their liveness accurate even when
+    /// multicast is being dropped, because both that probe and the reply it
+    /// draws are unicast.
+    /// </summary>
+    private async Task ProbeLoopAsync(UdpClient client, IPEndPoint groupEndpoint, CancellationToken stoppingToken)
+    {
+        var probe = new DiscoveryProbe { ProtocolVersion = ProtocolSuite.Version }.Serialize();
+        using var timer = new PeriodicTimer(ProbeInterval);
+        try
+        {
+            do
+            {
+                await client.SendAsync(probe, groupEndpoint, stoppingToken);
+
+                foreach (var device in _registry.Snapshot())
+                {
+                    if (IPAddress.TryParse(device.Address, out var address))
+                    {
+                        await client.SendAsync(
+                            probe, new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
+                    }
+                }
+            }
+            while (await timer.WaitForNextTickAsync(stoppingToken));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Probe loop stopped");
         }
     }
 

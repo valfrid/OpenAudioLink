@@ -31,8 +31,14 @@ public sealed record DeviceRecord
 /// </summary>
 public sealed class DeviceRegistry
 {
-    /// <summary>Offline after 3 missed announce intervals plus one second.</summary>
-    public static readonly TimeSpan OfflineAfter = TimeSpan.FromSeconds(16);
+    /// <summary>
+    /// How long silence means offline. Deliberately generous: announces are
+    /// multicast, which Wi-Fi neither acknowledges nor retransmits, so a
+    /// tight window makes a healthy device flap between states. The Hub also
+    /// probes devices directly, and a probe's reply is unicast, so several
+    /// chances to report in fit inside this window.
+    /// </summary>
+    public static readonly TimeSpan OfflineAfter = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, DeviceRecord> _devices = new();
     private readonly TimeProvider _time;
