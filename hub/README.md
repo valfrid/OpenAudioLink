@@ -58,12 +58,27 @@ the web UI (TCP 41080) work.
 ### As a Windows service
 
 For a machine that should run the Hub permanently, the artifact includes
-install scripts. From an **elevated** PowerShell prompt in the extracted
-folder:
+install scripts. From an **elevated** PowerShell prompt, in the folder
+you extracted:
 
 ```powershell
-.\scripts\install-service.ps1
+cd scripts
+Set-ExecutionPolicy -Scope Process -Bypass -Force
+Get-ChildItem -Recurse | Unblock-File
+.\install-service.ps1
 ```
+
+Three details that are easy to trip over, all of them PowerShell rather
+than us:
+
+- **The `.\` prefix is required.** PowerShell does not run scripts from
+  the current directory without an explicit path.
+- **Scripts extracted from a downloaded zip are blocked** by the default
+  `RemoteSigned` policy. `Unblock-File` clears that mark, and the
+  execution-policy change above applies only to that one PowerShell
+  process, leaving the machine's setting untouched.
+- **The prompt must be elevated**, or the script stops immediately —
+  registering a service and writing firewall rules both need it.
 
 That copies the Hub to `C:\Program Files\OpenAudioLink`, keeps its state
 in `C:\ProgramData\OpenAudioLink`, registers a service that starts
