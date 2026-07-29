@@ -1,4 +1,5 @@
 using System.Text;
+using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Discovery;
 using OpenAudioLink.Core.Protocol;
 using Xunit;
