@@ -31,6 +31,21 @@ public sealed class FirmwareStore
     public bool Exists(string file) =>
         TrySanitize(file, out var path) && File.Exists(path);
 
+    /// <summary>
+    /// An ESP-IDF application image carries an <c>esp_app_desc_t</c> whose
+    /// magic word sits at offset 0x20. A merged flash image starts with the
+    /// bootloader instead, so it fails this check — which matters because
+    /// both begin with the same 0xE9 image magic and are otherwise easy to
+    /// confuse. Writing a merged image into an OTA slot cannot boot.
+    /// </summary>
+    private const int AppDescriptorOffset = 0x20;
+    private static readonly byte[] AppDescriptorMagic = [0x32, 0x54, 0xCD, 0xAB];
+
+    public static bool LooksLikeApplicationImage(ReadOnlySpan<byte> head) =>
+        head.Length >= AppDescriptorOffset + AppDescriptorMagic.Length
+        && head[0] == 0xE9
+        && head.Slice(AppDescriptorOffset, AppDescriptorMagic.Length).SequenceEqual(AppDescriptorMagic);
+
     public async Task<FirmwareImage?> SaveAsync(string file, Stream content, CancellationToken cancellationToken)
     {
         if (!TrySanitize(file, out var path))
@@ -41,6 +56,19 @@ public sealed class FirmwareStore
         await using (var target = File.Create(path))
         {
             await content.CopyToAsync(target, cancellationToken);
+        }
+
+        var head = new byte[64];
+        await using (var written = File.OpenRead(path))
+        {
+            int read = await written.ReadAsync(head, cancellationToken);
+            if (!LooksLikeApplicationImage(head.AsSpan(0, read)))
+            {
+                File.Delete(path);
+                throw new InvalidFirmwareImageException(
+                    $"'{file}' is not an ESP-IDF application image. Upload the '-ota.bin' " +
+                    "file, not the merged '-flash.bin' used for USB flashing.");
+            }
         }
 
         var info = new FileInfo(path);
@@ -70,5 +98,13 @@ public sealed class FirmwareStore
     {
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+}
+
+/// <summary>Thrown when an upload cannot be installed over the air.</summary>
+public sealed class InvalidFirmwareImageException : Exception
+{
+    public InvalidFirmwareImageException(string message) : base(message)
+    {
     }
 }

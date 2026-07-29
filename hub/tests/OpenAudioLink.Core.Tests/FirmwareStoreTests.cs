@@ -49,3 +49,50 @@ public class FirmwareStoreTests : IDisposable
         }
     }
 }
+
+public class FirmwareImageValidationTests
+{
+    private static byte[] Image(byte first, bool withAppDescriptor)
+    {
+        var image = new byte[64];
+        image[0] = first;
+        if (withAppDescriptor)
+        {
+            // esp_app_desc_t magic word 0xABCD5432, little-endian, at 0x20.
+            image[0x20] = 0x32;
+            image[0x21] = 0x54;
+            image[0x22] = 0xCD;
+            image[0x23] = 0xAB;
+        }
+        return image;
+    }
+
+    [Fact]
+    public void Application_image_is_accepted()
+    {
+        Assert.True(FirmwareStore.LooksLikeApplicationImage(Image(0xE9, withAppDescriptor: true)));
+    }
+
+    /// <summary>
+    /// A merged flash image starts with the bootloader, so it shares the
+    /// 0xE9 magic but carries no application descriptor. Writing one into an
+    /// OTA slot cannot boot, so it must be refused at upload.
+    /// </summary>
+    [Fact]
+    public void Merged_flash_image_is_rejected()
+    {
+        Assert.False(FirmwareStore.LooksLikeApplicationImage(Image(0xE9, withAppDescriptor: false)));
+    }
+
+    [Fact]
+    public void Arbitrary_file_is_rejected()
+    {
+        Assert.False(FirmwareStore.LooksLikeApplicationImage(Image(0x50, withAppDescriptor: true)));
+    }
+
+    [Fact]
+    public void Truncated_file_is_rejected()
+    {
+        Assert.False(FirmwareStore.LooksLikeApplicationImage(new byte[] { 0xE9, 0x00 }));
+    }
+}

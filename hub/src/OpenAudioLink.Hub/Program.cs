@@ -81,10 +81,17 @@ app.MapPost("/api/firmware", async (HttpRequest request, FirmwareStore store, Ca
     }
 
     await using var content = file.OpenReadStream();
-    var saved = await store.SaveAsync(file.FileName, content, cancellationToken);
-    return saved is null
-        ? Results.BadRequest(new { error = "invalid file name; expected a plain .bin name" })
-        : Results.Ok(saved);
+    try
+    {
+        var saved = await store.SaveAsync(file.FileName, content, cancellationToken);
+        return saved is null
+            ? Results.BadRequest(new { error = "invalid file name; expected a plain .bin name" })
+            : Results.Ok(saved);
+    }
+    catch (InvalidFirmwareImageException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapPost("/api/devices/{id}/reboot",
