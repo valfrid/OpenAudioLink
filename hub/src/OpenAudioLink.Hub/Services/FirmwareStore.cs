@@ -58,17 +58,21 @@ public sealed class FirmwareStore
             await content.CopyToAsync(target, cancellationToken);
         }
 
+        // The handle must be closed before deleting: Windows refuses to
+        // delete a file that is still open, where Unix allows it.
         var head = new byte[64];
+        int read;
         await using (var written = File.OpenRead(path))
         {
-            int read = await written.ReadAsync(head, cancellationToken);
-            if (!LooksLikeApplicationImage(head.AsSpan(0, read)))
-            {
-                File.Delete(path);
-                throw new InvalidFirmwareImageException(
-                    $"'{file}' is not an ESP-IDF application image. Upload the '-ota.bin' " +
-                    "file, not the merged '-flash.bin' used for USB flashing.");
-            }
+            read = await written.ReadAsync(head, cancellationToken);
+        }
+
+        if (!LooksLikeApplicationImage(head.AsSpan(0, read)))
+        {
+            File.Delete(path);
+            throw new InvalidFirmwareImageException(
+                $"'{file}' is not an ESP-IDF application image. Upload the '-ota.bin' " +
+                "file, not the merged '-flash.bin' used for USB flashing.");
         }
 
         var info = new FileInfo(path);
