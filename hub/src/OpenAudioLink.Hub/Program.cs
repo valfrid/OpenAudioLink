@@ -133,6 +133,35 @@ app.MapPost("/api/devices/{id}/ota",
     return ok ? Results.Ok(new { status = "accepted" }) : Results.StatusCode(502);
 });
 
+app.MapPost("/api/devices/{id}/roles",
+    async (string id, RolesRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var roles = request.Roles ?? [];
+    if (roles.Count == 0)
+    {
+        return Results.BadRequest(new { error = "at least one role is required" });
+    }
+
+    // Reject names the device would reject anyway, so the operator gets a
+    // clear message here instead of a 400 relayed from the node.
+    var unknown = roles.Where(r => !DeviceRole.IsKnown(r)).ToList();
+    if (unknown.Count > 0)
+    {
+        return Results.BadRequest(new { error = $"unknown role(s): {string.Join(", ", unknown)}" });
+    }
+
+    var ok = await commands.SetRolesAsync(device, roles, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", roles, appliesAt = "reboot" })
+        : Results.StatusCode(502);
+});
+
 // --- Audio streaming (Phase 3) ---------------------------------------
 // One stream at a time, from either a generated tone (diagnostics) or
 // this computer's audio (the real Producer path).
@@ -321,6 +350,8 @@ app.MapGet("/api/stream.sdp", (HttpContext context, RtpStreamer streamer) =>
 app.Run();
 
 internal sealed record OtaRequest(string? File);
+
+internal sealed record RolesRequest(IReadOnlyList<string>? Roles);
 
 internal static class StreamLimits
 {

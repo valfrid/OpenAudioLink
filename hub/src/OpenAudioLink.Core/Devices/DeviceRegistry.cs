@@ -13,7 +13,7 @@ public sealed record DeviceRecord
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
-    public required string Role { get; init; }
+    public required IReadOnlyList<string> Roles { get; init; }
     public required string HardwareProfile { get; init; }
     public required string FirmwareVersion { get; init; }
     public required string ProtocolVersion { get; init; }
@@ -54,7 +54,7 @@ public sealed class DeviceRegistry
         {
             Id = announcement.Id,
             Name = announcement.Name,
-            Role = announcement.Role,
+            Roles = announcement.Roles,
             HardwareProfile = announcement.HardwareProfile,
             FirmwareVersion = announcement.FirmwareVersion,
             ProtocolVersion = announcement.ProtocolVersion,

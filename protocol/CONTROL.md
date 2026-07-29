@@ -35,6 +35,7 @@ configuration — never audio.
 | GET    | `/config`         | Read configuration                          |
 | PUT    | `/config`         | Write configuration                         |
 | POST   | `/factory-reset`  | Request factory reset (clears identity, Wi-Fi, config) |
+| POST   | `/config`         | Set the roles the node takes                |
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 
 ### GET /status
@@ -44,7 +45,7 @@ configuration — never audio.
   "oal": "0.1",
   "id": "oal-9f8e7d6c-…",
   "name": "Kitchen",
-  "role": "receiver",
+  "roles": ["consumer"],
   "hw": "esp32s3-pcm5102a",
   "fw": "0.1.0",
   "uptimeS": 1234,
@@ -55,6 +56,19 @@ configuration — never audio.
 
 `audio.state` is `"idle"` or `"playing"`; stream details are added in
 Phase 3.
+
+### POST /config
+
+Sets the roles a node takes (`docs/DECISIONS.md` decision 5): one firmware
+image serves every node, and what a given board does is configuration.
+
+Request `{ "roles": ["consumer"] }` → response
+`{ "status": "stored", "roles": ["consumer"], "appliesAt": "reboot" }`.
+
+At least one role is required, and an unrecognised name rejects the whole
+request with `400` rather than silently storing a subset. The roles take
+effect at the next boot, because they decide which tasks start; changing
+them under a running node would mean tearing down live audio.
 
 ### POST /rename
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include "oal_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,7 +17,7 @@ extern "C" {
 typedef struct {
     char id[40];                    /* "mac-…" or "oal-…", see protocol/IDENTITY.md */
     char name[32];
-    const char *role;               /* "receiver", "analog-source" */
+    oal_roles_t roles;              /* set, not one value; see oal_config.h */
     const char *hardware_profile;   /* e.g. "esp32c3-devkit" */
     const char *firmware_version;   /* semver */
 } oal_discovery_config_t;

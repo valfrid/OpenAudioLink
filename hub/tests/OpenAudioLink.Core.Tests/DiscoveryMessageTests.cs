@@ -12,7 +12,7 @@ public class DiscoveryMessageTests
         ProtocolVersion = ProtocolSuite.Version,
         Id = "mac-a0b1c2d3e4f5",
         Name = "testnode",
-        Role = "receiver",
+        Roles = [DeviceRole.Consumer],
         HardwareProfile = "esp32c3-devkit",
         FirmwareVersion = "0.1.0",
         Capabilities = ["control-v0"],
@@ -26,7 +26,7 @@ public class DiscoveryMessageTests
         var announce = Assert.IsType<DeviceAnnouncement>(parsed);
         Assert.Equal(Sample.Id, announce.Id);
         Assert.Equal(Sample.Name, announce.Name);
-        Assert.Equal(Sample.Role, announce.Role);
+        Assert.Equal(Sample.Roles, announce.Roles);
         Assert.Equal(Sample.HardwareProfile, announce.HardwareProfile);
         Assert.Equal(Sample.FirmwareVersion, announce.FirmwareVersion);
         Assert.Equal(Sample.Capabilities, announce.Capabilities);
@@ -44,7 +44,7 @@ public class DiscoveryMessageTests
     [Fact]
     public void Unknown_fields_are_ignored()
     {
-        var json = """{"oal":"0.1","type":"announce","id":"mac-a0b1c2d3e4f5","name":"n","role":"receiver","hw":"esp32c3-devkit","fw":"0.1.0","futureField":42}""";
+        var json = """{"oal":"0.1","type":"announce","id":"mac-a0b1c2d3e4f5","name":"n","roles":["consumer"],"hw":"esp32c3-devkit","fw":"0.1.0","futureField":42}""";
         Assert.True(DiscoveryMessage.TryParse(Encoding.UTF8.GetBytes(json), out var parsed));
         Assert.IsType<DeviceAnnouncement>(parsed);
     }

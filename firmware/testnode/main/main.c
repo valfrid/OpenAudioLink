@@ -22,6 +22,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#include "oal_config.h"
 #include "oal_control.h"
 #include "oal_discovery.h"
 #include "oal_wifi.h"
@@ -132,10 +133,18 @@ void app_main(void)
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
 
+    /* Roles come from NVS, not from this binary (decision 5): two
+     * identical boards become a producer and a consumer by configuration.
+     * Unset means consumer, which is the common case. */
+    oal_roles_t roles = oal_config_get_roles();
+    char role_names[OAL_ROLES_STR_MAX];
+    oal_roles_to_list(roles, role_names, sizeof(role_names));
+    ESP_LOGI(TAG, "roles: %s", role_names);
+
     static oal_discovery_config_t discovery = {
-        .role = "receiver",
         .hardware_profile = HARDWARE_PROFILE,
     };
+    discovery.roles = roles;
     /* Not a static initialiser: the version is read from the image header
      * at run time. It points into the header, which stays mapped. */
     discovery.firmware_version = FIRMWARE_VERSION;
@@ -146,7 +155,7 @@ void app_main(void)
     static oal_control_config_t control;
     control.id = discovery.id;
     control.name = discovery.name;
-    control.role = discovery.role;
+    control.roles = discovery.roles;
     control.hardware_profile = discovery.hardware_profile;
     control.firmware_version = discovery.firmware_version;
 

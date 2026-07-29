@@ -71,7 +71,7 @@
   <table id="devices" hidden>
     <thead>
       <tr>
-        <th>Status</th><th>Name</th><th>Role</th><th>Hardware</th>
+        <th>Status</th><th>Name</th><th>Roles</th><th>Hardware</th>
         <th>Firmware</th><th>Address</th><th>Actions</th>
       </tr>
     </thead>
@@ -155,10 +155,15 @@
       table.querySelector('tbody').innerHTML = devices.map(d => {
         const dot = `<span class="dot${d.online ? ' online' : ''}"></span>${d.online ? 'online' : 'offline'}`;
         const disabled = d.online ? '' : ' disabled';
-        const actions = d.role === 'hub' ? '' :
+        const roles = d.roles ?? [];
+        // The Hub is its own controller; offering to reboot or reassign it
+        // from its own page would be a footgun, not a feature.
+        const actions = roles.includes('controller') ? '' :
           `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
-          `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button>`;
-        return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(d.role)}</td>` +
+          `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
+          `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
+          `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button>`;
+        return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
           `<td>${esc(d.hardwareProfile)}</td><td>${esc(d.firmwareVersion)}</td>` +
           `<td>${esc(d.address)}</td><td>${actions}</td></tr>`;
       }).join('');
@@ -241,7 +246,29 @@
       const button = event.target.closest('button[data-cmd]');
       if (!button) return;
       const id = button.dataset.id;
-      if (button.dataset.cmd === 'reboot') {
+      if (button.dataset.cmd === 'roles') {
+        // Roles are a set, so the prompt takes a list. A node is normally
+        // one thing, but an analog source that also plays is both.
+        const current = button.dataset.roles;
+        const answer = prompt(
+          'Roles for this node, comma separated.\n' +
+          'consumer = plays audio, producer = sends audio.', current);
+        if (answer === null) return;
+        const roles = answer.split(',').map(r => r.trim()).filter(r => r);
+        if (!roles.length) { say('Give at least one role.'); return; }
+        say(`Setting roles to ${roles.join(', ')}…`);
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/roles`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roles }),
+        });
+        if (response.ok) {
+          say('Roles stored — reboot the node for them to take effect.');
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set roles: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
         say(response.ok ? 'Device is rebooting.' : 'Reboot request failed.');

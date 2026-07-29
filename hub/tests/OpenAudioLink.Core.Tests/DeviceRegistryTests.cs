@@ -14,7 +14,7 @@ public class DeviceRegistryTests
         ProtocolVersion = ProtocolSuite.Version,
         Id = id,
         Name = name,
-        Role = "receiver",
+        Roles = [DeviceRole.Consumer],
         HardwareProfile = "esp32c3-devkit",
         FirmwareVersion = "0.1.0",
     };

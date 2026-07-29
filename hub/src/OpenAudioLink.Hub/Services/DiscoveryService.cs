@@ -209,7 +209,7 @@ public sealed class DiscoveryService : BackgroundService
         ProtocolVersion = ProtocolSuite.Version,
         Id = _config.Id,
         Name = _config.Name,
-        Role = DeviceRole.Hub,
+        Roles = DeviceRole.HubRoles,
         HardwareProfile = "windows-hub",
         FirmwareVersion = HubInfo.Version,
     };

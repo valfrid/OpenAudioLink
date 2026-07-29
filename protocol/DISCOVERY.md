@@ -44,7 +44,7 @@ Fields in addition to the common ones:
 | ---------- | -------- | -------- | --------------------------------------------------- |
 | `id`       | string   | yes      | Stable device identity (see `IDENTITY.md`)          |
 | `name`     | string   | yes      | Human-readable name                                 |
-| `role`     | string   | yes      | `"receiver"`, `"analog-source"` or `"hub"`          |
+| `roles`    | string[] | yes      | Logical roles held; see below                       |
 | `hw`       | string   | yes      | Hardware-profile identifier                         |
 | `fw`       | string   | yes      | Firmware / application version                      |
 | `caps`     | string[] | no       | Capability identifiers                              |
@@ -58,13 +58,32 @@ Example:
   "type": "announce",
   "id": "mac-a0b1c2d3e4f5",
   "name": "testnode",
-  "role": "receiver",
+  "roles": ["consumer"],
   "hw": "esp32c3-devkit",
   "fw": "0.1.0",
   "caps": ["control-v0"],
   "ctrlPort": 41001
 }
 ```
+
+#### Roles
+
+Roles are capabilities, not device types (`docs/ARCHITECTURE.md` section 2),
+and a device may hold several — an analog source that also plays is both a
+producer and a consumer. `roles` is therefore a list, never a single value.
+
+| Role         | Meaning                                                   |
+| ------------ | --------------------------------------------------------- |
+| `controller` | Discovery, source selection, receiver assignment, routing |
+| `producer`   | Generates an RTP audio stream                             |
+| `consumer`   | Receives and plays audio                                  |
+
+An announce carries at least one role. A receiver ignores roles it does
+not recognise but must keep the ones it does, so a node running newer
+firmware is not treated as less capable than it claims.
+
+The Provisioner role of the architecture is not announced: nothing on the
+network acts on knowing which device performs USB flashing and recovery.
 
 ### probe
 
@@ -105,3 +124,7 @@ announce datagram's source address.
 ## Revision history
 
 - 0.1 — initial draft: announce/probe over UDP multicast, JSON payload.
+  Later in 0.1, still draft: `role` (one of `receiver`, `analog-source`,
+  `hub`) replaced by `roles`, a list drawn from the architecture's own
+  vocabulary. Two names for one concept was the problem; a device holding
+  several roles at once was the thing the single field could not express.

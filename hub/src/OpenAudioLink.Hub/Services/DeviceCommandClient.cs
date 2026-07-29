@@ -29,6 +29,19 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Stores the roles a node takes (decision 5). They apply at its next
+    /// boot, because roles decide which tasks start — changing them under a
+    /// running node would mean tearing down live audio.
+    /// </summary>
+    public async Task<bool> SetRolesAsync(
+        DeviceRecord device, IReadOnlyList<string> roles, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Setting roles on {Device} to {Roles}", device.Name, string.Join(", ", roles));
+        return await PostAsync(device, "/config", JsonSerializer.Serialize(new { roles }), cancellationToken);
+    }
+
+    /// <summary>
     /// Tells the device to pull and install a firmware image from this Hub.
     /// The download URL uses the Hub address as seen from the device's
     /// subnet, so multi-homed hosts advertise a reachable address.

@@ -1,4 +1,5 @@
 idf_component_register(
     SRCS "oal_control.c"
     INCLUDE_DIRS "include"
+    REQUIRES oal_config
     PRIV_REQUIRES esp_http_server esp_https_ota esp_partition esp_wifi esp_timer json)

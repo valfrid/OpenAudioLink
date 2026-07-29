@@ -72,8 +72,14 @@ public sealed record DeviceAnnouncement : DiscoveryMessage
     [JsonPropertyName("name")]
     public required string Name { get; init; }
 
-    [JsonPropertyName("role")]
-    public required string Role { get; init; }
+    /// <summary>
+    /// Roles are capabilities and a device may hold several
+    /// (ARCHITECTURE.md section 2), so this is a list rather than one
+    /// value — the analog source that also plays is the case that forces
+    /// it.
+    /// </summary>
+    [JsonPropertyName("roles")]
+    public required IReadOnlyList<string> Roles { get; init; }
 
     [JsonPropertyName("hw")]
     public required string HardwareProfile { get; init; }

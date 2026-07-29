@@ -17,11 +17,16 @@ static int s_announce_len;
 
 static int build_announce(void)
 {
+    char roles[OAL_ROLES_STR_MAX];
+    if (oal_roles_to_json(s_config.roles, roles, sizeof(roles)) < 0) {
+        return -1;
+    }
+
     return snprintf(s_announce, sizeof(s_announce),
                     "{\"oal\":\"" OAL_PROTOCOL_VERSION "\",\"type\":\"announce\","
-                    "\"id\":\"%s\",\"name\":\"%s\",\"role\":\"%s\","
+                    "\"id\":\"%s\",\"name\":\"%s\",\"roles\":%s,"
                     "\"hw\":\"%s\",\"fw\":\"%s\",\"ctrlPort\":%d}",
-                    s_config.id, s_config.name, s_config.role,
+                    s_config.id, s_config.name, roles,
                     s_config.hardware_profile, s_config.firmware_version,
                     OAL_DEVICE_CONTROL_PORT);
 }
@@ -123,7 +128,7 @@ static void discovery_task(void *arg)
 
 esp_err_t oal_discovery_start(const oal_discovery_config_t *config)
 {
-    if (config == NULL || config->role == NULL || config->hardware_profile == NULL
+    if (config == NULL || config->roles == OAL_ROLE_NONE || config->hardware_profile == NULL
         || config->firmware_version == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
