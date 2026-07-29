@@ -32,6 +32,16 @@ asynchronously; progress is observable via logs and, ultimately, the new
 version in discovery announces. A device that fails the update keeps
 running its current firmware.
 
+### Choosing the URL host
+
+The Controller must advertise an address the device can actually reach.
+A host running a VPN or overlay network (Tailscale, ZeroTier, Docker,
+Hyper-V) has several local addresses, and the routing table's preferred
+one is often not on the device's network — the device then fails at
+connect with no useful diagnosis. Pick the Controller address whose
+subnet contains the device, falling back to a routed address only when no
+local subnet does.
+
 ## Images
 
 - OTA images are application images only (not merged flash images).

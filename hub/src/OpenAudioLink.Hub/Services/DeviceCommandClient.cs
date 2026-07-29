@@ -1,8 +1,7 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using OpenAudioLink.Core.Devices;
+using OpenAudioLink.Core.Net;
 
 namespace OpenAudioLink.Hub.Services;
 
@@ -36,8 +35,12 @@ public sealed class DeviceCommandClient
     /// </summary>
     public async Task<bool> StartOtaAsync(DeviceRecord device, string firmwareFile, CancellationToken cancellationToken)
     {
-        var hubAddress = GetLocalAddressFor(device.Address);
+        var hubAddress = LocalAddressSelector.ForDevice(device.Address);
         var url = $"http://{hubAddress}:{_hubPort}/firmware/{Uri.EscapeDataString(firmwareFile)}";
+        // Worth logging: when an update fails at connect, the first question
+        // is always whether the node was handed an address it can reach.
+        _logger.LogInformation(
+            "Update for {Device} at {DeviceAddress}: serving {Url}", device.Name, device.Address, url);
         return await PostAsync(device, "/ota", JsonSerializer.Serialize(new { url }), cancellationToken);
     }
 
@@ -62,13 +65,6 @@ public sealed class DeviceCommandClient
             _logger.LogWarning(ex, "POST {Uri} failed", uri);
             return false;
         }
-    }
-
-    private static string GetLocalAddressFor(string deviceAddress)
-    {
-        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        socket.Connect(IPAddress.Parse(deviceAddress), 65000);
-        return ((IPEndPoint)socket.LocalEndPoint!).Address.ToString();
     }
 
     private static int ParseHubPort(string? urls)
