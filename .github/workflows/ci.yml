@@ -39,6 +39,9 @@ jobs:
           -p:PublishSingleFile=true
           --output publish
         working-directory: hub
+      - name: Include service install scripts
+        run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
+        working-directory: hub
       - uses: actions/upload-artifact@v5
         with:
           name: OpenAudioLink-Hub-win-x64

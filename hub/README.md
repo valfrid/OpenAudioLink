@@ -55,6 +55,42 @@ download `OpenAudioLink-Hub-win-x64`, extract it, and run
 on first start; allow it on private networks so discovery (UDP 41000) and
 the web UI (TCP 41080) work.
 
+### As a Windows service
+
+For a machine that should run the Hub permanently, the artifact includes
+install scripts. From an **elevated** PowerShell prompt in the extracted
+folder:
+
+```powershell
+.\scripts\install-service.ps1
+```
+
+That copies the Hub to `C:\Program Files\OpenAudioLink`, keeps its state
+in `C:\ProgramData\OpenAudioLink`, registers a service that starts
+automatically at boot and restarts after a crash, opens the firewall for
+TCP 41080 and UDP 41000, and starts it.
+
+Useful details:
+
+- **State lives in ProgramData**, not beside the executable, so upgrading
+  by re-running the script keeps the Hub's identity and uploaded
+  firmware. Re-running is the supported upgrade path — it stops, replaces
+  and restarts.
+- **Delayed automatic start**, so the network stack is up before
+  discovery binds its multicast socket.
+- **Restart on failure** after 5 s, then 10 s, then every 60 s.
+- **Logs go to the Windows Event Log** (Application), since a service has
+  no console.
+- `.\scripts\uninstall-service.ps1` removes the service and firewall
+  rules, keeping files and data unless given `-RemoveFiles`.
+
+> **Capturing this computer's audio does not work from a service.**
+> Services run in session 0 and cannot reach a logged-in user's audio
+> endpoints, so *Stream this computer's audio* will fail. Discovery,
+> device control, OTA, the test tone and the web UI all work normally.
+> To stream a PC's audio, run the Hub as a console application on that
+> PC — see `docs/WINDOWS-AUDIO-CAPTURE.md`.
+
 ### From source
 
 ```bash
