@@ -50,6 +50,20 @@ local subnet does.
 - The Hub records size and SHA-256 for every stored image
   (`GET /api/firmware`).
 
+### Version
+
+A device's firmware version is the `version` field of the `esp_app_desc_t`
+in its image header, which is also what it reports in discovery announces
+and `GET /status`. Taking both from the same place means an image cannot
+claim one version and announce another.
+
+The Controller should read that field out of a stored image and show it,
+because the failure it prevents is silent: installing an image that
+carries the version already running completes normally, reboots, and
+leaves the device reporting exactly what it reported before. Without the
+version on display that is indistinguishable from an update that did
+nothing.
+
 ## Not yet in 0.1 (planned per roadmap 2.6)
 
 - device-side checksum/signature verification before reboot

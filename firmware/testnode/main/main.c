@@ -10,6 +10,7 @@
 
 #include <string.h>
 
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -27,7 +28,15 @@
 
 static const char *TAG = "oal_testnode";
 
-#define FIRMWARE_VERSION "0.2.1"
+/*
+ * The version lives in version.txt, which ESP-IDF stamps into the image
+ * header as PROJECT_VER. Reading it back from the header rather than
+ * keeping a #define here means the version a node announces and the
+ * version carried by its firmware image cannot drift apart — so the Hub
+ * can tell you what an uploaded image actually contains before you
+ * install it.
+ */
+#define FIRMWARE_VERSION (esp_app_get_description()->version)
 
 #if CONFIG_IDF_TARGET_ESP32S3
 #define HARDWARE_PROFILE "esp32s3-devkit"
@@ -118,8 +127,10 @@ void app_main(void)
     static oal_discovery_config_t discovery = {
         .role = "receiver",
         .hardware_profile = HARDWARE_PROFILE,
-        .firmware_version = FIRMWARE_VERSION,
     };
+    /* Not a static initialiser: the version is read from the image header
+     * at run time. It points into the header, which stays mapped. */
+    discovery.firmware_version = FIRMWARE_VERSION;
     snprintf(discovery.id, sizeof(discovery.id), "mac-%02x%02x%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     strlcpy(discovery.name, CONFIG_OAL_NODE_NAME, sizeof(discovery.name));

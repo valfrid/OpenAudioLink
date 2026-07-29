@@ -112,8 +112,15 @@
     <button id="fw-upload">Upload</button>
     <label>Update image: <select id="fw-select"></select></label>
   </div>
+  <p class="hint">
+    Version and build time are read out of the image itself, so you can see
+    what an upload actually contains — an update that reinstalls the version
+    already running otherwise looks exactly like a successful one.
+  </p>
   <table id="firmware" hidden>
-    <thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead>
+    <thead>
+      <tr><th>File</th><th>Version</th><th>Built</th><th>Size</th><th>SHA-256</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
   <p id="firmware-empty" class="empty">No firmware uploaded yet.</p>
@@ -206,12 +213,16 @@
       table.hidden = images.length === 0;
       document.getElementById('firmware-empty').hidden = images.length !== 0;
       table.querySelector('tbody').innerHTML = images.map(f =>
-        `<tr><td>${esc(f.file)}</td><td>${(f.size / 1024).toFixed(0)} KiB</td>` +
+        `<tr><td>${esc(f.file)}</td><td>${esc(f.descriptor?.version ?? '—')}</td>` +
+        `<td>${esc(f.descriptor?.builtAt ?? '—')}</td><td>${(f.size / 1024).toFixed(0)} KiB</td>` +
         `<td><code>${esc(f.sha256.slice(0, 16))}…</code></td></tr>`).join('');
       const select = document.getElementById('fw-select');
       const current = select.value;
+      // The version belongs in the label: choosing the image is the moment
+      // you can still notice it is not the one you meant to install.
       select.innerHTML = images.map(f =>
-        `<option value="${esc(f.file)}">${esc(f.file)}</option>`).join('');
+        `<option value="${esc(f.file)}">${esc(f.file)}` +
+        `${f.descriptor ? ` — ${esc(f.descriptor.version)}` : ''}</option>`).join('');
       if ([...select.options].some(o => o.value === current)) select.value = current;
     }
 
