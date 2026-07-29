@@ -47,6 +47,22 @@ jobs:
           name: OpenAudioLink-Hub-win-x64
           path: hub/publish
 
+  # The RTP statistics are deliberately free of ESP-IDF headers so their
+  # arithmetic can be tested without hardware or a cross toolchain. Wrong
+  # counting here would send us chasing radio problems that are really
+  # counting problems.
+  rtp-stats:
+    name: RTP statistics (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and run
+        working-directory: firmware/components/oal_rtp
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o rtp-stats-tests oal_rtp_stats.c test/test_rtp_stats.c &&
+          ./rtp-stats-tests
+
   firmware:
     name: Firmware testnode (${{ matrix.target }})
     runs-on: ubuntu-latest
