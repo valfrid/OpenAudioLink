@@ -27,7 +27,7 @@
 
 static const char *TAG = "oal_testnode";
 
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.2.1"
 
 #if CONFIG_IDF_TARGET_ESP32S3
 #define HARDWARE_PROFILE "esp32s3-devkit"
