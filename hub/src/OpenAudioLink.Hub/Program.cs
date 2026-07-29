@@ -37,6 +37,18 @@ builder.Services.AddHostedService<DiscoveryService>();
 
 var app = builder.Build();
 
+// Device liveness and stream counters are worthless if a browser serves a
+// cached copy, and a stale reading is indistinguishable from a dead device.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api"))
+    {
+        context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        context.Response.Headers.Pragma = "no-cache";
+    }
+    await next();
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 

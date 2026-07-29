@@ -127,7 +127,7 @@
 
     async function refreshHealth() {
       try {
-        const health = await (await fetch('/api/health')).json();
+        const health = await (await fetch('/api/health', { cache: 'no-store' })).json();
         document.getElementById('hub-info').textContent =
           `${health.name} · v${health.version} · protocol ${health.protocol}`;
       } catch {
@@ -138,7 +138,7 @@
     async function refreshDevices() {
       let devices = [];
       try {
-        devices = await (await fetch('/api/devices')).json();
+        devices = await (await fetch('/api/devices', { cache: 'no-store' })).json();
       } catch {
         return;
       }
@@ -173,7 +173,7 @@
     async function refreshTone() {
       let status;
       try {
-        status = await (await fetch('/api/stream')).json();
+        status = await (await fetch('/api/stream', { cache: 'no-store' })).json();
       } catch {
         return;
       }
@@ -198,7 +198,7 @@
     async function refreshFirmware() {
       let images = [];
       try {
-        images = await (await fetch('/api/firmware')).json();
+        images = await (await fetch('/api/firmware', { cache: 'no-store' })).json();
       } catch {
         return;
       }
