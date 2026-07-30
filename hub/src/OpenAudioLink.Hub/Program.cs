@@ -167,6 +167,81 @@ app.MapPost("/api/devices/{id}/roles",
         : Results.StatusCode(502);
 });
 
+// --- Node-to-node streaming (Phase 3, synthetic source) ---------------
+// The Hub coordinates but does not relay: it tells a producer which
+// consumers to send to, and the audio goes directly between them.
+
+app.MapPost("/api/devices/{id}/stream/start",
+    async (string id, NodeStreamRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var producer))
+    {
+        return Results.NotFound();
+    }
+    if (!producer.Roles.Contains(DeviceRole.Producer))
+    {
+        return Results.BadRequest(new { error = $"{producer.Name} does not hold the producer role" });
+    }
+
+    // Destinations may be device ids or literal addresses, so a node can
+    // stream to a PC running a player as easily as to another node.
+    var destinations = new List<string>();
+    foreach (var entry in request.Destinations ?? [])
+    {
+        if (registry.TryGet(entry, out var consumer))
+        {
+            destinations.Add(consumer.Address);
+        }
+        else if (System.Net.IPAddress.TryParse(entry, out var address))
+        {
+            destinations.Add(address.ToString());
+        }
+        else
+        {
+            return Results.BadRequest(new { error = $"unknown destination '{entry}'" });
+        }
+    }
+
+    if (destinations.Count == 0)
+    {
+        return Results.BadRequest(new { error = "at least one destination is required" });
+    }
+
+    var ok = await commands.StartStreamAsync(
+        producer, destinations, request.Port ?? ProtocolSuite.RtpPort,
+        request.Source ?? "pattern", request.ToneHz ?? 1000, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "streaming", destinations })
+        : Results.StatusCode(502);
+});
+
+app.MapPost("/api/devices/{id}/stream/stop",
+    async (string id, DeviceRegistry registry, DeviceCommandClient commands,
+           CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+    var ok = await commands.StopStreamAsync(device, cancellationToken);
+    return ok ? Results.Ok(new { status = "stopped" }) : Results.StatusCode(502);
+});
+
+app.MapGet("/api/devices/{id}/stream",
+    async (string id, DeviceRegistry registry, DeviceCommandClient commands,
+           CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+    using var stream = await commands.GetStreamAsync(device, cancellationToken);
+    return stream is null
+        ? Results.StatusCode(502)
+        : Results.Text(stream.RootElement.GetRawText(), "application/json");
+});
+
 // --- Audio streaming (Phase 3) ---------------------------------------
 // One stream at a time, from either a generated tone (diagnostics) or
 // this computer's audio (the real Producer path).
@@ -357,6 +432,9 @@ app.Run();
 internal sealed record OtaRequest(string? File);
 
 internal sealed record RolesRequest(IReadOnlyList<string>? Roles);
+
+internal sealed record NodeStreamRequest(
+    IReadOnlyList<string>? Destinations, int? Port, string? Source, int? ToneHz);
 
 internal static class StreamLimits
 {

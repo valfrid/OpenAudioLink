@@ -57,6 +57,49 @@ public sealed class DeviceCommandClient
         return await PostAsync(device, "/ota", JsonSerializer.Serialize(new { url }), cancellationToken);
     }
 
+    /// <summary>
+    /// Tells a producer to stream to the given consumers. The Hub does not
+    /// relay audio (ARCHITECTURE.md section 3): it names the destinations
+    /// and the producer sends to them directly.
+    /// </summary>
+    public async Task<bool> StartStreamAsync(
+        DeviceRecord device, IReadOnlyList<string> destinations, int port,
+        string source, int toneHz, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Starting {Source} stream on {Device} to {Count} destination(s) on port {Port}",
+            source, device.Name, destinations.Count, port);
+        var body = JsonSerializer.Serialize(new { destinations, port, source, toneHz });
+        return await PostAsync(device, "/stream/start", body, cancellationToken);
+    }
+
+    /// <summary>Stops a producer, or clears a consumer's counters.</summary>
+    public async Task<bool> StopStreamAsync(DeviceRecord device, CancellationToken cancellationToken)
+    {
+        return await PostAsync(device, "/stream/stop", body: null, cancellationToken);
+    }
+
+    /// <summary>Reads a node's stream state as raw JSON, shape depending on its role.</summary>
+    public async Task<JsonDocument?> GetStreamAsync(DeviceRecord device, CancellationToken cancellationToken)
+    {
+        var uri = $"http://{device.Address}:{device.ControlPort}/stream";
+        try
+        {
+            using var response = await _http.GetAsync(uri, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return JsonDocument.Parse(json);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            _logger.LogDebug(ex, "GET {Uri} failed", uri);
+            return null;
+        }
+    }
+
     private async Task<bool> PostAsync(DeviceRecord device, string path, string? body, CancellationToken cancellationToken)
     {
         var uri = $"http://{device.Address}:{device.ControlPort}{path}";

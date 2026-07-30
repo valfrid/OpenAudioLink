@@ -85,7 +85,48 @@
   </table>
   <p id="devices-empty" class="empty">No devices discovered yet.</p>
 
-  <h2>Streaming</h2>
+  <h2>Node-to-node link test</h2>
+  <p class="hint">
+    A producer node streams a synthetic source at the real profile — L24
+    stereo, 48 kHz, 5 ms packets, 200 per second — straight to the
+    consumers you pick. The Hub only says who sends to whom; the audio
+    never passes through it.
+    <br>
+    <strong>Pattern</strong> is derived from each frame's position in the
+    stream, so the consumer recomputes every sample and reports any that
+    differ. That catches corruption a sequence-number check cannot see.
+    <strong>Tone</strong> is a sine — worth listening to once a DAC exists,
+    useless for verification, so payload errors are expected with it.
+  </p>
+  <div class="fw-bar">
+    <label>Producer <select id="link-producer"></select></label>
+    <label>To <select id="link-consumers" multiple size="3"></select></label>
+    <label>or IPs <input id="link-address" type="text" placeholder="192.168.0.71" size="20"></label>
+  </div>
+  <div class="fw-bar">
+    <label>Source
+      <select id="link-source">
+        <option value="pattern">Pattern (verifiable)</option>
+        <option value="tone">Tone (audible)</option>
+      </select>
+    </label>
+    <label>Tone Hz <input id="link-tone" type="number" value="1000" min="20" max="20000"></label>
+    <label>Port <input id="link-port" type="number" value="41100" min="1" max="65535"></label>
+    <button id="link-start">Start link</button>
+    <button id="link-stop">Stop &amp; reset counters</button>
+  </div>
+  <table id="link-results" hidden>
+    <thead>
+      <tr>
+        <th>Node</th><th>Role</th><th>Sent / received</th><th>Lost</th>
+        <th>Jitter</th><th>Dup / reorder</th><th>Payload errors</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <p id="link-status" class="hint">Pick a producer and at least one destination.</p>
+
+  <h2>Hub streaming</h2>
   <p class="hint">
     Streams audio as RTP to one or more receivers, or to a computer running
     a player such as GStreamer or ffplay. Select several destinations with
@@ -223,6 +264,8 @@
       for (const option of target.options) {
         option.selected = selected.includes(option.value);
       }
+
+      refreshLinkTargets(devices);
     }
 
     async function refreshTone() {
@@ -370,10 +413,146 @@
       refreshTone();
     });
 
+    // --- node-to-node link test -------------------------------------
+
+    function selectedLinkDestinations() {
+      const chosen = [...document.getElementById('link-consumers').selectedOptions]
+        .map(o => o.value).filter(v => v);
+      const typed = document.getElementById('link-address').value
+        .split(',').map(v => v.trim()).filter(v => v);
+      return chosen.concat(typed);
+    }
+
+    function refreshLinkTargets(devices) {
+      const producers = devices.filter(d =>
+        d.online && (d.roles ?? []).includes('producer') && !(d.roles ?? []).includes('controller'));
+      const consumers = devices.filter(d =>
+        d.online && (d.roles ?? []).includes('consumer'));
+
+      const producerSelect = document.getElementById('link-producer');
+      const chosenProducer = producerSelect.value;
+      producerSelect.innerHTML = producers.map(d =>
+        `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')
+        || '<option value="">no producer node</option>';
+      if ([...producerSelect.options].some(o => o.value === chosenProducer)) {
+        producerSelect.value = chosenProducer;
+      }
+
+      const consumerSelect = document.getElementById('link-consumers');
+      const chosen = [...consumerSelect.selectedOptions].map(o => o.value);
+      consumerSelect.innerHTML = consumers.map(d =>
+        `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+      for (const option of consumerSelect.options) {
+        option.selected = chosen.includes(option.value);
+      }
+    }
+
+    // Both ends, side by side: loss at a consumer means nothing without
+    // knowing whether the producer actually kept its rate.
+    async function refreshLinkResults() {
+      const ids = new Set();
+      const producer = document.getElementById('link-producer').value;
+      if (producer) ids.add(producer);
+      for (const option of document.getElementById('link-consumers').options) {
+        ids.add(option.value);
+      }
+      if (!ids.size) return;
+
+      const rows = [];
+      for (const id of ids) {
+        let stream;
+        try {
+          const response = await fetch(`/api/devices/${encodeURIComponent(id)}/stream`,
+            { cache: 'no-store' });
+          if (!response.ok) continue;
+          stream = await response.json();
+        } catch { continue; }
+
+        const name = (document.getElementById('link-producer').value === id
+          ? document.getElementById('link-producer').selectedOptions[0]?.textContent
+          : [...document.getElementById('link-consumers').options]
+              .find(o => o.value === id)?.textContent) ?? id;
+
+        if (stream.role === 'producer') {
+          const late = stream.latePackets > 0
+            ? `<br><span class="rssi poor">${esc(stream.latePackets)} late</span>` : '';
+          rows.push(`<tr><td>${esc(name)}</td><td>producer</td>` +
+            `<td>${(stream.packetsSent ?? 0).toLocaleString()} pkt` +
+            ` → ${(stream.datagramsSent ?? 0).toLocaleString()} sent${late}</td>` +
+            `<td>—</td><td>—</td><td>—</td>` +
+            `<td>${stream.sendErrors ? esc(stream.sendErrors) + ' send errors' : '—'}</td></tr>`);
+        } else {
+          const st = stream.stats ?? {};
+          const lossPct = ((st.lossPpm ?? 0) / 10000).toFixed(3);
+          const lossClass = st.lossPpm > 10000 ? 'poor' : st.lossPpm > 1000 ? 'fair' : 'good';
+          // Jitter arrives in RTP ticks; at 48 kHz, milliseconds are what
+          // a buffer is actually sized in.
+          const jitterMs = ((st.jitter ?? 0) / 48).toFixed(2);
+          rows.push(`<tr><td>${esc(name)}</td><td>consumer</td>` +
+            `<td>${(st.received ?? 0).toLocaleString()} of ` +
+            `${(st.expected ?? 0).toLocaleString()}</td>` +
+            `<td><span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
+            ` (${lossPct}%)</span></td>` +
+            `<td>${jitterMs} ms</td>` +
+            `<td>${esc(st.duplicates ?? 0)} / ${esc(st.reordered ?? 0)}</td>` +
+            `<td>${esc(stream.payloadErrors ?? 0)}</td></tr>`);
+        }
+      }
+
+      const table = document.getElementById('link-results');
+      table.hidden = rows.length === 0;
+      table.querySelector('tbody').innerHTML = rows.join('');
+    }
+
+    document.getElementById('link-start').addEventListener('click', async () => {
+      const producer = document.getElementById('link-producer').value;
+      if (!producer) { say('No node holds the producer role.'); return; }
+      const destinations = selectedLinkDestinations();
+      if (!destinations.length) { say('Pick at least one destination.'); return; }
+
+      const body = {
+        destinations,
+        port: Number(document.getElementById('link-port').value),
+        source: document.getElementById('link-source').value,
+        toneHz: Number(document.getElementById('link-tone').value),
+      };
+      say('Starting link…');
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(producer)}/stream/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      if (response.ok) {
+        document.getElementById('link-status').textContent =
+          `Streaming to ${destinations.length} destination(s) at 200 packets/s.`;
+        say('Link started.');
+      } else {
+        const error = await response.json().catch(() => ({}));
+        say(`Could not start link: ${error.error ?? response.status}`);
+      }
+      refreshLinkResults();
+    });
+
+    document.getElementById('link-stop').addEventListener('click', async () => {
+      // Every node, not just the producer: stopping also clears the
+      // consumers' counters, which is how the next measurement begins.
+      const ids = [document.getElementById('link-producer').value].concat(
+        [...document.getElementById('link-consumers').options].map(o => o.value));
+      for (const id of ids.filter(v => v)) {
+        await fetch(`/api/devices/${encodeURIComponent(id)}/stream/stop`, { method: 'POST' })
+          .catch(() => {});
+      }
+      document.getElementById('link-status').textContent = 'Stopped; counters cleared.';
+      say('Link stopped.');
+      refreshLinkResults();
+    });
+
     refreshHealth();
     refreshDevices();
     refreshFirmware();
     refreshTone();
+    setInterval(refreshLinkResults, 2000);
     setInterval(refreshDevices, 2000);
     setInterval(refreshTone, 2000);
     setInterval(refreshFirmware, 10000);

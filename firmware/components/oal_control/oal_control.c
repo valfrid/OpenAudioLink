@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "oal_stream.h"
 #include "esp_http_server.h"
 #include "esp_https_ota.h"
 #include "esp_log.h"
@@ -163,6 +164,128 @@ static esp_err_t config_handler(httpd_req_t *req)
     return httpd_resp_send(req, response, n);
 }
 
+/* ---------- stream: GET /stream, POST /stream/start, POST /stream/stop ---------- */
+
+/*
+ * The measurement surface. A producer reports what it sent and whether its
+ * pacing slipped; a consumer reports what arrived and how. Both are needed
+ * to read a result: loss at the consumer means nothing without knowing the
+ * producer actually kept its rate.
+ */
+static esp_err_t stream_get_handler(httpd_req_t *req)
+{
+    char body[640];
+    int len;
+
+    if ((s_config.roles & OAL_ROLE_PRODUCER) != 0) {
+        oal_stream_producer_state_t p;
+        oal_stream_producer_get(&p);
+        len = snprintf(body, sizeof(body),
+                       "{\"role\":\"producer\",\"running\":%s,\"port\":%u,"
+                       "\"destinations\":%u,\"source\":\"%s\","
+                       "\"packetsSent\":%u,\"datagramsSent\":%u,"
+                       "\"sendErrors\":%u,\"latePackets\":%u}",
+                       p.running ? "true" : "false", p.port,
+                       (unsigned)p.destination_count,
+                       p.source == OAL_RTP_SOURCE_TONE ? "tone" : "pattern",
+                       (unsigned)p.packets_sent, (unsigned)p.datagrams_sent,
+                       (unsigned)p.send_errors, (unsigned)p.late_packets);
+    } else {
+        oal_stream_consumer_state_t c;
+        oal_stream_consumer_get(&c);
+        char stats[OAL_RTP_STATS_JSON_MAX];
+        if (oal_rtp_stats_to_json(&c.stats, stats, sizeof(stats)) < 0) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stats too large");
+            return ESP_FAIL;
+        }
+        len = snprintf(body, sizeof(body),
+                       "{\"role\":\"consumer\",\"listening\":%s,\"port\":%u,"
+                       "\"payloadErrors\":%u,\"foreignPackets\":%u,"
+                       "\"lastSsrc\":\"%08x\",\"stats\":%s}",
+                       c.listening ? "true" : "false", c.port,
+                       (unsigned)c.payload_errors, (unsigned)c.foreign_packets,
+                       (unsigned)c.last_ssrc, stats);
+    }
+
+    if (len <= 0 || len >= (int)sizeof(body)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stream status too large");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, body, len);
+}
+
+static esp_err_t stream_start_handler(httpd_req_t *req)
+{
+    if ((s_config.roles & OAL_ROLE_PRODUCER) == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a producer");
+        return ESP_FAIL;
+    }
+
+    char body[512];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    const cJSON *list = root != NULL
+        ? cJSON_GetObjectItemCaseSensitive(root, "destinations") : NULL;
+    if (!cJSON_IsArray(list) || cJSON_GetArraySize(list) == 0) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing destinations");
+        return ESP_FAIL;
+    }
+
+    oal_stream_request_t request = { 0 };
+    const cJSON *element = NULL;
+    cJSON_ArrayForEach(element, list) {
+        if (!cJSON_IsString(element)
+            || request.destination_count >= OAL_STREAM_MAX_DESTINATIONS) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad destinations");
+            return ESP_FAIL;
+        }
+        strlcpy(request.destinations[request.destination_count],
+                element->valuestring,
+                sizeof(request.destinations[0]));
+        request.destination_count++;
+    }
+
+    const cJSON *port = cJSON_GetObjectItemCaseSensitive(root, "port");
+    const cJSON *source = cJSON_GetObjectItemCaseSensitive(root, "source");
+    const cJSON *tone = cJSON_GetObjectItemCaseSensitive(root, "toneHz");
+    request.port = cJSON_IsNumber(port) ? (uint16_t)port->valueint : OAL_RTP_DEFAULT_PORT;
+    request.source = (cJSON_IsString(source) && strcmp(source->valuestring, "tone") == 0)
+        ? OAL_RTP_SOURCE_TONE : OAL_RTP_SOURCE_PATTERN;
+    request.tone_hz = cJSON_IsNumber(tone) ? (uint32_t)tone->valueint : 1000;
+    cJSON_Delete(root);
+
+    if (oal_stream_producer_start(&request) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not start");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"status\":\"streaming\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t stream_stop_handler(httpd_req_t *req)
+{
+    /* A consumer has nothing to stop but its counters, and clearing them is
+     * how a measurement run begins. */
+    if ((s_config.roles & OAL_ROLE_PRODUCER) != 0) {
+        oal_stream_producer_stop();
+    }
+    if ((s_config.roles & OAL_ROLE_CONSUMER) != 0) {
+        oal_stream_consumer_reset();
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"status\":\"stopped\"}", HTTPD_RESP_USE_STRLEN);
+}
+
 /* ---------- POST /reboot ---------- */
 
 static void restart_task(void *arg)
@@ -256,6 +379,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
+    server_config.max_uri_handlers = 8; /* seven registered, and the default is eight */
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &server_config);
@@ -267,10 +391,18 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t reboot = { .uri = "/reboot", .method = HTTP_POST, .handler = reboot_handler };
     httpd_uri_t ota = { .uri = "/ota", .method = HTTP_POST, .handler = ota_handler };
     httpd_uri_t set_config = { .uri = "/config", .method = HTTP_POST, .handler = config_handler };
+    httpd_uri_t stream = { .uri = "/stream", .method = HTTP_GET, .handler = stream_get_handler };
+    httpd_uri_t stream_start =
+        { .uri = "/stream/start", .method = HTTP_POST, .handler = stream_start_handler };
+    httpd_uri_t stream_stop =
+        { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
     httpd_register_uri_handler(server, &status);
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);
     httpd_register_uri_handler(server, &set_config);
+    httpd_register_uri_handler(server, &stream);
+    httpd_register_uri_handler(server, &stream_start);
+    httpd_register_uri_handler(server, &stream_stop);
 
     ESP_LOGI(TAG, "control server on port %d", CONTROL_PORT);
     return ESP_OK;

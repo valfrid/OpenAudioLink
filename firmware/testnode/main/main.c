@@ -25,6 +25,7 @@
 #include "oal_config.h"
 #include "oal_control.h"
 #include "oal_discovery.h"
+#include "oal_stream.h"
 #include "oal_wifi.h"
 
 static const char *TAG = "oal_testnode";
@@ -170,4 +171,12 @@ void app_main(void)
 
     ESP_ERROR_CHECK(oal_control_start(&control));
     ESP_ERROR_CHECK(oal_discovery_start(&discovery));
+
+    /* A consumer listens from boot. It has nothing to configure, and a
+     * receiver that must be armed before it can be sent to turns every
+     * producer start into a race. A producer waits to be told where to
+     * send, which it cannot know by itself. */
+    if ((roles & OAL_ROLE_CONSUMER) != 0) {
+        ESP_ERROR_CHECK(oal_stream_consumer_start(OAL_RTP_DEFAULT_PORT));
+    }
 }

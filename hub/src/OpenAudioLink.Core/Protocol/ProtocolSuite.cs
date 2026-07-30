@@ -13,6 +13,9 @@ public static class ProtocolSuite
     public const int DeviceControlPort = 41001;
     public const int DefaultHubPort = 41080;
 
+    /// <summary>Default RTP audio port (protocol/AUDIO-RTP.md).</summary>
+    public const int RtpPort = 41100;
+
     public static readonly IPAddress DiscoveryMulticastGroup = IPAddress.Parse("239.255.41.10");
 
     /// <summary>

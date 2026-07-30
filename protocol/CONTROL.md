@@ -36,6 +36,9 @@ configuration — never audio.
 | PUT    | `/config`         | Write configuration                         |
 | POST   | `/factory-reset`  | Request factory reset (clears identity, Wi-Fi, config) |
 | POST   | `/config`         | Set the roles the node takes                |
+| GET    | `/stream`         | Stream state and measurement counters       |
+| POST   | `/stream/start`   | Producer: begin streaming to destinations   |
+| POST   | `/stream/stop`    | Stop a producer; clear a consumer's counters |
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 
 ### GET /status
@@ -114,6 +117,34 @@ integrations. It is a superset consumer of this protocol: `/api/health`,
 `/api/devices`, and per-device command proxying. The Hub API is documented
 with the Hub itself and versioned with the Hub, not with the protocol suite;
 only the device-facing endpoints above are part of the suite.
+
+### Stream endpoints
+
+A **producer** is told where to send; it cannot know that itself:
+
+```json
+{ "destinations": ["192.168.0.71"], "port": 41100,
+  "source": "pattern", "toneHz": 1000 }
+```
+
+A **consumer** listens from boot and is never told to start. It has
+nothing to configure, and a receiver that must be armed before it can be
+sent to makes every producer start a race.
+
+`GET /stream` returns the counters, shaped by the node's role — packets
+sent and pacing slips for a producer, reception statistics for a
+consumer. Both are needed to read a result: loss at a consumer means
+nothing without knowing the producer kept its rate.
+
+`source` selects the synthetic signal, which exists so the network can be
+characterised before any ADC or DAC does. `pattern` derives every sample
+from its absolute frame index, so a consumer recomputes what it should
+have received and counts what differs — corruption a sequence-number
+check cannot see. `tone` is a sine, for listening once a DAC exists, and
+payload errors are meaningless against it.
+
+`POST /stream/stop` clears a consumer's counters as well as stopping a
+producer, because clearing them is how the next measurement begins.
 
 ## Polling
 
