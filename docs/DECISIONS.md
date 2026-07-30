@@ -370,3 +370,92 @@ server is doing.
 - Nothing prevents two instances streaming to the same receiver today.
   The receiver-held claim from decision 1 is what will resolve that, and
   it applies to Hubs exactly as it applies to ESP Producers.
+
+---
+
+## 8. How a Consumer emits audio is a profile property, not a role property
+
+**Date:** 2026-07-30
+**Status:** noted; nothing scheduled. Recorded so the options are not
+re-derived later, and so the obstacles are known before anything is bought.
+
+### Decision
+
+`ARCHITECTURE.md` section 2 lists "I²S DAC output" among the Consumer's
+responsibilities. That is the *current* profile's output, not a property
+of the role. A Consumer is defined by receiving RTP, buffering it,
+correcting drift and playing it; how the samples finally leave the device
+belongs to the hardware profile.
+
+Nothing in discovery, control, OTA or the RTP profile changes if a
+Consumer emits over something other than I²S. Alternative Consumers are
+therefore additive: new profiles, not a new architecture.
+
+Three are worth remembering.
+
+### A. USB Audio Class DAC on an ESP32-S3 in host mode
+
+A USB-C dongle DAC (for example a CX31993 unit, ~120 SEK) gives a
+shielded, finished output stage with a headphone amplifier, where the
+PCM5102A gives line level from a bare module. Attractive for a desk or
+headphone node; irrelevant for speakers going into an amplifier anyway.
+
+The ESP must be the USB **host** and speak UAC. Espressif publishes a
+`usb_host_uac` component, so the software is not from scratch. The
+obstacles are hardware and are worth stating plainly:
+
+- **VBUS.** A host powers its peripheral. A board whose USB-C is wired as
+  a device port cannot source 5 V to a dongle. This is the blocker to
+  solve first, and it is a board question, not a software one.
+- **The console.** `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` shares the
+  native USB peripheral. On a single-port board, switching it to OTG host
+  costs the heartbeat diagnostics and USB flashing at the same time.
+  **A board with separate UART and USB-OTG ports removes this objection
+  entirely**, which is what makes the experiment reasonable at all.
+- **Full speed only.** The S3's USB-OTG runs at 12 Mbit/s. Bandwidth is
+  not the issue — 48 kHz/24-bit stereo is 2.3 Mbit/s — but a dongle whose
+  headline is 384 kHz/32-bit reaches that over high-speed UAC 2.0, which
+  the S3 cannot do. Whether a given dongle also offers a full-speed
+  interface at 48 kHz is a buy-and-test question; listings do not say.
+- **Drift correction gets harder.** With I²S the ESP owns the bit clock
+  and can trim it through the APLL. A USB DAC owns its own clock, so
+  correction becomes varying how many samples go out per USB frame —
+  resampling in software, audibly worse if done crudely, and CPU better
+  spent elsewhere.
+
+An **ESP32-S3-DevKitC-1** style board with two USB-C ports (one bridged
+UART, one native USB) and an N16R8 module is the shape that fits: the
+console stays on the UART port while the native port does host duty, and
+16 MB flash with 8 MB PSRAM is generous next to the XIAO. Against it,
+decision 6's objection to anonymous boards still applies to clones —
+though the DevKitC-1 reference design is published by Espressif, so the
+layout is knowable in a way a Super Mini's is not. **VBUS sourcing must
+still be confirmed against the actual board**, since that is where clones
+deviate and where the whole idea succeeds or fails.
+
+### B. A PC as a Consumer
+
+Already true and already proven: GStreamer decoding the L24 stream was how
+the audio path was validated in the first place. A USB DAC on a PC is just
+another endpoint. What is missing is not capability but a first-class
+Consumer application — something that announces itself, holds a claim, and
+appears in the device list rather than being a manually started pipeline.
+
+### C. A Raspberry Pi as a Consumer
+
+The unglamorous option that avoids every obstacle in A. Linux does UAC
+host properly, VBUS is not a question, and there is CPU to spare for
+resampling. More expensive and more power-hungry per room than an ESP32,
+so it suits one good room rather than every room.
+
+### Consequences
+
+- The profile list grows a dimension: today profiles vary by board and
+  audio chip, and a USB profile would vary by output *transport* too.
+  `IDENTITY.md` does not need changing for that, but a name like
+  `esp32s3-uac` should read as "output is USB", not as a chip.
+- None of this is on the path to the first working system. The PCM5102A
+  boards are the specified route, cost about 28 SEK, and give the clean
+  clock correction that decision 2's synchronisation goals rely on.
+- If A is ever attempted, VBUS is the first thing to test and the point at
+  which to abandon it cheaply.
