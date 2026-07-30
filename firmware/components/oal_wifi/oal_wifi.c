@@ -292,8 +292,14 @@ static void start_portal(void)
 {
     esp_err_t err;
 
+    /* The station MAC, though this names an access point: it is the one
+     * the device identity and node name are built from, and the whole
+     * point of the suffix is that the network you provision through and
+     * the node that then appears are recognisably the same board. The
+     * SoftAP MAC differs from it by one in the last byte, which would
+     * make the two labels disagree by exactly enough to mislead. */
     uint8_t mac[6];
-    err = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    err = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_read_mac failed: %s", esp_err_to_name(err));
         return;
