@@ -1,15 +1,18 @@
 # OpenAudioLink test node defaults.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
-# Log to the native USB port. Both the ESP32-C3 and ESP32-S3 talk to a PC
-# over their built-in USB Serial/JTAG peripheral, but ESP-IDF defaults the
-# console to UART0 — which on the Super Mini boards is not wired to the USB
-# connector. Without this the board runs correctly and prints nothing at all.
+# Log to the native USB port. The ESP32-S3 talks to a PC over its built-in
+# USB Serial/JTAG peripheral, but ESP-IDF defaults the console to UART0 —
+# which on these boards is not wired to the USB connector. Without this the
+# board runs correctly and prints nothing at all.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # Two OTA app slots so updates install into the inactive slot (Phase 2.6).
-CONFIG_PARTITION_TABLE_TWO_OTA=y
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# The built-in table caps app partitions at 1 MB whatever the chip; ours is
+# sized to the 8 MB confirmed on the XIAO ESP32S3. See partitions.csv.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
 # OTA images are fetched from the Hub over plain HTTP on the trusted local
 # network; TLS for OTA is revisited before 1.0.

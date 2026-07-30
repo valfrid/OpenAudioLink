@@ -47,7 +47,6 @@ Initial profiles:
 | `esp32s3-pcm5102a` | ESP32-S3 Super Mini | PCM5102A stereo I²S DAC | Secondary Consumer     |
 | `esp32s3-pcm1808`  | ESP32-S3 Super Mini | PCM1808 stereo I²S ADC  | Secondary Producer      |
 | `esp32s3-devkit`   | ESP32-S3 Super Mini | none                    | Development             |
-| `esp32c3-devkit`   | ESP32-C3  | none                          | Temporary; removed once S3 is verified |
 
 The board is part of the profile, not just the audio hardware: pin
 mapping differs between boards, and the XIAO has an external antenna

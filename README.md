@@ -31,14 +31,14 @@ External audio sources are not normally routed through the Windows Hub.
 
 ### Development hardware
 
-During early development, available ESP32-C3 boards may be used for control-plane, discovery, provisioning and basic RTP experiments.
+ESP32-C3 boards were used for control-plane, discovery, provisioning and OTA work while the S3 boards were in transit. That target was removed on 2026-07-30 once two XIAO ESP32S3 nodes were running (decision 5).
 
 ### Target audio hardware
 
 - Receiver: ESP32-S3 + PCM5102A stereo I²S DAC
 - Analog source: ESP32-S3 + PCM1808 stereo I²S ADC with onboard oscillator
 
-The ESP32-S3 is the intended long-term platform. ESP32-C3 support is temporary development support and is not the reference hardware target.
+The ESP32-S3 is the platform. It is the only firmware target that builds.
 
 ## First development focus
 

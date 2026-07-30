@@ -238,7 +238,8 @@ OpenAudioLink AP rather than any open network, which is not yet designed.
 ## 5. One firmware image, role held in NVS
 
 **Date:** 2026-07-27
-**Status:** accepted; not yet implemented
+**Status:** implemented 2026-07-30. Two XIAO ESP32S3 nodes run the same
+image as producer and consumer; the ESP32-C3 target is removed.
 
 ### Decision
 
@@ -276,20 +277,26 @@ C3 Super Mini.
 - Provisioning writes role and hardware profile to NVS; discovery and
   `/status` report the stored role rather than a compile-time constant.
 - The image must contain both roles' code, so it must fit the OTA slot
-  with margin. At the time of writing the app is ~979 KB in a 1 MB slot,
+  with margin. ~~At the time of writing the app is ~979 KB in a 1 MB slot,
   built at `-Og`. Size optimisation and checking whether the OTA path
   drags in mbedTLS for HTTPS unused on a trusted LAN should both be done
-  **before** merging the roles, not after the slot overflows.
+  **before** merging the roles, not after the slot overflows.~~
+  **Struck 2026-07-30.** That reasoning assumed the 1 MB slot of the
+  built-in table on 4 MB flash. The XIAO has 8 MB, and a partition table
+  sized to it gives 4032 KB slots — a 3.9x increase that makes shrinking
+  the image to fit unnecessary. Neither `-Os` nor removing mbedTLS is
+  warranted; both were work with a scheduled expiry date.
 - Removing the C3 target is a deliberate step with a trigger — S3
   hardware verified — not a gradual drift. Until then both targets build
-  in CI.
+  in CI. **Done 2026-07-30**: two XIAO ESP32S3 boards flashed,
+  provisioned, discovered and holding distinct roles.
 
 ---
 
 ## 6. Seeed XIAO ESP32S3 is the preferred node hardware
 
 **Date:** 2026-07-27
-**Status:** accepted; two boards on order
+**Status:** accepted; two boards in hand and running since 2026-07-30
 
 ### Decision
 
@@ -324,9 +331,13 @@ scaffolding per decision 5.
 - 11 exposed GPIOs — enough for either role (three I²S pins, plus two for
   an optional I²C display) but with less spare than the Super Mini.
 - Larger flash than the `FH4R2` Super Mini eases the single-image
-  partition pressure from decision 5. **Confirm flash and PSRAM on
+  partition pressure from decision 5. ~~**Confirm flash and PSRAM on
   arrival**; XIAO variants differ, and the product listing does not state
-  them.
+  them.~~ **Confirmed 2026-07-30** from the flashing log: flash ID
+  `0xC84017` — GigaDevice, capacity byte `0x17` = 2^23 = **8 MB** — and
+  **8 MB embedded PSRAM**. Both double the Super Mini's, and the flash
+  figure is what decision 5's struck consequence rests on. PSRAM is not
+  enabled in the build yet; nothing needs it until buffering does.
 - The enclosure gains an antenna mount — a U.FL pigtail to an SMA
   bulkhead, or a retention point for the supplied flexible antenna — and
   loses the keep-out zone.

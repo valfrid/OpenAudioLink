@@ -4,8 +4,8 @@
  * "Hello world" milestone: boot -> Wi-Fi (NVS credentials or setup portal)
  * -> discovery announce -> control server -> OTA-updatable over the Hub.
  *
- * Runs on ESP32-C3 (temporary development hardware) and ESP32-S3
- * (reference platform); it contains no hardware-profile-specific code.
+ * Runs on the ESP32-S3 reference platform; it contains no
+ * hardware-profile-specific code.
  */
 
 #include <string.h>
@@ -41,10 +41,10 @@ static const char *TAG = "oal_testnode";
 
 #if CONFIG_IDF_TARGET_ESP32S3
 #define HARDWARE_PROFILE "esp32s3-devkit"
-#elif CONFIG_IDF_TARGET_ESP32C3
-#define HARDWARE_PROFILE "esp32c3-devkit"
 #else
-#define HARDWARE_PROFILE CONFIG_IDF_TARGET "-devkit"
+/* Not a supported target, but the build should say so rather than
+ * silently announcing a profile that does not describe the board. */
+#define HARDWARE_PROFILE CONFIG_IDF_TARGET "-unsupported"
 #endif
 
 /*

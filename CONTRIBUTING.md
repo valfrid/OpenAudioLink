@@ -59,6 +59,6 @@ dotnet run --project src/OpenAudioLink.Hub
 
 ```bash
 cd firmware/testnode
-idf.py set-target esp32c3   # or esp32s3
+idf.py set-target esp32s3
 idf.py build flash monitor
 ```

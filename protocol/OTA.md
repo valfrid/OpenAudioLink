@@ -24,7 +24,7 @@ Device: announces with the new fw version -> visible in Hub UI
 `POST /ota` on the device control port (41001):
 
 ```json
-{ "url": "http://192.168.1.10:41080/firmware/testnode-esp32c3-ota.bin" }
+{ "url": "http://192.168.1.10:41080/firmware/testnode-esp32s3-ota.bin" }
 ```
 
 Response `200 { "status": "accepted" }` — the download and install proceed

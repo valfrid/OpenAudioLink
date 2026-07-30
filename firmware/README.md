@@ -13,16 +13,26 @@ testnode/         Test firmware: boot -> Wi-Fi -> announce -> controllable + OTA
 The eventual Receiver and Analog Source firmware will live here as separate
 projects reusing the shared components. Hardware-specific behaviour (I²S
 pins, DAC/ADC init) belongs in hardware-profile code, never in shared
-components — the ESP32-C3 is temporary development hardware and the
-reference platform is the ESP32-S3.
+components. The ESP32-S3 is the only target that builds.
+
+## Flash layout
+
+8 MB, two OTA slots of 4032 KB each, no factory partition
+(`testnode/partitions.csv`). The built-in two-OTA table caps app
+partitions at 1 MB whatever the chip, which is what the C3-era images
+used; sizing the table to the XIAO's real flash gives 3.9x the room.
+
+**A change to the partition table cannot be delivered over the air.** OTA
+writes app partitions only; the table lives at 0x8000. Moving between
+layouts means a USB re-flash of every node, and that clears NVS, so
+Wi-Fi credentials, name and roles have to be entered again.
 
 ## Getting a node running without a toolchain
 
 1. **Download images**: on GitHub, open the latest CI run under **Actions**
-   and download the artifact for your board (`testnode-esp32c3` or
-   `testnode-esp32s3`). It contains:
-   - `testnode-<target>-flash.bin` — complete flash image for USB flashing
-   - `testnode-<target>-ota.bin` — application image for OTA updates
+   and download the `testnode-esp32s3` artifact. It contains:
+   - `testnode-esp32s3-flash.bin` — complete flash image for USB flashing
+   - `testnode-esp32s3-ota.bin` — application image for OTA updates
 2. **Flash over USB (first time only)**: open
    <https://espressif.github.io/esptool-js/> in Chrome or Edge, connect the
    board over USB, choose the `...-flash.bin` file at address `0x0`, and
@@ -48,7 +58,7 @@ falls back to the setup access point so you can correct it.
 
 ```bash
 cd testnode
-idf.py set-target esp32c3   # or esp32s3
+idf.py set-target esp32s3
 idf.py build flash monitor
 ```
 

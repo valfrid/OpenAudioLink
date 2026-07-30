@@ -18,7 +18,7 @@ typedef struct {
     char id[40];                    /* "mac-…" or "oal-…", see protocol/IDENTITY.md */
     char name[32];
     oal_roles_t roles;              /* set, not one value; see oal_config.h */
-    const char *hardware_profile;   /* e.g. "esp32c3-devkit" */
+    const char *hardware_profile;   /* e.g. "esp32s3-devkit" */
     const char *firmware_version;   /* semver */
 } oal_discovery_config_t;
 

@@ -69,7 +69,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [esp32c3, esp32s3]
+        # ESP32-S3 only: the C3 was scaffolding while the S3 boards were in
+        # transit, and decision 5 removes its target once S3 hardware is
+        # verified. Two XIAO ESP32S3 nodes are up, so it is gone.
+        target: [esp32s3]
     steps:
       - uses: actions/checkout@v5
       - name: Build with ESP-IDF

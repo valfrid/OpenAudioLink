@@ -1,0 +1,21 @@
+# OpenAudioLink test node, 8 MB flash (XIAO ESP32S3, confirmed on arrival:
+# GigaDevice 0xC84017 = 8 MB, plus 8 MB embedded PSRAM).
+#
+# Two OTA slots and no factory partition. The built-in two-OTA table caps
+# every app partition at 1 MB regardless of the chip, which left the image
+# at ~95% of its slot with I2S, an RTP path and a jitter buffer still to
+# come. Dropping the factory partition costs the USB-flashed fallback
+# image, which is worth less than the headroom now that OTA is reliable:
+# recovery is a USB re-flash either way, and that rewrites this table too.
+#
+# Slots are equal at 4032 KB so either can hold any image the other can.
+#
+# Changing this file cannot be delivered over the air. OTA writes app
+# partitions only; the table itself lives at 0x8000 and needs USB.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+otadata,    data, ota,     0x10000,  0x2000,
+ota_0,      app,  ota_0,   0x20000,  0x3F0000,
+ota_1,      app,  ota_1,   0x410000, 0x3F0000,

@@ -59,7 +59,7 @@ Example:
   "id": "mac-a0b1c2d3e4f5",
   "name": "testnode",
   "roles": ["consumer"],
-  "hw": "esp32c3-devkit",
+  "hw": "esp32s3-devkit",
   "fw": "0.1.0",
   "caps": ["control-v0"],
   "ctrlPort": 41001
