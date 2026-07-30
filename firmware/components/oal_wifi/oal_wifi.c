@@ -334,7 +334,7 @@ static esp_err_t portal_save_get_handler(httpd_req_t *req)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "save (GET) without usable query (%s); showing the form again",
                  esp_err_to_name(err));
-        return httpd_resp_send(req, PORTAL_PAGE, HTTPD_RESP_USE_STRLEN);
+        return httpd_resp_send(req, s_portal_page, HTTPD_RESP_USE_STRLEN);
     }
 
     ESP_LOGI(TAG, "save (GET), query length %d", (int)strlen(query));
