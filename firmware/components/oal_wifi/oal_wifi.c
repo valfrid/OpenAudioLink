@@ -1,5 +1,7 @@
 #include "oal_wifi.h"
 
+#include "oal_config.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -151,19 +153,53 @@ static bool try_station(const char *ssid, const char *password)
 
 /* ---------- provisioning portal ---------- */
 
-static const char PORTAL_PAGE[] =
+/*
+ * Provisioning is the one moment the board is in your hands and you know
+ * which one it is, so it asks for everything that distinguishes it: the
+ * network, a name, and what it is for. Getting the role here saves a trip
+ * through the Hub before the node has ever done anything.
+ *
+ * The password can be revealed. It is typed once, alone, in front of a
+ * board — and a silent typo costs a failed join and a full re-provision,
+ * which is a far worse outcome than the nobody standing behind you.
+ *
+ * This is a printf format string, not literal HTML: %s is the default node
+ * name the caller fills in from the MAC, and every literal percent in the
+ * CSS must therefore be doubled.
+ */
+static const char PORTAL_TEMPLATE[] =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<title>OpenAudioLink setup</title>"
     "<style>body{font-family:sans-serif;max-width:22rem;margin:2rem auto;padding:0 1rem}"
-    "input{width:100%;padding:.5rem;margin:.25rem 0 1rem;box-sizing:border-box}"
+    "input[type=text],input[type=password]{width:100%%;padding:.5rem;margin:.25rem 0 1rem;"
+    "box-sizing:border-box}"
+    "label{display:block;margin-top:.5rem}"
+    ".row{margin:.25rem 0 1rem}.row label{display:inline-block;margin:0 1rem 0 0;font-weight:normal}"
+    ".show{font-size:.9rem;margin:-.75rem 0 1rem}"
     "button{padding:.5rem 1.5rem}</style></head><body>"
     "<h2>OpenAudioLink setup</h2>"
-    "<p>Enter the Wi-Fi network this device should join.</p>"
     "<form method=\"post\" action=\"/save\">"
-    "<label>Network name (SSID)</label><input name=\"ssid\" required>"
-    "<label>Password</label><input name=\"password\" type=\"password\">"
+    "<label>Network name (SSID)</label>"
+    "<input name=\"ssid\" type=\"text\" autocapitalize=\"none\" autocorrect=\"off\" required>"
+    "<label>Password</label>"
+    "<input id=\"pw\" name=\"password\" type=\"password\" autocapitalize=\"none\" autocorrect=\"off\">"
+    "<div class=\"show\"><label><input type=\"checkbox\" onclick=\"pw.type="
+    "this.checked?'text':'password'\"> Show password</label></div>"
+    "<label>Node name</label>"
+    "<input name=\"name\" type=\"text\" value=\"%s\" maxlength=\"31\">"
+    "<label>This node is a</label>"
+    "<div class=\"row\">"
+    "<label><input type=\"radio\" name=\"roles\" value=\"consumer\" checked> Consumer (plays)</label>"
+    "<label><input type=\"radio\" name=\"roles\" value=\"producer\"> Producer (sends)</label>"
+    "<label><input type=\"radio\" name=\"roles\" value=\"producer,consumer\"> Both</label>"
+    "</div>"
     "<button type=\"submit\">Save and reboot</button></form></body></html>";
+
+/* Built once at portal start, because the default name comes from the MAC.
+ * The page renders to about 1.4 KB; the slack is so an edit to the form
+ * does not silently become a portal that refuses to start. */
+static char s_portal_page[2048];
 
 static void url_decode(char *value)
 {
@@ -184,17 +220,24 @@ static void url_decode(char *value)
 
 static esp_err_t portal_get_handler(httpd_req_t *req)
 {
-    return httpd_resp_send(req, PORTAL_PAGE, HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, s_portal_page, HTTPD_RESP_USE_STRLEN);
 }
 
 /*
- * Applies credentials from a urlencoded "ssid=...&password=..." string,
- * whatever request shape delivered it.
+ * Applies the provisioning form from a urlencoded
+ * "ssid=...&password=...&name=...&roles=..." string, whatever request
+ * shape delivered it.
+ *
+ * Only the SSID is required. Name and roles are stored when present and
+ * left at their defaults otherwise, so a form from an older page still
+ * provisions a working node.
  */
 static esp_err_t apply_credentials(httpd_req_t *req, char *form)
 {
     char ssid[33] = { 0 };
     char password[65] = { 0 };
+    char name[OAL_NAME_MAX] = { 0 };
+    char roles[OAL_ROLES_STR_MAX] = { 0 };
 
     esp_err_t parsed = httpd_query_key_value(form, "ssid", ssid, sizeof(ssid));
     if (parsed != ESP_OK) {
@@ -206,12 +249,37 @@ static esp_err_t apply_credentials(httpd_req_t *req, char *form)
     url_decode(ssid);
     url_decode(password);
 
+    /* Roles before credentials: a bad role name should fail while the node
+     * is still reachable on its own access point, not after it has
+     * rebooted onto a network with the wrong job. */
+    if (httpd_query_key_value(form, "roles", roles, sizeof(roles)) == ESP_OK) {
+        url_decode(roles);
+        oal_roles_t parsed_roles = oal_roles_parse(roles);
+        if (parsed_roles == OAL_ROLE_NONE) {
+            ESP_LOGE(TAG, "unrecognised roles \"%s\"", roles);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown role");
+            return ESP_FAIL;
+        }
+        if (oal_config_set_roles(parsed_roles) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not save roles");
+            return ESP_FAIL;
+        }
+    }
+
+    if (httpd_query_key_value(form, "name", name, sizeof(name)) == ESP_OK) {
+        url_decode(name);
+        if (oal_config_set_name(name) != ESP_OK) {
+            ESP_LOGW(TAG, "could not store node name; keeping the default");
+        }
+    }
+
     if (oal_wifi_set_credentials(ssid, password) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not save");
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "credentials saved for \"%s\", rebooting", ssid);
+    ESP_LOGI(TAG, "provisioned: ssid \"%s\", name \"%s\", roles \"%s\"; rebooting",
+             ssid, name[0] ? name : "(default)", roles[0] ? roles : "(default)");
     httpd_resp_send(req, "Saved. The device is rebooting and will join your network.",
                     HTTPD_RESP_USE_STRLEN);
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -302,6 +370,21 @@ static void start_portal(void)
     err = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_read_mac failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    /* The default name offered by the form is the one the node would use
+     * anyway, so leaving the field alone is the same as not filling it in.
+     * A stored name wins, which makes the portal show what the node is
+     * currently called rather than what it was called when new. */
+    char default_name[OAL_NAME_MAX];
+    if (oal_config_get_name(default_name, sizeof(default_name)) != ESP_OK) {
+        snprintf(default_name, sizeof(default_name), "%s-%02X%02X%02X",
+                 CONFIG_OAL_NODE_NAME, mac[3], mac[4], mac[5]);
+    }
+    if (snprintf(s_portal_page, sizeof(s_portal_page), PORTAL_TEMPLATE, default_name)
+            >= (int)sizeof(s_portal_page)) {
+        ESP_LOGE(TAG, "portal page does not fit its buffer");
         return;
     }
 

@@ -14,6 +14,7 @@ static const char *TAG = "oal_config";
  * than leaving half a configuration behind. */
 #define NVS_NAMESPACE "oal"
 #define NVS_KEY_ROLES "roles"
+#define NVS_KEY_NAME  "name"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -194,5 +195,60 @@ esp_err_t oal_config_set_roles(oal_roles_t roles)
             ESP_LOGI(TAG, "roles set to %s (takes effect on reboot)", text);
         }
     }
+    return err;
+}
+
+esp_err_t oal_config_get_name(char *out, size_t out_size)
+{
+    if (out == NULL || out_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out[0] = '\0';
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
+    if (err != ESP_OK) {
+        return ESP_ERR_NVS_NOT_FOUND;
+    }
+
+    size_t len = out_size;
+    err = nvs_get_str(nvs, NVS_KEY_NAME, out, &len);
+    nvs_close(nvs);
+
+    if (err != ESP_OK || out[0] == '\0') {
+        out[0] = '\0';
+        return ESP_ERR_NVS_NOT_FOUND;
+    }
+    return ESP_OK;
+}
+
+esp_err_t oal_config_set_name(const char *name)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* An empty name erases the key rather than storing "", so the node
+     * falls back to its MAC-derived default instead of announcing a blank
+     * name that no list can show. */
+    if (name == NULL || name[0] == '\0') {
+        err = nvs_erase_key(nvs, NVS_KEY_NAME);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK; /* already absent, which is the requested state */
+        }
+    } else if (strlen(name) >= OAL_NAME_MAX) {
+        nvs_close(nvs);
+        return ESP_ERR_INVALID_SIZE;
+    } else {
+        err = nvs_set_str(nvs, NVS_KEY_NAME, name);
+    }
+
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
     return err;
 }

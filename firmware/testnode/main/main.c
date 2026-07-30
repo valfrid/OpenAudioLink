@@ -150,13 +150,16 @@ void app_main(void)
     discovery.firmware_version = FIRMWARE_VERSION;
     snprintf(discovery.id, sizeof(discovery.id), "mac-%02x%02x%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    /* The MAC suffix, not just the configured name: identical boards run
-     * identical images (decision 5), so without it every node in the
-     * device list is called the same thing and there is no way to tell
-     * which is which. The same three bytes name the setup access point,
-     * so the node in the list is recognisably the one just provisioned. */
-    snprintf(discovery.name, sizeof(discovery.name), "%s-%02X%02X%02X",
-             CONFIG_OAL_NODE_NAME, mac[3], mac[4], mac[5]);
+    /* A name given at provisioning wins. Failing that, the MAC suffix:
+     * identical boards run identical images (decision 5), so without it
+     * every node in the device list is called the same thing and there is
+     * no way to tell which is which. The same three bytes name the setup
+     * access point, so an unnamed node is recognisably the one just
+     * provisioned. */
+    if (oal_config_get_name(discovery.name, sizeof(discovery.name)) != ESP_OK) {
+        snprintf(discovery.name, sizeof(discovery.name), "%s-%02X%02X%02X",
+                 CONFIG_OAL_NODE_NAME, mac[3], mac[4], mac[5]);
+    }
 
     static oal_control_config_t control;
     control.id = discovery.id;

@@ -65,6 +65,19 @@ oal_roles_t oal_config_get_roles(void);
 /** Persists roles. Rejects OAL_ROLE_NONE and unknown bits. */
 esp_err_t oal_config_set_roles(oal_roles_t roles);
 
+/** Longest node name, including the terminator. Matches the announce field. */
+#define OAL_NAME_MAX 32
+
+/**
+ * Copies the stored node name into @p out.
+ * @return ESP_OK, or ESP_ERR_NVS_NOT_FOUND when no name has been set —
+ *         in which case the caller supplies its own default.
+ */
+esp_err_t oal_config_get_name(char *out, size_t out_size);
+
+/** Persists the node name. An empty name clears it, restoring the default. */
+esp_err_t oal_config_set_name(const char *name);
+
 #ifdef __cplusplus
 }
 #endif
