@@ -22,29 +22,83 @@ static oal_control_config_t s_config;
 
 /* ---------- GET /status ---------- */
 
-static esp_err_t status_handler(httpd_req_t *req)
+/*
+ * An SSID is arbitrary bytes, not a safe JSON string: a quote or backslash
+ * in a network name would produce a document the Hub cannot parse, and the
+ * node would look offline for a reason nothing reports.
+ */
+static void json_escape(const char *in, char *out, size_t out_size)
 {
-    int rssi = 0;
+    size_t w = 0;
+    for (size_t r = 0; in[r] != '\0' && w + 2 < out_size; r++) {
+        unsigned char c = (unsigned char)in[r];
+        if (c == '"' || c == '\\') {
+            out[w++] = '\\';
+            out[w++] = (char)c;
+        } else if (c < 0x20) {
+            if (w + 6 >= out_size) {
+                break;
+            }
+            w += (size_t)snprintf(out + w, out_size - w, "\\u%04x", c);
+        } else {
+            out[w++] = (char)c;
+        }
+    }
+    out[w] = '\0';
+}
+
+/*
+ * The whole Wi-Fi picture, not just the signal: in a mesh every node
+ * advertises the same SSID, so a weak RSSI on its own cannot distinguish
+ * "far from the right access point" from "attached to the wrong one".
+ * The BSSID is what answers that, and it is the reason this endpoint
+ * exists rather than the announce carrying it — telemetry that changes
+ * every few seconds does not belong in a multicast every device hears.
+ */
+static int format_wifi(char *out, size_t out_size)
+{
     wifi_ap_record_t ap;
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-        rssi = ap.rssi;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+        return snprintf(out, out_size, "{\"joined\":false}");
     }
 
+    char ssid[sizeof(ap.ssid) * 2 + 1];
+    json_escape((const char *)ap.ssid, ssid, sizeof(ssid));
+
+    return snprintf(out, out_size,
+                    "{\"joined\":true,\"ssid\":\"%s\","
+                    "\"bssid\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
+                    "\"channel\":%d,\"rssi\":%d}",
+                    ssid, ap.bssid[0], ap.bssid[1], ap.bssid[2],
+                    ap.bssid[3], ap.bssid[4], ap.bssid[5],
+                    (int)ap.primary, ap.rssi);
+}
+
+static esp_err_t status_handler(httpd_req_t *req)
+{
     char roles[OAL_ROLES_STR_MAX];
     if (oal_roles_to_json(s_config.roles, roles, sizeof(roles)) < 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "roles too large");
         return ESP_FAIL;
     }
 
-    char body[512];
+    char wifi[192];
+    int wifi_len = format_wifi(wifi, sizeof(wifi));
+    if (wifi_len <= 0 || wifi_len >= (int)sizeof(wifi)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "wifi status too large");
+        return ESP_FAIL;
+    }
+
+    char body[640];
     int len = snprintf(body, sizeof(body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
                        "\"roles\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
-                       "\"uptimeS\":%lld,\"wifi\":{\"rssi\":%d},"
+                       "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        s_config.hardware_profile, s_config.firmware_version,
-                       (long long)(esp_timer_get_time() / 1000000), rssi);
+                       (long long)(esp_timer_get_time() / 1000000),
+                       (unsigned)esp_get_free_heap_size(), wifi);
     if (len <= 0 || len >= (int)sizeof(body)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status too large");
         return ESP_FAIL;

@@ -49,13 +49,33 @@ configuration — never audio.
   "hw": "esp32s3-pcm5102a",
   "fw": "0.1.0",
   "uptimeS": 1234,
-  "wifi": { "rssi": -52, "ip": "192.168.1.40" },
+  "heapFree": 206936,
+  "wifi": {
+    "joined": true,
+    "ssid": "valfrid-n",
+    "bssid": "7c:10:c9:7a:0b:d0",
+    "channel": 9,
+    "rssi": -68
+  },
   "audio": { "state": "idle" }
 }
 ```
 
 `audio.state` is `"idle"` or `"playing"`; stream details are added in
 Phase 3.
+
+When the device is not associated, `wifi` is `{ "joined": false }` and the
+remaining fields are absent rather than zero — a missing reading and a
+reading of zero are different things.
+
+The **BSSID matters as much as the RSSI**. In a mesh every access point
+advertises the same SSID, so signal strength alone cannot distinguish a
+node far from the right access point from one attached to the wrong one.
+
+Volatile state lives here and not on the discovery announce. Signal
+strength changes constantly, and an announce is multicast to every device
+on the network every few seconds; a Controller that wants telemetry asks
+for it.
 
 ### POST /config
 
@@ -94,6 +114,15 @@ integrations. It is a superset consumer of this protocol: `/api/health`,
 `/api/devices`, and per-device command proxying. The Hub API is documented
 with the Hub itself and versioned with the Hub, not with the protocol suite;
 only the device-facing endpoints above are part of the suite.
+
+## Polling
+
+A Controller may poll `/status` to display device health. The Hub does so
+every 10 seconds for devices it believes online, with a short timeout: a
+node that does not answer promptly would give a stale reading anyway, and
+the next cycle comes round shortly. A failed poll leaves the previous
+reading in place rather than blanking it, and readings carry the time
+they were taken so nothing is shown as fresher than it is.
 
 ## Revision history
 

@@ -33,7 +33,12 @@ builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 builder.Services.AddHttpClient<DeviceCommandClient>();
+// A short timeout on purpose: a node that does not answer promptly is a
+// node whose reading would be stale anyway, and the poll comes round again.
+builder.Services.AddHttpClient(nameof(DeviceStatusService),
+    client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddHostedService<DiscoveryService>();
+builder.Services.AddHostedService<DeviceStatusService>();
 
 var app = builder.Build();
 

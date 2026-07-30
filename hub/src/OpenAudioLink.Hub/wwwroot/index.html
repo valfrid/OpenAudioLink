@@ -59,6 +59,11 @@
     #message { color: var(--muted); font-size: 0.85rem; min-height: 1.2rem; }
     .fw-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0 1rem; }
     code { font-size: 0.85em; }
+    .muted { color: var(--muted); }
+    .rssi { font-variant-numeric: tabular-nums; }
+    .rssi.good { color: #3aa655; }
+    .rssi.fair { color: #b8860b; }
+    .rssi.poor { color: #c94f4f; }
   </style>
 </head>
 <body>
@@ -71,8 +76,9 @@
   <table id="devices" hidden>
     <thead>
       <tr>
-        <th>Status</th><th>Name</th><th>Roles</th><th>Hardware</th>
-        <th>Firmware</th><th>Address</th><th>Actions</th>
+        <th>Status</th><th>Name</th><th>Roles</th><th>Firmware</th>
+        <th>Uptime</th><th>Wi-Fi</th><th>Signal</th>
+        <th>Address</th><th>Actions</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -132,6 +138,40 @@
       c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const say = text => { document.getElementById('message').textContent = text; };
 
+    // Seconds are unreadable past a few minutes, and how long a node has
+    // been up is mostly a question of "did it reboot?" — so the coarsest
+    // unit that answers it wins.
+    function duration(seconds) {
+      if (seconds == null) return '—';
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor(seconds % 86400 / 3600);
+      const m = Math.floor(seconds % 3600 / 60);
+      if (d > 0) return `${d}d ${h}h`;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m`;
+      return `${Math.floor(seconds)}s`;
+    }
+
+    // The BSSID under the SSID, because in a mesh every node advertises the
+    // same name and only the BSSID says which one this is.
+    function wifiCell(status) {
+      if (!status) return '—';
+      if (!status.joined) return '<span class="muted">not joined</span>';
+      const channel = status.channel ? ` · ch ${esc(status.channel)}` : '';
+      return `${esc(status.ssid ?? '?')}${channel}` +
+        `<br><code class="muted">${esc(status.bssid ?? '?')}</code>`;
+    }
+
+    // Coloured by what the number means for a stream: below about -75 dBm
+    // a 2.4 Mbit/s unicast has no margin left, and -65 is where it stops
+    // being comfortable.
+    function signalCell(status) {
+      if (!status || status.rssi == null) return '—';
+      const rssi = status.rssi;
+      const level = rssi >= -65 ? 'good' : rssi >= -75 ? 'fair' : 'poor';
+      return `<span class="rssi ${level}">${esc(rssi)} dBm</span>`;
+    }
+
     async function refreshHealth() {
       try {
         const health = await (await fetch('/api/health', { cache: 'no-store' })).json();
@@ -163,8 +203,11 @@
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button>`;
+        const s = d.status;
         return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
-          `<td>${esc(d.hardwareProfile)}</td><td>${esc(d.firmwareVersion)}</td>` +
+          `<td>${esc(d.firmwareVersion)}</td>` +
+          `<td>${s ? esc(duration(s.uptimeSeconds)) : '—'}</td>` +
+          `<td>${wifiCell(s)}</td><td>${signalCell(s)}</td>` +
           `<td>${esc(d.address)}</td><td>${actions}</td></tr>`;
       }).join('');
 

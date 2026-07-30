@@ -70,3 +70,104 @@ public class DeviceRegistryTests
         Assert.True(device.Online);
     }
 }
+
+public class DeviceStatusTests
+{
+    private static DeviceAnnouncement Announce(string id = "mac-a0b1c2d3e4f5") => new()
+    {
+        ProtocolVersion = "0.1",
+        Id = id,
+        Name = "node",
+        Roles = [DeviceRole.Consumer],
+        HardwareProfile = "esp32s3-devkit",
+        FirmwareVersion = "0.5.0",
+    };
+
+    private static DeviceStatus Reading(int rssi = -68) => new()
+    {
+        UptimeSeconds = 1234,
+        Joined = true,
+        Ssid = "valfrid-n",
+        Bssid = "7c:10:c9:7a:0b:d0",
+        Channel = 9,
+        Rssi = rssi,
+    };
+
+    [Fact]
+    public void A_device_without_a_reading_has_no_status()
+    {
+        var registry = new DeviceRegistry();
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+
+        Assert.Null(Assert.Single(registry.Snapshot()).Status);
+    }
+
+    [Fact]
+    public void A_reading_appears_on_the_device()
+    {
+        var registry = new DeviceRegistry();
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+
+        registry.UpdateStatus("mac-a0b1c2d3e4f5", Reading());
+
+        var status = Assert.Single(registry.Snapshot()).Status;
+        Assert.Equal("7c:10:c9:7a:0b:d0", status!.Bssid);
+        Assert.Equal(-68, status.Rssi);
+        Assert.Equal(9, status.Channel);
+    }
+
+    /// <summary>
+    /// Announces arrive every 5 s and rebuild the record; status is polled
+    /// every 10 s. Held inside the record, every announce would wipe the
+    /// last reading and the columns would flicker empty.
+    /// </summary>
+    [Fact]
+    public void An_announce_does_not_discard_the_last_reading()
+    {
+        var registry = new DeviceRegistry();
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+        registry.UpdateStatus("mac-a0b1c2d3e4f5", Reading());
+
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+
+        Assert.NotNull(Assert.Single(registry.Snapshot()).Status);
+    }
+
+    [Fact]
+    public void A_later_reading_replaces_the_earlier_one()
+    {
+        var registry = new DeviceRegistry();
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+
+        registry.UpdateStatus("mac-a0b1c2d3e4f5", Reading(rssi: -68));
+        registry.UpdateStatus("mac-a0b1c2d3e4f5", Reading(rssi: -55));
+
+        Assert.Equal(-55, Assert.Single(registry.Snapshot()).Status!.Rssi);
+    }
+
+    /// <summary>
+    /// So the UI can show how old a reading is rather than implying it is
+    /// current — the distinction that made a flapping device confusing.
+    /// </summary>
+    [Fact]
+    public void A_reading_is_stamped_with_when_it_was_taken()
+    {
+        var time = new FakeTimeProvider();
+        var registry = new DeviceRegistry(time);
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.71"));
+
+        registry.UpdateStatus("mac-a0b1c2d3e4f5", Reading());
+
+        Assert.Equal(time.GetUtcNow(), Assert.Single(registry.Snapshot()).Status!.ObservedAt);
+    }
+
+    [Fact]
+    public void A_reading_for_an_unknown_device_is_simply_unused()
+    {
+        var registry = new DeviceRegistry();
+
+        registry.UpdateStatus("mac-never-announced", Reading());
+
+        Assert.Empty(registry.Snapshot());
+    }
+}
