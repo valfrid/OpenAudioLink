@@ -518,6 +518,47 @@ overrides the default with a better answer. Same role, richer policy, and
 the minimal Controller is simply the one whose only cast point is
 "everything".
 
+### How a Consumer joins
+
+The Consumer initiates and the Controller decides.
+
+A Consumer that has finished booting finds the Controller and reports that
+it is ready. The Controller answers. That is the whole handshake, and the
+Consumer's behaviour is identical in every deployment — it never needs to
+know whether the Controller is a turntable or a PC.
+
+What differs is the answer:
+
+- party: the Controller is the Producer itself, and it answers by adding
+  the Consumer to the stream. Music plays.
+- house: the Controller is the Hub, which knows about rooms and knows
+  nobody has pressed play, so it answers "stand by".
+
+This is the same layering as the default cast point. There is always
+exactly one Controller; the Hub is simply the one with enough information
+to give a better answer.
+
+Having the Consumer initiate rather than the Producer scan matters for a
+concrete reason: a scanning Producer can start sending to a node that is
+still booting, and the packets are lost before anything is wrong. A
+Consumer speaks when it is actually ready.
+
+A Consumer that finds no Controller waits and retries; announcements are
+periodic and a Producer claims the role within seconds. A Consumer that
+sees two during a transition applies the same precedence rule below,
+computed locally.
+
+**Joining adds a destination; it does not start a second stream.** Two
+speakers in a room must play identical samples at identical times, so
+every Consumer receives one stream — the same sequence numbers,
+timestamps and SSRC, replicated byte-identically, which the Producer
+already does. Two independent streams with separate timestamp bases would
+make synchronisation far harder for no gain. The consequence is that the
+Producer must accept a destination-list change while running, which it
+currently cannot: the list is fixed when the stream starts. A late joiner
+then simply starts at whatever point the stream has reached, which RTP and
+the receiver's probation already handle.
+
 ### Who holds it, without an election
 
 Roles are already in NVS and provisioning already offers them, so the
@@ -546,6 +587,9 @@ more than a party system will hold.
 
 ### Consequences
 
+- The Producer needs a destination list that can change while a stream is
+  running. Today it is copied at start and never revisited, so incremental
+  joining cannot work until that changes.
 - Two Controllers can briefly coexist while precedence resolves, which
   means two streams could reach one Consumer. The same rule cast points
   need applies here: a Consumer plays one stream, accepting the first
