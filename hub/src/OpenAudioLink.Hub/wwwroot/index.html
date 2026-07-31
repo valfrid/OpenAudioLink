@@ -513,18 +513,29 @@
 
       const rows = [];
       for (const id of ids) {
-        let stream;
-        try {
-          const response = await fetch(`/api/devices/${encodeURIComponent(id)}/stream`,
-            { cache: 'no-store' });
-          if (!response.ok) continue;
-          stream = await response.json();
-        } catch { continue; }
-
         const name = (document.getElementById('link-producer').value === id
           ? document.getElementById('link-producer').selectedOptions[0]?.textContent
           : [...document.getElementById('link-consumers').options]
               .find(o => o.value === id)?.textContent) ?? id;
+
+        // A node the Hub cannot read gets a row saying so. Dropping it
+        // silently leaves a table that looks complete and is not: a run
+        // measured 47% loss with no producer row at all, and the missing
+        // row was the more interesting half of the result.
+        let stream;
+        try {
+          const response = await fetch(`/api/devices/${encodeURIComponent(id)}/stream`,
+            { cache: 'no-store' });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          stream = await response.json();
+        } catch (err) {
+          rows.push(`<tr><td>${esc(name)}</td><td>—</td>` +
+            `<td colspan="6"><span class="rssi poor">no answer</span> ` +
+            `<span class="muted">— the Hub could not read this node's ` +
+            `counters (${esc(err.message ?? 'unreachable')}). Its numbers ` +
+            `are missing, not zero.</span></td></tr>`);
+          continue;
+        }
 
         if (stream.role === 'producer') {
           const late = stream.latePackets > 0
