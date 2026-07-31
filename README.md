@@ -54,6 +54,8 @@ The ESP32-S3 is the platform. It is the only firmware target that builds.
 10. Synchronization and clock correction
 
 See `docs/ARCHITECTURE.md`, `docs/MASTER_PROMPT.md`, `docs/HARDWARE.md` and `docs/ROADMAP.md`.
+Measured network behaviour — loss, jitter and what causes them — is in
+`docs/LINK-MEASUREMENTS.md`.
 
 ## Repository layout
 
