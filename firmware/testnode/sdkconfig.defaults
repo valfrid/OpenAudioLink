@@ -25,6 +25,17 @@ CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
 
+# A packet is due every 5 ms and the default tick is 10 ms, so the
+# producer's vTaskDelay never had a whole tick to sleep and busy-spun the
+# entire interval instead — 98% of every second at priority 6, never
+# blocking. Nothing else needs that CPU today, but I2S DMA and a DAC will.
+#
+# This is deliberately the only change in 0.6.7. The retry logic that
+# shipped alongside it in 0.6.5 is condemned: it cost 359 refusals and ten
+# times the jitter against a baseline measured an hour earlier. The tick
+# change was never tested apart from it.
+CONFIG_FREERTOS_HZ=1000
+
 # A stream is 200 packets a second, and the default pool of 32 dynamic
 # transmit buffers runs short under that: a first measured link lost
 # nothing over the air yet still dropped fifteen packets, every one

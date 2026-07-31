@@ -130,10 +130,18 @@ static void producer_task(void *arg)
         }
 
         if (sleep_us > 0) {
-            /* vTaskDelay rounds to whole ticks, so sleep the whole ticks
-             * and spin the remainder — a few hundred microseconds at most,
-             * and only when the tick rate cannot express the interval. */
-            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ);
+            /* Sleep whole ticks and spin the remainder. One tick is held
+             * back rather than slept, because vTaskDelay guarantees only a
+             * lower bound: sleeping the last one could overshoot the
+             * deadline, and a send that leaves late is jitter at every
+             * consumer.
+             *
+             * At the IDF default tick of 10 ms this whole branch was dead —
+             * sleep_us never reached one tick, so the task busy-spun the
+             * entire gap between packets and never blocked at all. Holding
+             * a tick back only means anything once the tick is shorter than
+             * a packet; see CONFIG_FREERTOS_HZ. */
+            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ) - 1;
             if (ticks > 0) {
                 vTaskDelay((TickType_t)ticks);
             }
