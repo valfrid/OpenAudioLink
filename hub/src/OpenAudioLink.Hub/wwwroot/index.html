@@ -119,7 +119,7 @@
     <thead>
       <tr>
         <th>Node</th><th>Role</th><th>Sent / received</th><th>Lost</th>
-        <th>Jitter</th><th>Dup / reorder</th><th>Payload errors</th>
+        <th>Loss shape</th><th>Jitter</th><th>Dup / reorder</th><th>Payload errors</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -462,6 +462,19 @@
       }
     }
 
+    // How the loss arrived, not just how much. Isolated single packets are
+    // 5 ms gaps concealment can hide; the same total in bursts is a dropout
+    // needing forward error correction. The mitigation differs completely,
+    // so the shape is what decides it.
+    function shapeCell(stats) {
+      if (!stats || !stats.lossEvents) return '<span class="muted">no gaps</span>';
+      const mean = ((stats.meanGapX100 ?? 100) / 100).toFixed(2);
+      const allSingle = stats.singleLosses === stats.lossEvents;
+      const label = allSingle ? 'all isolated' : `longest ${stats.longestGap ?? 0}`;
+      return `${stats.lossEvents} gaps · ${label}` +
+        `<br><span class="muted">${mean} packets per gap</span>`;
+    }
+
     // Both ends, side by side: loss at a consumer means nothing without
     // knowing whether the producer actually kept its rate.
     async function refreshLinkResults() {
@@ -494,7 +507,7 @@
           rows.push(`<tr><td>${esc(name)}</td><td>producer</td>` +
             `<td>${(stream.packetsSent ?? 0).toLocaleString()} pkt` +
             ` → ${(stream.datagramsSent ?? 0).toLocaleString()} sent${late}</td>` +
-            `<td>—</td><td>—</td><td>—</td>` +
+            `<td>—</td><td>—</td><td>—</td><td>—</td>` +
             `<td>${stream.sendErrors ? esc(stream.sendErrors) + ' send errors' : '—'}</td></tr>`);
         } else {
           const st = stream.stats ?? {};
@@ -508,6 +521,7 @@
             `${(st.expected ?? 0).toLocaleString()}</td>` +
             `<td><span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
             ` (${lossPct}%)</span></td>` +
+            `<td>${shapeCell(st)}</td>` +
             `<td>${jitterMs} ms</td>` +
             `<td>${esc(st.duplicates ?? 0)} / ${esc(st.reordered ?? 0)}</td>` +
             `<td>${esc(stream.payloadErrors ?? 0)}</td></tr>`);
