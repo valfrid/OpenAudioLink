@@ -26,21 +26,21 @@ static volatile bool s_stop;
  * packets missing, every one of them refused here.
  *
  * Retrying after taskYIELD() was not enough — five packets in thirty-four
- * thousand were still refused with the pool already doubled. The reason is
- * that yielding does not wait: this task runs above everything that would
- * be picked instead, so it comes straight back and finds the pool exactly
- * as empty. A buffer is freed when the driver finishes a transmission,
- * which takes hundreds of microseconds of real time.
+ * thousand were still refused with the pool already doubled. Retrying in
+ * busy-wait spins was very much worse: 434 refusals in 8,697 packets, a
+ * rate three hundred times higher, with the air itself losing nothing at
+ * all.
  *
- * So wait real time, in short spins, until the packet's own deadline. The
- * budget is already there: a packet due every 5 ms typically hands its
- * send to the driver in far less, and the remainder is spent spinning for
- * the next deadline regardless. Spinning here instead costs nothing that
- * was being used, and the driver task runs at a higher priority than this
- * one, so it drains the pool while we wait.
+ * The reason both failed is the same, and it is not that the wait was too
+ * short. sendto() takes the lwIP core lock, and the thread that recycles
+ * transmit buffers needs that same lock to do it. Spinning between calls
+ * never releases the CPU, so the retries simply hammered the lock that the
+ * recycling was waiting on — the harder this task tried, the longer the
+ * pool stayed empty.
+ *
+ * A refusal has to be waited out by blocking, which lets the stack run.
+ * That needs a tick shorter than a packet; see CONFIG_FREERTOS_HZ.
  */
-#define RETRY_SPIN_US 250
-
 static bool send_one(int sock, const uint8_t *packet, size_t length,
                      const struct sockaddr_in *destination, int64_t deadline_us)
 {
@@ -58,22 +58,16 @@ static bool send_one(int sock, const uint8_t *packet, size_t length,
             break;
         }
 
-        int64_t now = esp_timer_get_time();
-        if (now >= deadline_us) {
-            /* Out of budget. Giving up here is right: this packet's slot
-             * has passed, and stealing the next one only moves the
-             * problem forward. */
+        /* Out of budget. Giving up here is right: this packet's slot has
+         * passed, and stealing the next one only moves the problem
+         * forward. One tick is the shortest real wait available, so a
+         * deadline less than that away cannot be waited on. */
+        if (esp_timer_get_time() + (1000000 / configTICK_RATE_HZ) >= deadline_us) {
             break;
         }
 
         s_state.send_retries++;
-        int64_t spin_until = now + RETRY_SPIN_US;
-        if (spin_until > deadline_us) {
-            spin_until = deadline_us;
-        }
-        while (esp_timer_get_time() < spin_until) {
-            /* spin */
-        }
+        vTaskDelay(1);
     }
 
     s_state.send_errors++;
@@ -166,10 +160,18 @@ static void producer_task(void *arg)
         }
 
         if (sleep_us > 0) {
-            /* vTaskDelay rounds to whole ticks, so sleep the whole ticks
-             * and spin the remainder — a few hundred microseconds at most,
-             * and only when the tick rate cannot express the interval. */
-            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ);
+            /* Sleep whole ticks and spin only the remainder. One tick is
+             * held back rather than slept, because vTaskDelay guarantees
+             * only a lower bound and overshooting the deadline would show
+             * up as jitter at every consumer.
+             *
+             * This is worth more than it looks. At the IDF default tick of
+             * 10 ms, sleep_us never reached one tick and this task spun
+             * the whole gap between packets — 98% of the time, never
+             * blocking, while the network stack it depends on ran in the
+             * gaps it left. CONFIG_FREERTOS_HZ is set to 1000 so that a
+             * 5 ms packet interval is four ticks of real sleep. */
+            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ) - 1;
             if (ticks > 0) {
                 vTaskDelay((TickType_t)ticks);
             }
