@@ -25,14 +25,6 @@ CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
 
-# A packet is due every 5 ms, and the default 10 ms tick cannot express
-# that: vTaskDelay could not be used for any part of the wait, so the
-# producer busy-spun the whole interval between packets and never blocked.
-# A task that never blocks starves the stack it is handing packets to —
-# transmit buffers are recycled by a thread that needs the CPU and the
-# lwIP core lock to do it, and both were being held against it.
-CONFIG_FREERTOS_HZ=1000
-
 # A stream is 200 packets a second, and the default pool of 32 dynamic
 # transmit buffers runs short under that: a first measured link lost
 # nothing over the air yet still dropped fifteen packets, every one

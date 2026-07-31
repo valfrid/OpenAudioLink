@@ -481,6 +481,25 @@
         `<br><span class="muted">${mean} packets per gap</span>`;
     }
 
+    // Why the radio refused, and whether retrying helped. Three firmware
+    // revisions were spent guessing at this from the refusal count alone,
+    // while the node had been reporting both facts all along.
+    const SEND_ERRNO = {
+      11: 'EAGAIN', 12: 'ENOMEM', 22: 'EINVAL', 104: 'ECONNRESET',
+      105: 'ENOBUFS', 113: 'EHOSTUNREACH', 114: 'ENETUNREACH',
+      118: 'EHOSTDOWN', 128: 'ENOTCONN',
+    };
+    function refusalCell(stream) {
+      if (!stream.sendErrors && !stream.sendRetries) return '—';
+      const code = stream.lastSendErrno ?? 0;
+      const name = SEND_ERRNO[code] ?? `errno ${code}`;
+      const retries = stream.sendRetries ?? 0;
+      // Retries that outnumber failures are retries that worked.
+      const rescued = retries > (stream.sendErrors ?? 0)
+        ? `${retries} retried` : `${retries} retries, none helped`;
+      return `${esc(name)}<br><span class="muted">${esc(rescued)}</span>`;
+    }
+
     // Both ends, side by side: loss at a consumer means nothing without
     // knowing whether the producer actually kept its rate.
     async function refreshLinkResults() {
@@ -510,11 +529,23 @@
         if (stream.role === 'producer') {
           const late = stream.latePackets > 0
             ? `<br><span class="rssi poor">${esc(stream.latePackets)} late</span>` : '';
+          // A refused send is the producer's own loss, so it belongs in the
+          // Lost column beside the consumer's — they are the same packets
+          // counted at each end, and reading them apart cost a whole
+          // evening of blaming the radio.
+          const refused = stream.sendErrors ?? 0;
+          const refusedPct = stream.packetsSent
+            ? ((refused / stream.packetsSent) * 100).toFixed(3) : '0.000';
+          const refusedClass = refused === 0 ? 'good'
+            : refused / (stream.packetsSent || 1) > 0.001 ? 'poor' : 'fair';
           rows.push(`<tr><td>${esc(name)}</td><td>producer</td>` +
             `<td>${(stream.packetsSent ?? 0).toLocaleString()} pkt` +
             ` → ${(stream.datagramsSent ?? 0).toLocaleString()} sent${late}</td>` +
-            `<td>—</td><td>—</td><td>—</td><td>—</td>` +
-            `<td>${stream.sendErrors ? esc(stream.sendErrors) + ' send errors' : '—'}</td></tr>`);
+            `<td>${refused
+              ? `<span class="rssi ${refusedClass}">${esc(refused)} refused (${refusedPct}%)</span>`
+              : '—'}</td>` +
+            `<td>${refusalCell(stream)}</td>` +
+            `<td>—</td><td>—</td><td>—</td></tr>`);
         } else {
           const st = stream.stats ?? {};
           const lossPct = ((st.lossPpm ?? 0) / 10000).toFixed(3);

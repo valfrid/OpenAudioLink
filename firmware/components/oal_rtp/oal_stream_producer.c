@@ -25,26 +25,13 @@ static volatile bool s_stop;
  * measured link that lost nothing over the air still showed fifteen
  * packets missing, every one of them refused here.
  *
- * Retrying after taskYIELD() was not enough — five packets in thirty-four
- * thousand were still refused with the pool already doubled. Retrying in
- * busy-wait spins was very much worse: 434 refusals in 8,697 packets, a
- * rate three hundred times higher, with the air itself losing nothing at
- * all.
- *
- * The reason both failed is the same, and it is not that the wait was too
- * short. sendto() takes the lwIP core lock, and the thread that recycles
- * transmit buffers needs that same lock to do it. Spinning between calls
- * never releases the CPU, so the retries simply hammered the lock that the
- * recycling was waiting on — the harder this task tried, the longer the
- * pool stayed empty.
- *
- * A refusal has to be waited out by blocking, which lets the stack run.
- * That needs a tick shorter than a packet; see CONFIG_FREERTOS_HZ.
+ * Yielding once costs microseconds against a 5 ms budget and lets the
+ * driver drain, which is all a transient shortage needs.
  */
 static bool send_one(int sock, const uint8_t *packet, size_t length,
-                     const struct sockaddr_in *destination, int64_t deadline_us)
+                     const struct sockaddr_in *destination)
 {
-    for (;;) {
+    for (int attempt = 0; attempt < 2; attempt++) {
         if (sendto(sock, packet, length, 0,
                    (const struct sockaddr *)destination, sizeof(*destination)) >= 0) {
             return true;
@@ -52,22 +39,15 @@ static bool send_one(int sock, const uint8_t *packet, size_t length,
 
         s_state.last_send_errno = errno;
         /* Only a shortage is worth retrying. A refusal for any other
-         * reason will refuse again, and waiting on it would cost the
+         * reason will refuse again, and spinning on it would cost the
          * pacing more than the packet is worth. */
         if (errno != ENOMEM && errno != ENOBUFS) {
             break;
         }
-
-        /* Out of budget. Giving up here is right: this packet's slot has
-         * passed, and stealing the next one only moves the problem
-         * forward. One tick is the shortest real wait available, so a
-         * deadline less than that away cannot be waited on. */
-        if (esp_timer_get_time() + (1000000 / configTICK_RATE_HZ) >= deadline_us) {
-            break;
+        if (attempt == 0) {
+            s_state.send_retries++;
+            taskYIELD();
         }
-
-        s_state.send_retries++;
-        vTaskDelay(1);
     }
 
     s_state.send_errors++;
@@ -124,19 +104,9 @@ static void producer_task(void *arg)
 
         /* One packet, replicated byte-identically. Every consumer must see
          * the same sequence numbers and timestamps, or their measurements
-         * are of different streams and cannot be compared.
-         *
-         * Each destination gets an equal share of the interval to get out
-         * in, so one destination cannot spend the whole budget retrying
-         * and starve the rest. A margin is held back so a refusal on the
-         * last destination still cannot push the next packet late. */
-        const int64_t send_margin_us = packet_us / 10;
-        const int64_t share_us =
-            (packet_us - send_margin_us) / (int64_t)s_request.destination_count;
-
+         * are of different streams and cannot be compared. */
         for (size_t i = 0; i < s_request.destination_count; i++) {
-            int64_t deadline = next_send_us + (int64_t)(i + 1) * share_us;
-            if (send_one(sock, packet, sizeof(packet), &destinations[i], deadline)) {
+            if (send_one(sock, packet, sizeof(packet), &destinations[i])) {
                 s_state.datagrams_sent++;
             }
         }
@@ -160,18 +130,10 @@ static void producer_task(void *arg)
         }
 
         if (sleep_us > 0) {
-            /* Sleep whole ticks and spin only the remainder. One tick is
-             * held back rather than slept, because vTaskDelay guarantees
-             * only a lower bound and overshooting the deadline would show
-             * up as jitter at every consumer.
-             *
-             * This is worth more than it looks. At the IDF default tick of
-             * 10 ms, sleep_us never reached one tick and this task spun
-             * the whole gap between packets — 98% of the time, never
-             * blocking, while the network stack it depends on ran in the
-             * gaps it left. CONFIG_FREERTOS_HZ is set to 1000 so that a
-             * 5 ms packet interval is four ticks of real sleep. */
-            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ) - 1;
+            /* vTaskDelay rounds to whole ticks, so sleep the whole ticks
+             * and spin the remainder — a few hundred microseconds at most,
+             * and only when the tick rate cannot express the interval. */
+            int64_t ticks = sleep_us / (1000000 / configTICK_RATE_HZ);
             if (ticks > 0) {
                 vTaskDelay((TickType_t)ticks);
             }
