@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace OpenAudioLink.Core.CastPoints;
@@ -58,9 +59,18 @@ public static class CastPointId
                 break;
             }
 
-            // FormD splits "ö" into "o" plus a combining mark, so folding
-            // Scandinavian and other accented names falls out of dropping
-            // anything non-alphanumeric rather than needing a table.
+            // FormD splits "ö" into "o" plus a combining diaeresis, which
+            // folds accented names without a translation table — but only
+            // if the mark is discarded rather than treated as a separator.
+            // Left as a separator it turns "Kök" into "ko-k".
+            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category is UnicodeCategory.NonSpacingMark
+                or UnicodeCategory.SpacingCombiningMark
+                or UnicodeCategory.EnclosingMark)
+            {
+                continue;
+            }
+
             if (char.IsAsciiLetterOrDigit(ch))
             {
                 if (pendingHyphen && slug.Length > 0)
