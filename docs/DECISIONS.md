@@ -470,3 +470,91 @@ so it suits one good room rather than every room.
   clock correction that decision 2's synchronisation goals rely on.
 - If A is ever attempted, VBUS is the first thing to test and the point at
   which to abandon it cheaply.
+
+## 9. Controller is a small role; the Hub is a device that hosts it
+
+**Date:** 2026-07-31
+**Status:** decided; the peer table in firmware is the first piece of work.
+
+### Decision
+
+"Hub" and "Controller" have been used interchangeably and they are not the
+same thing.
+
+**Controller** is a role with a small job: know which devices are present,
+decide who sends to whom, and start and stop streams. That is all of it.
+
+**Hub** is a deployment — a PC that holds the Controller role *and* a pile
+of services that are not the Controller: the operator interface, digital
+sources and cast points, the firmware store and OTA, persistence across
+restarts, and the link measurement tools.
+
+The separation is what makes the small system answerable. A party system —
+one analog Producer and a few Consumers, no PC anywhere — needs a
+Controller. It does not need a Hub.
+
+**In a system with no Hub, the Controller is hosted on the Producer.**
+
+Two reasons, and the second is the structural one. The Producer is the
+only node guaranteed to exist: Consumers are interchangeable and may come
+and go, but there is exactly one turntable. And when Controller and
+Producer are the same node, "tell the Producer where to send" stops being
+a network call and becomes a function call — the control plane of the
+party system collapses to nothing, so the part that could fail over Wi-Fi
+does not exist.
+
+### The default that makes it need no configuration
+
+**A Controller with no configuration streams to every Consumer it can
+see.**
+
+Plug in the turntable node, power on the speakers, and music plays
+everywhere. Beyond the Wi-Fi provisioning that already exists — which
+already asks which roles the node holds — there is nothing to set up.
+
+This layers correctly rather than being a special case. A Hub is a
+Controller that has *more information*: rooms, cast points, groups. It
+overrides the default with a better answer. Same role, richer policy, and
+the minimal Controller is simply the one whose only cast point is
+"everything".
+
+### Who holds it, without an election
+
+Roles are already in NVS and provisioning already offers them, so the
+explicit answer is that the operator chooses. For the system to show
+initiative, one rule is added on top:
+
+A node holding Producer that has seen no Controller announcement for a few
+seconds **claims** Controller. Announcements already carry `roles`, so
+this needs no new message and no election protocol. Precedence settles
+conflicts: a Hub outranks a node, and between two nodes the lower device
+id wins. Deterministic, and computable by each node alone.
+
+The behaviour that follows is the point. The party system works with
+nothing configured. Carry that same turntable node into the house where
+the Hub is running, and it sees a Controller that outranks it, yields, and
+becomes an ordinary Producer.
+
+### What has to be built
+
+Firmware discovery today announces every interval and replies to probes,
+but the receive path checks `is_probe()` and discards everything else. **A
+node currently has no idea any other node exists.** A node-hosted
+Controller needs a small peer table — id, address, roles, last seen — built
+from the announcements already on the wire. A fixed array of sixteen is
+more than a party system will hold.
+
+### Consequences
+
+- Two Controllers can briefly coexist while precedence resolves, which
+  means two streams could reach one Consumer. The same rule cast points
+  need applies here: a Consumer plays one stream, accepting the first
+  SSRC and ignoring others until it goes quiet. `oal_rtp_stats` already
+  tracks SSRC, so the information is present.
+- "Stream to everyone" is right for a party and wrong for a house. It is
+  safe only because a Hub, when present, replaces it.
+- A partitioned network could leave two Controllers running. For systems
+  of this size that is accepted rather than solved.
+- The Controller role stops implying a PC. Nothing in discovery, control
+  or the RTP profile changes — this is a statement about where existing
+  responsibilities are hosted, not a new mechanism.
