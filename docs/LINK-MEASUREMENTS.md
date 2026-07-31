@@ -45,11 +45,17 @@ two mesh points, 2.4 GHz. Firmware 0.6.x.
 | 5 | 11 | 20 MHz | 3 hops | 0.707% | 0 | 0.707% | 3.10 ms |
 | 6 | 7 | 20 MHz | 3 hops | 0.172% | 0 | 0.172% | 2.31 ms |
 | 7 | 7 | 20 MHz | **2 hops** | 0.044% | 5 | **0.029%** | **1.54 ms** |
+| 8 | 7 | 20 MHz | 2 hops | 4.99% | 434 | 0% | 4.58 ms |
+| 9 | 7 | 20 MHz | 2 hops | 29.0% | 1,499 | 0% | 7.60 ms |
+| 10 | 7 | 20 MHz | 2 hops | 46.7% | unreadable | — | 11.10 ms |
+| 11 | 7 | 20 MHz | **2 hops** | 0.045% | **0** | **0.045%** | **1.04 ms** |
 
 Runs 1–3 predate both the send-error counter and the access-point line, so
 their loss figures conflate three causes and their topology is unrecorded.
 They are kept only to show that power save mattered (run 1 → run 2 changed
 nothing but `esp_wifi_set_ps(WIFI_PS_NONE)`).
+
+Runs 8–10 are a false trail, kept because of what they cost. See below.
 
 ## What the series established
 
@@ -82,6 +88,27 @@ path, was gentler still per event: 1.60 packets per gap, longest 3. Gaps of
 this shape are the kind loss concealment can hide. A burst outage would not
 be, and none has been seen.
 
+**A refused send is a symptom of the channel, not a defect in the sender.**
+This cost three firmware revisions to learn. Runs 8 and 9 were attempts to
+make the producer retry a refused send harder — first by spinning, then by
+blocking on a faster tick — and refusals rose from 0.015% to 5% and then
+29%. The obvious reading was that each change had made things worse.
+
+It was the wrong reading. Run 10 used firmware byte-identical to run 7's
+apart from the version string, and measured 46.7%. The code was never the
+variable. Something in the radio environment had been degrading all
+evening, and `ENOMEM` on `sendto` is what that looks like from inside the
+node: the MAC layer retries frames against a channel that will not clear,
+the transmit queue drains slowly, buffers stay allocated, and the pool
+empties. Restarting everything cleared it, and run 11 — same firmware
+again, no retry logic at all — refused nothing.
+
+Two rules follow. A measurement that contradicts a known-good baseline is
+a claim about the environment until proven otherwise; re-establish the
+baseline before changing code. And never ship two changes in one image:
+run 9 altered both the retry and `CONFIG_FREERTOS_HZ`, so even its failure
+taught nothing.
+
 **Nothing has ever been corrupted.** Zero payload errors across every run,
 with the pattern source recomputing all 480 samples of every packet. Zero
 duplicates and zero reordering throughout. The failure mode of this network
@@ -101,3 +128,10 @@ and a jitter buffer, not integrity checking.
 4. Read the access-point line under the results before trusting anything
    above it.
 5. Subtract the producer's send errors from the consumer's loss.
+6. When comparing two firmware images, measure A, then B, then A again.
+   The radio environment drifts on its own and has done so by three orders
+   of magnitude in an evening; without the second A there is no way to tell
+   a change in the code from a change in the air.
+7. If a run disagrees with the established baseline, restart the access
+   points, the nodes and the Hub, and re-run the baseline before believing
+   anything. Runs 8-10 above are what happens otherwise.
