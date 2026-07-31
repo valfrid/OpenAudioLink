@@ -139,6 +139,22 @@ static bool try_station(const char *ssid, const char *password)
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    /*
+     * No power save. The default is modem sleep: the radio wakes on the
+     * beacon and the access point buffers unicast frames in between. That
+     * is right for a device exchanging occasional control messages and
+     * wrong for one taking 200 packets a second, where it costs steady
+     * low-level loss and inflates jitter beyond anything the wire is
+     * doing. A first measured link showed 0.24% loss and 2 ms of jitter
+     * between two nodes on the same access point, which is far worse than
+     * -61 dBm should give.
+     *
+     * The cost is current draw, which matters for the battery-powered
+     * standalone mode of decision 4. Audio wins for now; a node that
+     * knows it is idle could sleep again later.
+     */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
     ESP_LOGI(TAG, "joining \"%s\"", ssid);
     EventBits_t bits = xEventGroupWaitBits(s_events, CONNECTED_BIT | FAILED_BIT,
                                            pdFALSE, pdFALSE, portMAX_DELAY);
