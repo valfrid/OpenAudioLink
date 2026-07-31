@@ -124,6 +124,7 @@
     </thead>
     <tbody></tbody>
   </table>
+  <p id="link-path" class="hint" hidden></p>
   <p id="link-status" class="hint">Pick a producer and at least one destination.</p>
 
   <h2>Hub streaming</h2>
@@ -544,21 +545,30 @@
     // sit on different mesh points it crosses the backhaul as well, which
     // is a third hop and a different measurement entirely — twice now that
     // has quietly turned a channel comparison into a topology comparison.
+    //
+    // This gets its own line rather than sharing the status paragraph:
+    // the status line is transient ("Stopped; counters cleared") and would
+    // erase the one fact needed to judge whether the numbers above it mean
+    // anything. Which it did, for a whole run.
     function showPath(ids) {
       const involved = [...ids]
         .map(id => lastDevices.find(d => d.id === id))
         .filter(d => d && d.status && d.status.bssid);
-      if (involved.length < 2) return;
+      const path = document.getElementById('link-path');
+      if (involved.length < 2) {
+        path.hidden = true;
+        return;
+      }
 
       const access = [...new Set(involved.map(d => d.status.bssid))];
-      const status = document.getElementById('link-status');
+      path.hidden = false;
       if (access.length === 1) {
-        status.className = 'hint';
-        status.textContent =
+        path.className = 'hint';
+        path.textContent =
           `Both nodes on one access point (${access[0]}) — two hops.`;
       } else {
-        status.className = 'hint rssi fair';
-        status.textContent =
+        path.className = 'hint rssi fair';
+        path.textContent =
           `Nodes on different access points (${access.join(' and ')}) — ` +
           'three hops, across the mesh backhaul. Not comparable with a ' +
           'same-access-point run.';
