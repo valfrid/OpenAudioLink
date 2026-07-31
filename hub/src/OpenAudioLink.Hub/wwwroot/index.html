@@ -415,6 +415,16 @@
 
     // --- node-to-node link test -------------------------------------
 
+    // Feedback for this panel goes under this panel. The shared message
+    // line sits below the Firmware section, so a validation error written
+    // there is invisible from here and the button looks dead.
+    function linkSay(text, isError) {
+      const status = document.getElementById('link-status');
+      status.textContent = text;
+      status.className = isError ? 'hint rssi poor' : 'hint';
+      say(text);
+    }
+
     function selectedLinkDestinations() {
       const chosen = [...document.getElementById('link-consumers').selectedOptions]
         .map(o => o.value).filter(v => v);
@@ -440,10 +450,15 @@
 
       const consumerSelect = document.getElementById('link-consumers');
       const chosen = [...consumerSelect.selectedOptions].map(o => o.value);
+      const hadOptions = consumerSelect.options.length > 0;
       consumerSelect.innerHTML = consumers.map(d =>
         `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+
+      // Select every consumer the first time the list appears. Testing all
+      // of them is the common case, and an empty selection that looks like
+      // a populated list is the state that makes Start seem to do nothing.
       for (const option of consumerSelect.options) {
-        option.selected = chosen.includes(option.value);
+        option.selected = hadOptions ? chosen.includes(option.value) : true;
       }
     }
 
@@ -506,9 +521,15 @@
 
     document.getElementById('link-start').addEventListener('click', async () => {
       const producer = document.getElementById('link-producer').value;
-      if (!producer) { say('No node holds the producer role.'); return; }
+      if (!producer) {
+        linkSay('No online node holds the producer role.', true);
+        return;
+      }
       const destinations = selectedLinkDestinations();
-      if (!destinations.length) { say('Pick at least one destination.'); return; }
+      if (!destinations.length) {
+        linkSay('Select a destination in the To list, or type an address.', true);
+        return;
+      }
 
       const body = {
         destinations,
@@ -516,7 +537,7 @@
         source: document.getElementById('link-source').value,
         toneHz: Number(document.getElementById('link-tone').value),
       };
-      say('Starting link…');
+      linkSay('Starting link…');
       const response = await fetch(
         `/api/devices/${encodeURIComponent(producer)}/stream/start`, {
           method: 'POST',
@@ -524,12 +545,10 @@
           body: JSON.stringify(body),
         });
       if (response.ok) {
-        document.getElementById('link-status').textContent =
-          `Streaming to ${destinations.length} destination(s) at 200 packets/s.`;
-        say('Link started.');
+        linkSay(`Streaming to ${destinations.length} destination(s) at 200 packets/s.`);
       } else {
         const error = await response.json().catch(() => ({}));
-        say(`Could not start link: ${error.error ?? response.status}`);
+        linkSay(`Could not start link: ${error.error ?? response.status}`, true);
       }
       refreshLinkResults();
     });
@@ -543,8 +562,7 @@
         await fetch(`/api/devices/${encodeURIComponent(id)}/stream/stop`, { method: 'POST' })
           .catch(() => {});
       }
-      document.getElementById('link-status').textContent = 'Stopped; counters cleared.';
-      say('Link stopped.');
+      linkSay('Stopped; counters cleared.');
       refreshLinkResults();
     });
 
