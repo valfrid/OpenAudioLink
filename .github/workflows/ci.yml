@@ -52,7 +52,7 @@ jobs:
   # counting here would send us chasing radio problems that are really
   # counting problems.
   rtp-stats:
-    name: RTP packet and statistics (host)
+    name: RTP packet, statistics and peer table (host)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -68,6 +68,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o rtp-packet-tests oal_rtp.c test/test_rtp_packet.c -lm &&
           ./rtp-packet-tests
+      - name: Peer table
+        working-directory: firmware/components/oal_discovery
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o peer-tests oal_peers.c test/test_peers.c &&
+          ./peer-tests
 
   firmware:
     name: Firmware testnode (${{ matrix.target }})

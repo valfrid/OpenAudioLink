@@ -5,7 +5,9 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 
@@ -31,8 +33,98 @@ static int build_announce(void)
                     OAL_DEVICE_CONTROL_PORT);
 }
 
-/* A probe is any message with type "probe" and a compatible (0.x) suite version. */
-static bool is_probe(const char *buf, int len)
+/*
+ * The table itself is in oal_peers.c and knows nothing about tasks; this
+ * owns the lock around it. Written only by the discovery task and read by
+ * the control server, so a mutex rather than an atomic: a reader must not
+ * copy a record halfway through being overwritten by a re-announce.
+ */
+static oal_peer_table_t s_peers;
+static SemaphoreHandle_t s_peers_lock;
+
+static void copy_field(char *dst, size_t dst_size, const cJSON *item)
+{
+    if (cJSON_IsString(item) && item->valuestring != NULL) {
+        snprintf(dst, dst_size, "%s", item->valuestring);
+    } else {
+        dst[0] = '\0';
+    }
+}
+
+static void remember_peer(const cJSON *root, const struct sockaddr_in *from)
+{
+    const cJSON *id = cJSON_GetObjectItemCaseSensitive(root, "id");
+    if (!cJSON_IsString(id) || id->valuestring == NULL || id->valuestring[0] == '\0') {
+        return;
+    }
+
+    /* Our own announcements come back to us: joining the group enables
+     * loopback by default, and a node listing itself as a peer would make
+     * every count off by one. */
+    if (strcmp(id->valuestring, s_config.id) == 0) {
+        return;
+    }
+
+    oal_peer_t peer = { 0 };
+    copy_field(peer.id, sizeof(peer.id), id);
+    copy_field(peer.name, sizeof(peer.name),
+               cJSON_GetObjectItemCaseSensitive(root, "name"));
+
+    const cJSON *roles = cJSON_GetObjectItemCaseSensitive(root, "roles");
+    if (cJSON_IsArray(roles)) {
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, roles) {
+            if (cJSON_IsString(entry) && entry->valuestring != NULL) {
+                peer.roles |= oal_role_from_name(entry->valuestring);
+            }
+        }
+    }
+
+    const cJSON *port = cJSON_GetObjectItemCaseSensitive(root, "ctrlPort");
+    peer.control_port = cJSON_IsNumber(port)
+        ? (uint16_t)port->valueint : OAL_DEVICE_CONTROL_PORT;
+    inet_ntoa_r(from->sin_addr, peer.address, (int)sizeof(peer.address));
+    peer.last_seen_us = esp_timer_get_time();
+
+    if (xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    if (oal_peer_table_record(&s_peers, &peer)) {
+        ESP_LOGI(TAG, "peer %s (%s) at %s", peer.name, peer.id, peer.address);
+    }
+    xSemaphoreGive(s_peers_lock);
+}
+
+size_t oal_discovery_peers(oal_peer_t *out, size_t max)
+{
+    if (s_peers_lock == NULL
+        || xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return 0;
+    }
+    size_t written = oal_peer_table_live(&s_peers, esp_timer_get_time(), out, max);
+    xSemaphoreGive(s_peers_lock);
+    return written;
+}
+
+size_t oal_discovery_peer_count(void)
+{
+    if (s_peers_lock == NULL
+        || xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return 0;
+    }
+    size_t live = oal_peer_table_count_live(&s_peers, esp_timer_get_time());
+    xSemaphoreGive(s_peers_lock);
+    return live;
+}
+
+/*
+ * One parse for both jobs. The message was parsed once to test for a probe
+ * and thrown away; parsing it twice to also read an announce would double
+ * the cost of every datagram on a shared multicast group.
+ *
+ * Returns true if a probe was seen and the caller should answer it.
+ */
+static bool handle_message(const char *buf, int len, const struct sockaddr_in *from)
 {
     cJSON *root = cJSON_ParseWithLength(buf, len);
     if (root == NULL) {
@@ -41,8 +133,17 @@ static bool is_probe(const char *buf, int len)
 
     const cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
     const cJSON *oal = cJSON_GetObjectItemCaseSensitive(root, "oal");
-    bool probe = cJSON_IsString(type) && strcmp(type->valuestring, "probe") == 0
-                 && cJSON_IsString(oal) && strncmp(oal->valuestring, "0.", 2) == 0;
+    bool compatible = cJSON_IsString(oal) && strncmp(oal->valuestring, "0.", 2) == 0;
+    bool probe = false;
+
+    if (compatible && cJSON_IsString(type)) {
+        if (strcmp(type->valuestring, "probe") == 0) {
+            probe = true;
+        } else if (strcmp(type->valuestring, "announce") == 0) {
+            remember_peer(root, from);
+        }
+    }
+
     cJSON_Delete(root);
     return probe;
 }
@@ -118,7 +219,7 @@ static void discovery_task(void *arg)
         struct sockaddr_in from;
         socklen_t from_len = sizeof(from);
         int len = recvfrom(sock, rx, sizeof(rx) - 1, 0, (struct sockaddr *)&from, &from_len);
-        if (len > 0 && is_probe(rx, len)) {
+        if (len > 0 && handle_message(rx, len, &from)) {
             /* Random 0-500 ms delay avoids a reply burst from many nodes. */
             vTaskDelay(pdMS_TO_TICKS(esp_random() % 500));
             sendto(sock, s_announce, s_announce_len, 0, (struct sockaddr *)&from, from_len);
@@ -137,6 +238,15 @@ esp_err_t oal_discovery_start(const oal_discovery_config_t *config)
     s_announce_len = build_announce();
     if (s_announce_len <= 0 || s_announce_len >= (int)sizeof(s_announce)) {
         return ESP_ERR_INVALID_SIZE;
+    }
+
+    /* Before the task starts, so a peer cannot arrive while the lock that
+     * guards the table is still null. */
+    if (s_peers_lock == NULL) {
+        s_peers_lock = xSemaphoreCreateMutex();
+        if (s_peers_lock == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     if (xTaskCreate(discovery_task, "oal_discovery", 4096, NULL, 5, NULL) != pdPASS) {

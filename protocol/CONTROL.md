@@ -40,6 +40,7 @@ configuration — never audio.
 | POST   | `/stream/start`   | Producer: begin streaming to destinations   |
 | POST   | `/stream/stop`    | Stop a producer; clear a consumer's counters |
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
+| GET    | `/peers`          | Other nodes this one has heard announce      |
 
 ### GET /status
 
@@ -79,6 +80,37 @@ Volatile state lives here and not on the discovery announce. Signal
 strength changes constantly, and an announce is multicast to every device
 on the network every few seconds; a Controller that wants telemetry asks
 for it.
+
+### GET /peers
+
+What this node has heard from other nodes on the discovery group. Every
+node has always received these announcements and until now discarded them,
+which is workable only while a PC holds the Controller role. A party system
+has no PC, and a Controller that cannot see the speakers cannot route to
+them (`docs/DECISIONS.md` decision 9).
+
+```json
+{
+  "peers": [
+    {
+      "id": "mac-7c10c97a0bd0",
+      "name": "PartySpeaker",
+      "roles": ["consumer"],
+      "address": "192.168.0.71",
+      "ctrlPort": 41001,
+      "ageMs": 2431
+    }
+  ]
+}
+```
+
+Newest announcement first. A peer heard from more than 30 s ago — six
+missed announces — is omitted rather than listed as stale, so nothing has
+to interpret `ageMs` to know who is present. A node never lists itself,
+though its own multicast does come back to it.
+
+`ageMs` is the age of the announcement, not a timestamp: nodes have no
+shared clock, and an absolute time from one would mean nothing to another.
 
 ### POST /config
 
@@ -158,3 +190,4 @@ they were taken so nothing is shown as fresher than it is.
 ## Revision history
 
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
+  Later additions within 0.1: `/stream*` measurement endpoints, `/peers`.

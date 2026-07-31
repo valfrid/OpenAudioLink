@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "oal_discovery.h"
 #include "oal_stream.h"
 #include "esp_http_server.h"
 #include "esp_https_ota.h"
@@ -288,6 +289,49 @@ static esp_err_t stream_stop_handler(httpd_req_t *req)
     return httpd_resp_send(req, "{\"status\":\"stopped\"}", HTTPD_RESP_USE_STRLEN);
 }
 
+/* ---------- GET /peers ---------- */
+
+/*
+ * What this node has heard from other nodes (decision 9). Nothing acts on
+ * it yet, so this endpoint is the whole of its observable behaviour — and
+ * a peer table that cannot be read is one that cannot be shown to be
+ * working before anything is built on top of it.
+ *
+ * Sent in chunks rather than assembled in one buffer: sixteen peers would
+ * be some two kilobytes on a task stack that also has to serve OTA.
+ */
+static esp_err_t peers_handler(httpd_req_t *req)
+{
+    static oal_peer_t peers[OAL_MAX_PEERS];
+    size_t count = oal_discovery_peers(peers, OAL_MAX_PEERS);
+    const int64_t now = esp_timer_get_time();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send_chunk(req, "{\"peers\":[", HTTPD_RESP_USE_STRLEN);
+
+    for (size_t i = 0; i < count; i++) {
+        char roles[OAL_ROLES_STR_MAX];
+        if (oal_roles_to_json(peers[i].roles, roles, sizeof(roles)) < 0) {
+            snprintf(roles, sizeof(roles), "[]");
+        }
+
+        char entry[256];
+        int len = snprintf(entry, sizeof(entry),
+                           "%s{\"id\":\"%s\",\"name\":\"%s\",\"roles\":%s,"
+                           "\"address\":\"%s\",\"ctrlPort\":%u,\"ageMs\":%lld}",
+                           i == 0 ? "" : ",",
+                           peers[i].id, peers[i].name, roles,
+                           peers[i].address, (unsigned)peers[i].control_port,
+                           (long long)((now - peers[i].last_seen_us) / 1000));
+        if (len > 0 && len < (int)sizeof(entry)) {
+            httpd_resp_send_chunk(req, entry, len);
+        }
+    }
+
+    httpd_resp_send_chunk(req, "]}", HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 /* ---------- POST /reboot ---------- */
 
 static void restart_task(void *arg)
@@ -381,7 +425,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
-    server_config.max_uri_handlers = 8; /* seven registered, and the default is eight */
+    server_config.max_uri_handlers = 10; /* eight registered; the default of eight leaves no room */
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &server_config);
@@ -398,6 +442,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
         { .uri = "/stream/start", .method = HTTP_POST, .handler = stream_start_handler };
     httpd_uri_t stream_stop =
         { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
+    httpd_uri_t peers = { .uri = "/peers", .method = HTTP_GET, .handler = peers_handler };
     httpd_register_uri_handler(server, &status);
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);
@@ -405,6 +450,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_register_uri_handler(server, &stream);
     httpd_register_uri_handler(server, &stream_start);
     httpd_register_uri_handler(server, &stream_stop);
+    httpd_register_uri_handler(server, &peers);
 
     ESP_LOGI(TAG, "control server on port %d", CONTROL_PORT);
     return ESP_OK;

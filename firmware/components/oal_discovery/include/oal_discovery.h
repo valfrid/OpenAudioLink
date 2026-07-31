@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include "oal_config.h"
+#include "oal_peers.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +29,28 @@ typedef struct {
  * answers probes with a unicast announce.
  */
 esp_err_t oal_discovery_start(const oal_discovery_config_t *config);
+
+/*
+ * The peer table (decision 9).
+ *
+ * Announcements from other nodes were already arriving on this socket and
+ * being discarded, so every node knew the network existed and nothing
+ * about who was on it. That is workable only while a PC is the Controller.
+ * A party system has no PC: the turntable holds the Controller role, and a
+ * Controller that cannot see the speakers cannot route anything to them.
+ *
+ * Peers are recorded here and nothing acts on them yet. Claiming the role
+ * and answering joins come next; this is the table they will read.
+ */
+
+/**
+ * Copies the live peers into @p out, newest announcement first, and
+ * returns how many were written. See oal_peers.h for the table itself.
+ */
+size_t oal_discovery_peers(oal_peer_t *out, size_t max);
+
+/** How many peers are currently live. Cheaper than copying the table. */
+size_t oal_discovery_peer_count(void);
 
 #ifdef __cplusplus
 }
