@@ -69,10 +69,53 @@ Hub, which packages it as RTP and sends it to that cast point's
 destinations. Adding a protocol is adding an adapter, not changing the
 model.
 
-For a public repository the right shape is a Source interface at the Hub
-with these as pluggable implementations, documented rather than bundled.
-Whether a particular receiver is licensed for a particular service is the
-operator's decision to make, not something to embed in the project.
+## The binding is the feature
+
+A receiver is not a source that happens to sit next to a destination list.
+It *is* the destination list, seen from the phone.
+
+This is the whole of what Chromecast gets right. Choosing "Kitchen" in
+Spotify picks what plays and where it plays in one act, without opening a
+second application. A design where the user selects a generic
+"OpenAudioLink" receiver and then chooses a room somewhere else has lost
+before it starts — it is two steps in two apps to do what a Chromecast
+does in one.
+
+So the receiver instance and the cast point are one object, and the Hub
+owns the instance's whole lifecycle:
+
+- creating a cast point starts a receiver advertising under its name
+- renaming it renames the advertisement
+- deleting it stops the receiver
+- restarting the Hub restores all of them
+- **the receiver drives the stream, not the Hub UI**: when playback
+  begins on a cast point the Hub starts RTP to that cast point's
+  destinations, and stops it when the receiver goes idle
+
+The consequence to hold onto: **in normal use the operator never opens the
+Hub's interface.** It is for setup — naming rooms, choosing which speakers
+are in them — and nothing else. Every day after that happens from the
+phone. Any design where routine listening requires the Hub UI has missed
+the point of the feature.
+
+Two things are needed for parity rather than mere function. Volume sent
+from the phone must reach the speakers, since Spotify Connect and AirPlay
+both carry it and a receiver that ignores it feels broken. And a cast
+point that is playing should say so in the Hub, because it is the only
+place the whole house is visible at once.
+
+## Bundling
+
+The orchestration belongs in the Hub: spawning receivers, naming them,
+capturing their PCM, tying them to destinations. That is the feature and
+it cannot live outside the project.
+
+The receiver binaries are a different question. Whether a particular
+implementation is licensed for a particular service is the operator's
+decision, so the Hub should locate and manage a binary the operator has
+supplied rather than ship one. That keeps the licensing question where it
+belongs without making the operator configure anything: they install a
+binary, and the Hub does the rest.
 
 ## What this actually costs
 
@@ -121,5 +164,8 @@ receiver adapters, and the resampling.
    no protocol adapter at all.
 2. A Source interface, with WASAPI loopback as the first implementation —
    it is already designed in `WINDOWS-AUDIO-CAPTURE.md`.
-3. One network receiver adapter, chosen then rather than now.
+3. Receiver orchestration: one instance per cast point, spawned and named
+   by the Hub, its PCM captured and its idle/playing state driving the
+   stream. This is where the feature actually lands, and it is worth
+   building against one protocol before deciding it is the right one.
 4. Synchronised playout, which is blocked on the DAC regardless.
