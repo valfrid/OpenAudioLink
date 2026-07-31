@@ -25,13 +25,26 @@ static volatile bool s_stop;
  * measured link that lost nothing over the air still showed fifteen
  * packets missing, every one of them refused here.
  *
- * Yielding once costs microseconds against a 5 ms budget and lets the
- * driver drain, which is all a transient shortage needs.
+ * Retrying after taskYIELD() was not enough — five packets in thirty-four
+ * thousand were still refused with the pool already doubled. The reason is
+ * that yielding does not wait: this task runs above everything that would
+ * be picked instead, so it comes straight back and finds the pool exactly
+ * as empty. A buffer is freed when the driver finishes a transmission,
+ * which takes hundreds of microseconds of real time.
+ *
+ * So wait real time, in short spins, until the packet's own deadline. The
+ * budget is already there: a packet due every 5 ms typically hands its
+ * send to the driver in far less, and the remainder is spent spinning for
+ * the next deadline regardless. Spinning here instead costs nothing that
+ * was being used, and the driver task runs at a higher priority than this
+ * one, so it drains the pool while we wait.
  */
+#define RETRY_SPIN_US 250
+
 static bool send_one(int sock, const uint8_t *packet, size_t length,
-                     const struct sockaddr_in *destination)
+                     const struct sockaddr_in *destination, int64_t deadline_us)
 {
-    for (int attempt = 0; attempt < 2; attempt++) {
+    for (;;) {
         if (sendto(sock, packet, length, 0,
                    (const struct sockaddr *)destination, sizeof(*destination)) >= 0) {
             return true;
@@ -39,14 +52,27 @@ static bool send_one(int sock, const uint8_t *packet, size_t length,
 
         s_state.last_send_errno = errno;
         /* Only a shortage is worth retrying. A refusal for any other
-         * reason will refuse again, and spinning on it would cost the
+         * reason will refuse again, and waiting on it would cost the
          * pacing more than the packet is worth. */
         if (errno != ENOMEM && errno != ENOBUFS) {
             break;
         }
-        if (attempt == 0) {
-            s_state.send_retries++;
-            taskYIELD();
+
+        int64_t now = esp_timer_get_time();
+        if (now >= deadline_us) {
+            /* Out of budget. Giving up here is right: this packet's slot
+             * has passed, and stealing the next one only moves the
+             * problem forward. */
+            break;
+        }
+
+        s_state.send_retries++;
+        int64_t spin_until = now + RETRY_SPIN_US;
+        if (spin_until > deadline_us) {
+            spin_until = deadline_us;
+        }
+        while (esp_timer_get_time() < spin_until) {
+            /* spin */
         }
     }
 
@@ -104,9 +130,19 @@ static void producer_task(void *arg)
 
         /* One packet, replicated byte-identically. Every consumer must see
          * the same sequence numbers and timestamps, or their measurements
-         * are of different streams and cannot be compared. */
+         * are of different streams and cannot be compared.
+         *
+         * Each destination gets an equal share of the interval to get out
+         * in, so one destination cannot spend the whole budget retrying
+         * and starve the rest. A margin is held back so a refusal on the
+         * last destination still cannot push the next packet late. */
+        const int64_t send_margin_us = packet_us / 10;
+        const int64_t share_us =
+            (packet_us - send_margin_us) / (int64_t)s_request.destination_count;
+
         for (size_t i = 0; i < s_request.destination_count; i++) {
-            if (send_one(sock, packet, sizeof(packet), &destinations[i])) {
+            int64_t deadline = next_send_us + (int64_t)(i + 1) * share_us;
+            if (send_one(sock, packet, sizeof(packet), &destinations[i], deadline)) {
                 s_state.datagrams_sent++;
             }
         }
