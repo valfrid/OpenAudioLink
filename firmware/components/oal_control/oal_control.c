@@ -184,12 +184,14 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "{\"role\":\"producer\",\"running\":%s,\"port\":%u,"
                        "\"destinations\":%u,\"source\":\"%s\","
                        "\"packetsSent\":%u,\"datagramsSent\":%u,"
-                       "\"sendErrors\":%u,\"latePackets\":%u}",
+                       "\"sendErrors\":%u,\"sendRetries\":%u,\"lastSendErrno\":%d,"
+                       "\"latePackets\":%u}",
                        p.running ? "true" : "false", p.port,
                        (unsigned)p.destination_count,
                        p.source == OAL_RTP_SOURCE_TONE ? "tone" : "pattern",
                        (unsigned)p.packets_sent, (unsigned)p.datagrams_sent,
-                       (unsigned)p.send_errors, (unsigned)p.late_packets);
+                       (unsigned)p.send_errors, (unsigned)p.send_retries,
+                       p.last_send_errno, (unsigned)p.late_packets);
     } else {
         oal_stream_consumer_state_t c;
         oal_stream_consumer_get(&c);

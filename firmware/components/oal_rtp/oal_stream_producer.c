@@ -1,5 +1,6 @@
 #include "oal_stream.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -15,6 +16,43 @@ static oal_stream_request_t s_request;
 static oal_stream_producer_state_t s_state;
 static TaskHandle_t s_task;
 static volatile bool s_stop;
+
+/*
+ * A refused send is not a lost packet — it is a packet that never left,
+ * and it would be counted at the consumer as network loss. The Wi-Fi
+ * driver's transmit buffers are a small pool, and at 200 packets a second
+ * a momentary shortage is normal rather than exceptional: the first
+ * measured link that lost nothing over the air still showed fifteen
+ * packets missing, every one of them refused here.
+ *
+ * Yielding once costs microseconds against a 5 ms budget and lets the
+ * driver drain, which is all a transient shortage needs.
+ */
+static bool send_one(int sock, const uint8_t *packet, size_t length,
+                     const struct sockaddr_in *destination)
+{
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (sendto(sock, packet, length, 0,
+                   (const struct sockaddr *)destination, sizeof(*destination)) >= 0) {
+            return true;
+        }
+
+        s_state.last_send_errno = errno;
+        /* Only a shortage is worth retrying. A refusal for any other
+         * reason will refuse again, and spinning on it would cost the
+         * pacing more than the packet is worth. */
+        if (errno != ENOMEM && errno != ENOBUFS) {
+            break;
+        }
+        if (attempt == 0) {
+            s_state.send_retries++;
+            taskYIELD();
+        }
+    }
+
+    s_state.send_errors++;
+    return false;
+}
 
 /*
  * Pacing is against a monotonic clock, not a task delay. At 200 packets a
@@ -68,10 +106,7 @@ static void producer_task(void *arg)
          * the same sequence numbers and timestamps, or their measurements
          * are of different streams and cannot be compared. */
         for (size_t i = 0; i < s_request.destination_count; i++) {
-            if (sendto(sock, packet, sizeof(packet), 0,
-                       (struct sockaddr *)&destinations[i], sizeof(destinations[i])) < 0) {
-                s_state.send_errors++;
-            } else {
+            if (send_one(sock, packet, sizeof(packet), &destinations[i])) {
                 s_state.datagrams_sent++;
             }
         }

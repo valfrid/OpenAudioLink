@@ -24,3 +24,10 @@ CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 # submitted from a phone.
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# A stream is 200 packets a second, and the default pool of 32 dynamic
+# transmit buffers runs short under that: a first measured link lost
+# nothing over the air yet still dropped fifteen packets, every one
+# refused by the driver before it left. Doubling the pool costs a little
+# heap on a board with 8 MB of PSRAM available.
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64

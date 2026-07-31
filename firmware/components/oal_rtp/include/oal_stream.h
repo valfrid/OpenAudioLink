@@ -35,7 +35,9 @@ typedef struct {
     oal_rtp_source_t source;
     uint32_t packets_sent;     /* per destination replication counted once */
     uint32_t datagrams_sent;   /* one per destination per packet */
-    uint32_t send_errors;
+    uint32_t send_errors;      /* packets the radio never accepted */
+    uint32_t send_retries;     /* transient refusals that a retry cleared */
+    int      last_send_errno;  /* why the last refusal happened */
     uint32_t late_packets;     /* pacing slipped by more than one packet time */
     uint64_t started_at_us;
 } oal_stream_producer_state_t;
