@@ -251,6 +251,83 @@ static void test_nothing_received_reports_nothing(void)
     CHECK_EQ(oal_rtp_stats_jitter(&s), 0);
 }
 
+/*
+ * The total loss figure does not say what to do about it. Isolated single
+ * packets are 5 ms gaps concealment hides; the same total arriving in
+ * bursts is a dropout needing forward error correction. These separate
+ * the two.
+ */
+static void test_isolated_losses_are_counted_as_single(void)
+{
+    TEST("isolated losses are counted as single");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    /* Every fourth packet missing, never two in a row. */
+    for (int i = 0; i < 100; i++) {
+        if (i > 2 && i % 4 == 0) {
+            continue;
+        }
+        uint32_t t = (uint32_t)i * FRAMES_PER_PACKET;
+        oal_rtp_stats_on_packet(&s, (uint16_t)i, t, t, SSRC);
+    }
+
+    CHECK_EQ(s.longest_gap, 1);
+    CHECK_EQ(s.loss_events, s.single_losses);
+    CHECK_EQ(oal_rtp_stats_mean_gap_x100(&s), 100); /* exactly one per gap */
+}
+
+static void test_a_burst_is_one_event_of_many(void)
+{
+    TEST("a burst is one event of many");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 10);      /* 0..9 */
+    send_clean(&s, 20, 10);     /* 10..19 missing: one burst of ten */
+
+    CHECK_EQ(s.loss_events, 1);
+    CHECK_EQ(s.single_losses, 0);
+    CHECK_EQ(s.longest_gap, 10);
+    CHECK_EQ(oal_rtp_stats_lost(&s), 10);
+    CHECK_EQ(oal_rtp_stats_mean_gap_x100(&s), 1000); /* ten packets per gap */
+}
+
+/* The same total loss, told apart by shape — the distinction the whole
+ * measurement exists for. */
+static void test_same_total_different_shape(void)
+{
+    TEST("same total, different shape");
+    oal_rtp_stats_t scattered;
+    oal_rtp_stats_reset(&scattered);
+    for (int i = 0; i < 100; i++) {
+        if (i > 2 && i % 20 == 0) continue;  /* 4 isolated losses */
+        uint32_t t = (uint32_t)i * FRAMES_PER_PACKET;
+        oal_rtp_stats_on_packet(&scattered, (uint16_t)i, t, t, SSRC);
+    }
+
+    oal_rtp_stats_t bursty;
+    oal_rtp_stats_reset(&bursty);
+    send_clean(&bursty, 0, 50);
+    send_clean(&bursty, 54, 46);   /* 4 in a row */
+
+    CHECK_EQ(oal_rtp_stats_lost(&scattered), oal_rtp_stats_lost(&bursty));
+    CHECK(scattered.loss_events > bursty.loss_events);
+    CHECK(scattered.longest_gap < bursty.longest_gap);
+}
+
+static void test_a_clean_stream_reports_no_gaps(void)
+{
+    TEST("a clean stream reports no gaps");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+    send_clean(&s, 0, 200);
+
+    CHECK_EQ(s.loss_events, 0);
+    CHECK_EQ(s.longest_gap, 0);
+    CHECK_EQ(oal_rtp_stats_mean_gap_x100(&s), 0);
+}
+
 int main(void)
 {
     test_clean_stream_loses_nothing();
@@ -263,6 +340,10 @@ int main(void)
     test_jitter_grows_with_uneven_arrival();
     test_a_steady_delay_is_not_jitter();
     test_probation_rejects_a_stray_packet();
+    test_isolated_losses_are_counted_as_single();
+    test_a_burst_is_one_event_of_many();
+    test_same_total_different_shape();
+    test_a_clean_stream_reports_no_gaps();
     test_json_reports_the_counters();
     test_nothing_received_reports_nothing();
 

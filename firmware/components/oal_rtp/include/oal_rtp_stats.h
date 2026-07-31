@@ -24,6 +24,13 @@ extern "C" {
  * different causes and different fixes, and lumping them together hides
  * which one is happening.
  *
+ * Loss is also measured in runs, not only in total, because the total
+ * does not say what to do about it. Isolated single packets are 5 ms
+ * gaps that concealment hides almost inaudibly; the same count arriving
+ * as bursts of ten is a quarter-second dropout that only forward error
+ * correction or a much deeper buffer can survive. One number, two
+ * completely different engineering answers.
+ *
  * Deliberately free of ESP-IDF headers so it compiles and runs on a host,
  * where its arithmetic is tested against synthetic sequences.
  */
@@ -52,6 +59,9 @@ typedef struct {
     uint64_t window;         /* which of the last 64 sequence numbers arrived */
 
     uint32_t received;       /* packets accepted */
+    uint32_t loss_events;    /* gaps seen, however many packets each swallowed */
+    uint32_t single_losses;  /* gaps of exactly one packet */
+    uint32_t longest_gap;    /* worst run of consecutive missing packets */
     uint32_t duplicates;     /* the same sequence number more than once */
     uint32_t reordered;      /* arrived after a higher sequence number */
     uint32_t too_late;       /* older than the window can account for */
@@ -89,6 +99,9 @@ uint32_t oal_rtp_stats_lost(const oal_rtp_stats_t *stats);
 /** Loss as parts per million, so a rate under 0.1% is still readable. */
 uint32_t oal_rtp_stats_loss_ppm(const oal_rtp_stats_t *stats);
 
+/** Mean packets per gap, scaled by 100. 100 means every gap was a single packet. */
+uint32_t oal_rtp_stats_mean_gap_x100(const oal_rtp_stats_t *stats);
+
 /** Smoothed interarrival jitter in RTP timestamp units (RFC 3550 A.8). */
 uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats);
 
@@ -96,7 +109,7 @@ uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats);
 int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_size);
 
 /** Enough for oal_rtp_stats_to_json, including the terminator. */
-#define OAL_RTP_STATS_JSON_MAX 256
+#define OAL_RTP_STATS_JSON_MAX 384
 
 #ifdef __cplusplus
 }

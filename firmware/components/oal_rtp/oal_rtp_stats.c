@@ -152,6 +152,21 @@ bool oal_rtp_stats_on_packet(
 
     if (udelta < OAL_RTP_MAX_DROPOUT) {
         /* In order, or a gap small enough to be ordinary loss. */
+        if (udelta > 1) {
+            /* Counted where the gap appears rather than at the end of the
+             * run, so a burst is one event of many packets and not many
+             * events of one. A reordered packet arriving later would make
+             * this an overcount, which is why reordering is tracked
+             * separately: if it is zero, these runs are real loss. */
+            uint32_t gap = udelta - 1u;
+            stats->loss_events++;
+            if (gap == 1) {
+                stats->single_losses++;
+            }
+            if (gap > stats->longest_gap) {
+                stats->longest_gap = gap;
+            }
+        }
         if (seq < stats->max_seq) {
             stats->cycles += SEQ_MOD; /* sequence numbers wrapped */
         }
@@ -219,6 +234,14 @@ uint32_t oal_rtp_stats_loss_ppm(const oal_rtp_stats_t *stats)
     return (uint32_t)(((uint64_t)oal_rtp_stats_lost(stats) * 1000000u) / expected);
 }
 
+uint32_t oal_rtp_stats_mean_gap_x100(const oal_rtp_stats_t *stats)
+{
+    if (stats == NULL || stats->loss_events == 0) {
+        return 0;
+    }
+    return (uint32_t)(((uint64_t)oal_rtp_stats_lost(stats) * 100u) / stats->loss_events);
+}
+
 uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats)
 {
     return (stats == NULL) ? 0 : (stats->jitter_x16 >> 4);
@@ -233,12 +256,17 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
     int len = snprintf(out, out_size,
                        "{\"received\":%u,\"expected\":%u,\"lost\":%u,\"lossPpm\":%u,"
                        "\"duplicates\":%u,\"reordered\":%u,\"tooLate\":%u,"
-                       "\"jitter\":%u,\"ssrcChanges\":%u}",
+                       "\"jitter\":%u,\"ssrcChanges\":%u,"
+                       "\"lossEvents\":%u,\"singleLosses\":%u,\"longestGap\":%u,"
+                       "\"meanGapX100\":%u}",
                        (unsigned)stats->received, (unsigned)oal_rtp_stats_expected(stats),
                        (unsigned)oal_rtp_stats_lost(stats), (unsigned)oal_rtp_stats_loss_ppm(stats),
                        (unsigned)stats->duplicates, (unsigned)stats->reordered,
                        (unsigned)stats->too_late, (unsigned)oal_rtp_stats_jitter(stats),
-                       (unsigned)stats->ssrc_changes);
+                       (unsigned)stats->ssrc_changes,
+                       (unsigned)stats->loss_events, (unsigned)stats->single_losses,
+                       (unsigned)stats->longest_gap,
+                       (unsigned)oal_rtp_stats_mean_gap_x100(stats));
 
     return (len > 0 && (size_t)len < out_size) ? len : -1;
 }
