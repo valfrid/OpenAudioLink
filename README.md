@@ -55,7 +55,8 @@ The ESP32-S3 is the platform. It is the only firmware target that builds.
 
 See `docs/ARCHITECTURE.md`, `docs/MASTER_PROMPT.md`, `docs/HARDWARE.md` and `docs/ROADMAP.md`.
 Measured network behaviour — loss, jitter and what causes them — is in
-`docs/LINK-MEASUREMENTS.md`.
+`docs/LINK-MEASUREMENTS.md`. How rooms and groups are chosen from a phone
+is in `docs/CAST-POINTS.md`.
 
 ## Repository layout
 
