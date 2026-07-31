@@ -223,6 +223,10 @@
       }
     }
 
+    // Kept so the link test can see which access point each node is on
+    // without fetching the device list again.
+    let lastDevices = [];
+
     async function refreshDevices() {
       let devices = [];
       try {
@@ -230,6 +234,7 @@
       } catch {
         return;
       }
+      lastDevices = devices;
       const table = document.getElementById('devices');
       table.hidden = devices.length === 0;
       document.getElementById('devices-empty').hidden = devices.length !== 0;
@@ -531,6 +536,33 @@
       const table = document.getElementById('link-results');
       table.hidden = rows.length === 0;
       table.querySelector('tbody').innerHTML = rows.join('');
+      showPath(ids);
+    }
+
+    // Stations never talk directly under Wi-Fi infrastructure mode, so a
+    // packet always goes node -> access point -> node. When the two nodes
+    // sit on different mesh points it crosses the backhaul as well, which
+    // is a third hop and a different measurement entirely — twice now that
+    // has quietly turned a channel comparison into a topology comparison.
+    function showPath(ids) {
+      const involved = [...ids]
+        .map(id => lastDevices.find(d => d.id === id))
+        .filter(d => d && d.status && d.status.bssid);
+      if (involved.length < 2) return;
+
+      const access = [...new Set(involved.map(d => d.status.bssid))];
+      const status = document.getElementById('link-status');
+      if (access.length === 1) {
+        status.className = 'hint';
+        status.textContent =
+          `Both nodes on one access point (${access[0]}) — two hops.`;
+      } else {
+        status.className = 'hint rssi fair';
+        status.textContent =
+          `Nodes on different access points (${access.join(' and ')}) — ` +
+          'three hops, across the mesh backhaul. Not comparable with a ' +
+          'same-access-point run.';
+      }
     }
 
     document.getElementById('link-start').addEventListener('click', async () => {
