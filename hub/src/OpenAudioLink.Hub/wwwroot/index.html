@@ -85,6 +85,38 @@
   </table>
   <p id="devices-empty" class="empty">No devices discovered yet.</p>
 
+  <h2>Cast points</h2>
+  <p class="hint">
+    A named place to send audio. A room and a group are the same thing —
+    "Kitchen" holds one speaker, "House" holds all of them, and a producer
+    sends one identical stream to however many are in it.
+    This page is for setup: naming rooms and choosing which speakers are in
+    them. Once a streaming receiver is attached, choosing a room happens
+    from the phone and nobody opens this page to listen.
+  </p>
+  <table id="castpoints" hidden>
+    <thead>
+      <tr><th>Name</th><th>Speakers</th><th>State</th><th>Actions</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <p id="castpoints-empty" class="empty">No cast points yet.</p>
+  <div class="fw-bar">
+    <label>New cast point <input id="cp-name" type="text" placeholder="Kitchen" size="18"></label>
+    <label>Speakers <select id="cp-members" multiple size="3"></select></label>
+    <button id="cp-create">Add</button>
+  </div>
+  <div class="fw-bar">
+    <label>Play with producer <select id="cp-producer"></select></label>
+    <label>Source
+      <select id="cp-source">
+        <option value="pattern">Pattern (verifiable)</option>
+        <option value="tone">Tone (audible)</option>
+      </select>
+    </label>
+  </div>
+  <p id="cp-status" class="hint">Name a room, pick its speakers, and press Add.</p>
+
   <h2>Node-to-node link test</h2>
   <p class="hint">
     A producer node streams a synthetic source at the real profile — L24
@@ -272,7 +304,158 @@
       }
 
       refreshLinkTargets(devices);
+      refreshCastTargets(devices);
     }
+
+    // --- Cast points ---------------------------------------------------
+
+    function castSay(text, isError) {
+      const status = document.getElementById('cp-status');
+      status.textContent = text;
+      status.className = isError ? 'hint rssi poor' : 'hint';
+    }
+
+    // Selections survive the two-second refresh; rebuilding the lists under
+    // a half-finished choice would make the section unusable.
+    function refreshCastTargets(devices) {
+      const members = document.getElementById('cp-members');
+      const chosen = [...members.selectedOptions].map(o => o.value);
+      members.innerHTML = devices
+        .filter(d => (d.roles ?? []).includes('consumer'))
+        .map(d => `<option value="${esc(d.id)}">${esc(d.name)}` +
+          `${d.online ? '' : ' (offline)'}</option>`).join('');
+      for (const option of members.options) {
+        option.selected = chosen.includes(option.value);
+      }
+
+      const producer = document.getElementById('cp-producer');
+      const picked = producer.value;
+      producer.innerHTML = devices
+        .filter(d => (d.roles ?? []).includes('producer') && d.online)
+        .map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+      if ([...producer.options].some(o => o.value === picked)) {
+        producer.value = picked;
+      }
+    }
+
+    async function refreshCastPoints() {
+      let points = [];
+      try {
+        points = await (await fetch('/api/castpoints', { cache: 'no-store' })).json();
+      } catch {
+        return;
+      }
+
+      const table = document.getElementById('castpoints');
+      table.hidden = points.length === 0;
+      document.getElementById('castpoints-empty').hidden = points.length !== 0;
+      table.querySelector('tbody').innerHTML = points.map(p => {
+        // A room whose speaker is unplugged has to say so here rather than
+        // look ready and fail on play.
+        const members = (p.members ?? []).length === 0
+          ? '<span class="muted">no speakers yet</span>'
+          : p.members.map(m => m.online
+              ? esc(m.name)
+              : `<span class="rssi poor">${esc(m.name)}${m.known ? ' (offline)' : ' (unknown)'}</span>`)
+            .join(', ');
+        const state = p.playing
+          ? '<span class="rssi good">playing</span>'
+          : '<span class="muted">idle</span>';
+        return `<tr><td>${esc(p.name)}</td><td>${members}</td><td>${state}</td>` +
+          `<td><button data-cp="play" data-id="${esc(p.id)}">Play</button> ` +
+          `<button data-cp="stop" data-id="${esc(p.id)}">Stop</button> ` +
+          `<button data-cp="edit" data-id="${esc(p.id)}" ` +
+          `data-name="${esc(p.name)}" ` +
+          `data-members="${esc((p.destinations ?? []).join(','))}">Edit…</button> ` +
+          `<button data-cp="delete" data-id="${esc(p.id)}" ` +
+          `data-name="${esc(p.name)}">Delete</button></td></tr>`;
+      }).join('');
+    }
+
+    async function castRequest(method, path, body) {
+      const response = await fetch(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      let payload = {};
+      try { payload = await response.json(); } catch { /* 404 has no body */ }
+      return { ok: response.ok, payload };
+    }
+
+    document.getElementById('cp-create').addEventListener('click', async () => {
+      const name = document.getElementById('cp-name').value.trim();
+      if (!name) {
+        castSay('Give the room a name first.', true);
+        return;
+      }
+      const destinations = [...document.getElementById('cp-members').selectedOptions]
+        .map(o => o.value);
+      const { ok, payload } = await castRequest('POST', '/api/castpoints', { name, destinations });
+      if (!ok) {
+        castSay(payload.error ?? 'Could not create it.', true);
+        return;
+      }
+      document.getElementById('cp-name').value = '';
+      castSay(`Added ${payload.name}.`);
+      refreshCastPoints();
+    });
+
+    document.getElementById('castpoints').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-cp]');
+      if (!button) return;
+      const id = button.dataset.id;
+      const action = button.dataset.cp;
+
+      if (action === 'delete') {
+        if (!confirm(`Delete ${button.dataset.name}?`)) return;
+        const { ok } = await castRequest('DELETE', `/api/castpoints/${encodeURIComponent(id)}`);
+        castSay(ok ? `Deleted ${button.dataset.name}.` : 'Could not delete it.', !ok);
+        refreshCastPoints();
+        return;
+      }
+
+      if (action === 'edit') {
+        const name = prompt('Name', button.dataset.name);
+        if (name === null) return;
+        // The speaker list comes from the multi-select, so editing means
+        // "these are the speakers I have selected above".
+        const destinations = [...document.getElementById('cp-members').selectedOptions]
+          .map(o => o.value);
+        const chosen = destinations.length > 0
+          ? destinations
+          : (button.dataset.members ? button.dataset.members.split(',') : []);
+        const { ok, payload } = await castRequest(
+          'PUT', `/api/castpoints/${encodeURIComponent(id)}`, { name, destinations: chosen });
+        castSay(ok ? `Updated ${name}.` : (payload.error ?? 'Could not update it.'), !ok);
+        refreshCastPoints();
+        return;
+      }
+
+      if (action === 'stop') {
+        const { ok } = await castRequest('POST', `/api/castpoints/${encodeURIComponent(id)}/stop`);
+        castSay(ok ? 'Stopped.' : 'Could not stop it.', !ok);
+        refreshCastPoints();
+        return;
+      }
+
+      const producer = document.getElementById('cp-producer').value;
+      if (!producer) {
+        castSay('No online node holds the producer role.', true);
+        return;
+      }
+      const { ok, payload } = await castRequest(
+        'POST', `/api/castpoints/${encodeURIComponent(id)}/play`,
+        { producer, source: document.getElementById('cp-source').value });
+      if (!ok) {
+        castSay(payload.error ?? 'Could not start it.', true);
+      } else {
+        castSay(payload.stopped
+          ? `Playing ${payload.castPoint}; stopped ${payload.stopped} because they share a speaker.`
+          : `Playing ${payload.castPoint}.`);
+      }
+      refreshCastPoints();
+    });
 
     async function refreshTone() {
       let status;
@@ -667,11 +850,13 @@
     refreshHealth();
     refreshDevices();
     refreshFirmware();
+    refreshCastPoints();
     refreshTone();
     setInterval(refreshLinkResults, 2000);
     setInterval(refreshDevices, 2000);
     setInterval(refreshTone, 2000);
     setInterval(refreshFirmware, 10000);
+    setInterval(refreshCastPoints, 3000);
 
     // Browsers throttle timers in background tabs, often to once a minute, so
     // the counters appear frozen after switching away even though the stream

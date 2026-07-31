@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using OpenAudioLink.Core.Audio;
+using OpenAudioLink.Core.CastPoints;
 using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Protocol;
 using OpenAudioLink.Hub;
@@ -31,6 +32,7 @@ builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(configStore.LoadOrCreate());
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
+builder.Services.AddSingleton(new CastPointStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 builder.Services.AddHttpClient<DeviceCommandClient>();
 // A short timeout on purpose: a node that does not answer promptly is a
@@ -242,6 +244,143 @@ app.MapGet("/api/devices/{id}/stream",
         : Results.Text(stream.RootElement.GetRawText(), "application/json");
 });
 
+// --- Cast points (docs/CAST-POINTS.md) --------------------------------
+// A named place to send audio. A zone and a group are the same object:
+// "Kitchen" has one consumer, "House" has twelve, and the Producer
+// replicates one packet to however many it is given either way.
+
+app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry) =>
+{
+    var playing = store.Playing;
+    // Decorated with the devices' current names and liveness, so a room
+    // whose speaker is unplugged says so instead of looking ready.
+    return Results.Ok(store.Snapshot().Select(point => new
+    {
+        point.Id,
+        point.Name,
+        point.Destinations,
+        playing = playing?.CastPointId == point.Id,
+        members = point.Destinations.Select(id => registry.TryGet(id, out var device)
+            ? new { id, name = device.Name, online = device.Online, known = true }
+            : new { id, name = id, online = false, known = false }),
+    }));
+});
+
+app.MapPost("/api/castpoints", (CastPointRequest request, CastPointStore store) =>
+{
+    var error = store.Create(request.Name, request.Destinations, out var created);
+    return error switch
+    {
+        CastPointError.None => Results.Ok(created),
+        CastPointError.NameRequired => Results.BadRequest(new { error = "a name is required" }),
+        CastPointError.NameUnusable => Results.BadRequest(
+            new { error = "that name has no letters or digits to build an id from" }),
+        _ => Results.BadRequest(new { error = error.ToString() }),
+    };
+});
+
+app.MapPut("/api/castpoints/{id}", (string id, CastPointRequest request, CastPointStore store) =>
+{
+    var error = store.Update(id, request.Name, request.Destinations);
+    if (error == CastPointError.NotFound)
+    {
+        return Results.NotFound();
+    }
+    if (error == CastPointError.NameRequired)
+    {
+        return Results.BadRequest(new { error = "a name is required" });
+    }
+    if (error != CastPointError.None)
+    {
+        return Results.BadRequest(new { error = error.ToString() });
+    }
+    return store.TryGet(id, out var updated) ? Results.Ok(updated) : Results.NotFound();
+});
+
+app.MapDelete("/api/castpoints/{id}", (string id, CastPointStore store) =>
+    store.Delete(id) ? Results.Ok(new { status = "deleted" }) : Results.NotFound());
+
+app.MapPost("/api/castpoints/{id}/play",
+    async (string id, CastPointPlayRequest request, CastPointStore store, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!store.TryGet(id, out var point))
+    {
+        return Results.NotFound();
+    }
+    if (point.Destinations.Count == 0)
+    {
+        return Results.BadRequest(new { error = $"{point.Name} has no speakers in it yet" });
+    }
+    if (!registry.TryGet(request.Producer ?? "", out var producer))
+    {
+        return Results.BadRequest(new { error = "unknown producer" });
+    }
+    if (!producer.Roles.Contains(DeviceRole.Producer))
+    {
+        return Results.BadRequest(new { error = $"{producer.Name} does not hold the producer role" });
+    }
+
+    var addresses = new List<string>();
+    foreach (var deviceId in point.Destinations)
+    {
+        if (!registry.TryGet(deviceId, out var consumer))
+        {
+            return Results.BadRequest(new { error = $"{point.Name} refers to a device the Hub has never seen ({deviceId})" });
+        }
+        if (!consumer.Online)
+        {
+            return Results.BadRequest(new { error = $"{consumer.Name} is offline" });
+        }
+        addresses.Add(consumer.Address);
+    }
+
+    // One speaker cannot play two streams, so a cast point that overlaps
+    // the playing one replaces it. Stopping first keeps the overlap from
+    // existing even briefly.
+    var conflict = store.ConflictWith(id);
+    string? stopped = null;
+    if (conflict is not null)
+    {
+        if (registry.TryGet(conflict.ProducerId, out var busy))
+        {
+            await commands.StopStreamAsync(busy, cancellationToken);
+        }
+        store.MarkStopped(conflict.CastPointId);
+        stopped = conflict.CastPointId == id ? null : conflict.CastPointId;
+    }
+
+    var ok = await commands.StartStreamAsync(
+        producer, addresses, request.Port ?? ProtocolSuite.RtpPort,
+        request.Source ?? "pattern", request.ToneHz ?? 1000, cancellationToken);
+    if (!ok)
+    {
+        return Results.StatusCode(502);
+    }
+
+    store.MarkPlaying(id, producer.Id);
+    return Results.Ok(new { status = "playing", castPoint = point.Name, destinations = addresses, stopped });
+});
+
+app.MapPost("/api/castpoints/{id}/stop",
+    async (string id, CastPointStore store, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!store.TryGet(id, out _))
+    {
+        return Results.NotFound();
+    }
+
+    var playing = store.Playing;
+    if (playing is not null && playing.CastPointId == id
+        && registry.TryGet(playing.ProducerId, out var producer))
+    {
+        await commands.StopStreamAsync(producer, cancellationToken);
+    }
+    store.MarkStopped(id);
+    return Results.Ok(new { status = "stopped" });
+});
+
 // --- Audio streaming (Phase 3) ---------------------------------------
 // One stream at a time, from either a generated tone (diagnostics) or
 // this computer's audio (the real Producer path).
@@ -435,6 +574,17 @@ internal sealed record RolesRequest(IReadOnlyList<string>? Roles);
 
 internal sealed record NodeStreamRequest(
     IReadOnlyList<string>? Destinations, int? Port, string? Source, int? ToneHz);
+
+internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
+
+/// <summary>
+/// The producer is named per play rather than stored on the cast point: a
+/// cast point is a place, and which source feeds it is a property of the
+/// moment. Once receivers drive playback (docs/CAST-POINTS.md) this is what
+/// the receiver adapter supplies.
+/// </summary>
+internal sealed record CastPointPlayRequest(
+    string? Producer, int? Port, string? Source, int? ToneHz);
 
 internal static class StreamLimits
 {
