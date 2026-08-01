@@ -602,3 +602,65 @@ more than a party system will hold.
 - The Controller role stops implying a PC. Nothing in discovery, control
   or the RTP profile changes — this is a statement about where existing
   responsibilities are hosted, not a new mechanism.
+
+## 10. A Consumer's channel profile is a node setting, not a stream format
+
+**Date:** 2026-08-01
+**Status:** decided; nothing implemented. The setting belongs in provisioning;
+the playout it controls waits on the DAC.
+
+### Decision
+
+The RTP profile is stereo and stays stereo. Every Consumer in a cast point
+receives the same sequence numbers, timestamps, SSRC and samples, because
+byte-identical replication is what lets several speakers stay in step.
+Sending a different payload to different destinations would trade that
+away for airtime.
+
+Which of those two channels a node actually plays is decided at the node:
+
+| Profile  | Plays                        | Nodes | Physical arrangement          |
+| -------- | ---------------------------- | ----- | ----------------------------- |
+| `stereo` | both, as they arrive         | 1     | stereo DAC, two PA, two boxes |
+| `mono`   | (L+R)/2                      | 1     | one PA, one speaker           |
+| `left`   | L only                       | 1     | one half of a pair            |
+| `right`  | R only                       | 1     | the other half                |
+
+### Prefer `stereo` to a `left`/`right` pair
+
+A single node's two channels leave one DAC on one clock and cannot drift
+from each other. Two nodes playing left and right are two crystals, and
+drift between the halves of a stereo image is far more audible than drift
+on a single speaker — the image wanders rather than the pitch.
+
+So `left`/`right` is for speaker positions too far apart to cable to one
+box. It is not the ordinary way to build stereo, and choosing it buys a
+synchronisation problem that `stereo` does not have.
+
+### Two things the implementation must get right
+
+**Write the chosen signal into both I²S slots** for `mono`, `left` and
+`right`. The DAC then carries it on both outputs, so one node drives one
+speaker or two identical ones with no further profile, and no assembly can
+wire the silent output by mistake.
+
+**`mono` is (L+R)/2, not L+R.** Two channels near full scale sum past full
+scale and clip. The halving costs 3 dB, which the amplifier makes back;
+clipping is not recoverable.
+
+### Consequences
+
+- This is decision 8's shape again: how a Consumer emits audio is a profile
+  property, not a role property. Nothing in discovery, control, OTA or the
+  RTP profile changes.
+- The setting is decided when a speaker is installed, so it belongs beside
+  the role radios in the provisioning portal and in NVS next to the roles.
+- Analog summing is ruled out. Both channels are present digitally, and
+  tying two DAC outputs together makes them drive each other — resistors
+  lose level and add noise, an op-amp stage adds a part, and neither buys
+  anything over one line of arithmetic before the samples reach the DAC.
+- A whole-cast-point mono profile, where every speaker in a room is mono
+  and the Producer sends 480-byte payloads instead of 1440, is a real
+  airtime saving and a different decision from this one. Recorded as an
+  option, not planned: it is the kind of per-use-case profile that only
+  earns its complexity once four consumers are measured.
