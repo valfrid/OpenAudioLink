@@ -3,6 +3,7 @@
 #include <stddef.h>
 
 #include "esp_err.h"
+#include "oal_destinations.h"
 #include "oal_rtp.h"
 #include "oal_rtp_stats.h"
 
@@ -17,12 +18,8 @@ extern "C" {
  * not by the binary (decision 5).
  */
 
-/** Most consumers one producer will feed; decision 2 expects strain near 4. */
-#define OAL_STREAM_MAX_DESTINATIONS 8
-
 typedef struct {
-    char destinations[OAL_STREAM_MAX_DESTINATIONS][16]; /* dotted-quad */
-    size_t destination_count;
+    oal_destinations_t destinations;
     uint16_t port;
     oal_rtp_source_t source;
     uint32_t tone_hz;
@@ -47,6 +44,29 @@ esp_err_t oal_stream_producer_start(const oal_stream_request_t *request);
 
 /** Stops it. Safe when nothing is running. */
 void oal_stream_producer_stop(void);
+
+/*
+ * The destination set can change while a stream runs. A Consumer joins by
+ * asking, not by having been present when the music started (decision 9),
+ * so a speaker switched on halfway through a record starts playing rather
+ * than waiting for a restart.
+ *
+ * A late joiner simply begins wherever the stream has reached; RTP carries
+ * the sequence and timestamp it needs, and the receiver's probation
+ * handles arriving mid-stream. Nothing about the running stream changes —
+ * no reset of sequence, timestamp or SSRC — because every other Consumer
+ * is still playing it.
+ *
+ * These work whether or not a stream is running: the set is a property of
+ * the Producer, not of the stream.
+ */
+oal_destinations_result_t oal_stream_producer_add_destination(const char *address);
+
+/** Removes a destination. False when it was not in the set. */
+bool oal_stream_producer_remove_destination(const char *address);
+
+/** Copies the current destination set. */
+void oal_stream_producer_destinations(oal_destinations_t *out);
 
 void oal_stream_producer_get(oal_stream_producer_state_t *out);
 

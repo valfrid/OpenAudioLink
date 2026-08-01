@@ -1,5 +1,6 @@
 idf_component_register(
-    SRCS "oal_rtp.c"
+    SRCS "oal_destinations.c"
+         "oal_rtp.c"
          "oal_rtp_stats.c"
          "oal_stream_producer.c"
          "oal_stream_consumer.c"

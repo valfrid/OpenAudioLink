@@ -39,6 +39,7 @@ configuration — never audio.
 | GET    | `/stream`         | Stream state and measurement counters       |
 | POST   | `/stream/start`   | Producer: begin streaming to destinations   |
 | POST   | `/stream/stop`    | Stop a producer; clear a consumer's counters |
+| POST   | `/stream/destinations` | Add or remove destinations while streaming |
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 | GET    | `/peers`          | Other nodes this one has heard announce      |
 
@@ -80,6 +81,40 @@ Volatile state lives here and not on the discovery announce. Signal
 strength changes constantly, and an announce is multicast to every device
 on the network every few seconds; a Controller that wants telemetry asks
 for it.
+
+### POST /stream/destinations
+
+Changes who a Producer is sending to, without interrupting the stream.
+
+```json
+{ "add": ["192.168.0.71"], "remove": ["192.168.0.99"] }
+```
+
+Both keys are optional. Removals are applied first, so moving a speaker
+between rooms is not refused for filling the set with an entry that is on
+its way out.
+
+```json
+{ "destinations": ["192.168.0.71"], "changed": 1, "rejected": 0 }
+```
+
+Adding an address already in the set is not an error and changes nothing.
+A Consumer joins by asking, and asks again when a reply is lost, so the
+operation has to be idempotent — adding it twice would send it two copies
+of every packet and charge the air for both.
+
+A destination must be a dotted quad. This is enforced rather than left to
+the socket layer because `inet_addr()` answers `INADDR_NONE` for anything
+it cannot parse, and `INADDR_NONE` is `255.255.255.255` — an address with
+a typo in it would not fail, it would aim 200 packets a second at the
+broadcast address. Rejected entries are counted rather than failing the
+whole request, so one bad address does not undo the good ones alongside
+it.
+
+A late joiner starts wherever the stream has reached. Nothing about the
+running stream changes — not the sequence number, the timestamp or the
+SSRC — because every Consumer already listening is still playing it, and
+the receiver's probation handles arriving mid-stream.
 
 ### GET /peers
 
@@ -190,4 +225,5 @@ they were taken so nothing is shown as fresher than it is.
 ## Revision history
 
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
-  Later additions within 0.1: `/stream*` measurement endpoints, `/peers`.
+  Later additions within 0.1: `/stream*` measurement endpoints, `/peers`,
+  `/stream/destinations`.

@@ -7,6 +7,7 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 
@@ -16,6 +17,103 @@ static oal_stream_request_t s_request;
 static oal_stream_producer_state_t s_state;
 static TaskHandle_t s_task;
 static volatile bool s_stop;
+
+/*
+ * The destination set, and a counter the send loop watches.
+ *
+ * The loop cannot take a lock per packet and cannot read the set without
+ * one either, so it keeps its own resolved copy and reloads only when the
+ * counter moves. Two hundred times a second, the common case is that
+ * nothing changed and no lock is touched at all.
+ */
+static oal_destinations_t s_destinations;
+static SemaphoreHandle_t s_destinations_lock;
+static volatile uint32_t s_destinations_generation;
+
+static bool ensure_lock(void)
+{
+    if (s_destinations_lock == NULL) {
+        s_destinations_lock = xSemaphoreCreateMutex();
+    }
+    return s_destinations_lock != NULL;
+}
+
+/*
+ * Resolves the set into sockaddrs and returns the generation it belongs
+ * to. The generation is read inside the lock alongside the copy: read
+ * outside, a change landing between the two would leave the loop with a
+ * stale list stamped as current, and the new speaker would stay silent
+ * until something else changed.
+ */
+static uint32_t reload_destinations(uint16_t port, struct sockaddr_in *out, size_t *count)
+{
+    uint32_t generation = 0;
+    if (xSemaphoreTake(s_destinations_lock, portMAX_DELAY) != pdTRUE) {
+        /* One short of current, so the next pass tries again. Returning the
+         * current value would mark a list we never read as up to date. */
+        return s_destinations_generation - 1u;
+    }
+
+    *count = s_destinations.count;
+    for (size_t i = 0; i < s_destinations.count; i++) {
+        out[i].sin_family = AF_INET;
+        out[i].sin_port = htons(port);
+        out[i].sin_addr.s_addr = inet_addr(s_destinations.entries[i]);
+    }
+    generation = s_destinations_generation;
+    s_state.destination_count = s_destinations.count;
+
+    xSemaphoreGive(s_destinations_lock);
+    return generation;
+}
+
+oal_destinations_result_t oal_stream_producer_add_destination(const char *address)
+{
+    if (!ensure_lock()) {
+        return OAL_DEST_FULL;
+    }
+    if (xSemaphoreTake(s_destinations_lock, portMAX_DELAY) != pdTRUE) {
+        return OAL_DEST_FULL;
+    }
+
+    oal_destinations_result_t result = oal_destinations_add(&s_destinations, address);
+    if (result == OAL_DEST_ADDED) {
+        s_destinations_generation++;
+        s_state.destination_count = s_destinations.count;
+    }
+
+    xSemaphoreGive(s_destinations_lock);
+    return result;
+}
+
+bool oal_stream_producer_remove_destination(const char *address)
+{
+    if (!ensure_lock() || xSemaphoreTake(s_destinations_lock, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+
+    bool removed = oal_destinations_remove(&s_destinations, address);
+    if (removed) {
+        s_destinations_generation++;
+        s_state.destination_count = s_destinations.count;
+    }
+
+    xSemaphoreGive(s_destinations_lock);
+    return removed;
+}
+
+void oal_stream_producer_destinations(oal_destinations_t *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    if (!ensure_lock() || xSemaphoreTake(s_destinations_lock, portMAX_DELAY) != pdTRUE) {
+        oal_destinations_reset(out);
+        return;
+    }
+    *out = s_destinations;
+    xSemaphoreGive(s_destinations_lock);
+}
 
 /*
  * A refused send is not a lost packet — it is a packet that never left,
@@ -74,11 +172,9 @@ static void producer_task(void *arg)
     }
 
     struct sockaddr_in destinations[OAL_STREAM_MAX_DESTINATIONS] = { 0 };
-    for (size_t i = 0; i < s_request.destination_count; i++) {
-        destinations[i].sin_family = AF_INET;
-        destinations[i].sin_port = htons(s_request.port);
-        destinations[i].sin_addr.s_addr = inet_addr(s_request.destinations[i]);
-    }
+    size_t destination_count = 0;
+    /* One short of the current generation, so the first pass always loads. */
+    uint32_t seen_generation = s_destinations_generation - 1u;
 
     static uint8_t packet[OAL_RTP_PACKET_BYTES];
     oal_rtp_header_t header = {
@@ -94,10 +190,14 @@ static void producer_task(void *arg)
     int64_t next_send_us = esp_timer_get_time();
     s_state.started_at_us = (uint64_t)next_send_us;
 
-    ESP_LOGI(TAG, "streaming to %u destination(s) on port %u, ssrc %08x",
-             (unsigned)s_request.destination_count, s_request.port, (unsigned)header.ssrc);
+    ESP_LOGI(TAG, "streaming on port %u, ssrc %08x", s_request.port, (unsigned)header.ssrc);
 
     while (!s_stop) {
+        if (seen_generation != s_destinations_generation) {
+            seen_generation = reload_destinations(s_request.port, destinations, &destination_count);
+            ESP_LOGI(TAG, "now sending to %u destination(s)", (unsigned)destination_count);
+        }
+
         oal_rtp_header_write(&header, packet, sizeof(packet));
         oal_rtp_fill_payload(packet + OAL_RTP_HEADER_BYTES, s_request.source,
                              header.timestamp, s_request.tone_hz);
@@ -105,7 +205,7 @@ static void producer_task(void *arg)
         /* One packet, replicated byte-identically. Every consumer must see
          * the same sequence numbers and timestamps, or their measurements
          * are of different streams and cannot be compared. */
-        for (size_t i = 0; i < s_request.destination_count; i++) {
+        for (size_t i = 0; i < destination_count; i++) {
             if (send_one(sock, packet, sizeof(packet), &destinations[i])) {
                 s_state.datagrams_sent++;
             }
@@ -160,9 +260,11 @@ static void producer_task(void *arg)
 
 esp_err_t oal_stream_producer_start(const oal_stream_request_t *request)
 {
-    if (request == NULL || request->destination_count == 0
-        || request->destination_count > OAL_STREAM_MAX_DESTINATIONS) {
+    if (request == NULL || request->destinations.count == 0) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!ensure_lock()) {
+        return ESP_ERR_NO_MEM;
     }
 
     oal_stream_producer_stop();
@@ -175,9 +277,17 @@ esp_err_t oal_stream_producer_start(const oal_stream_request_t *request)
         s_request.tone_hz = 1000;
     }
 
+    /* Starting replaces the set outright: the request says who to play to,
+     * and anything left over from a previous stream is not part of it. */
+    if (xSemaphoreTake(s_destinations_lock, portMAX_DELAY) == pdTRUE) {
+        s_destinations = request->destinations;
+        s_destinations_generation++;
+        xSemaphoreGive(s_destinations_lock);
+    }
+
     memset(&s_state, 0, sizeof(s_state));
     s_state.running = true;
-    s_state.destination_count = s_request.destination_count;
+    s_state.destination_count = s_request.destinations.count;
     s_state.port = s_request.port;
     s_state.source = s_request.source;
     s_stop = false;

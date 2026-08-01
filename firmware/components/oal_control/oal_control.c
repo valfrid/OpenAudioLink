@@ -245,16 +245,23 @@ static esp_err_t stream_start_handler(httpd_req_t *req)
     oal_stream_request_t request = { 0 };
     const cJSON *element = NULL;
     cJSON_ArrayForEach(element, list) {
-        if (!cJSON_IsString(element)
-            || request.destination_count >= OAL_STREAM_MAX_DESTINATIONS) {
+        if (!cJSON_IsString(element)) {
             cJSON_Delete(root);
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad destinations");
             return ESP_FAIL;
         }
-        strlcpy(request.destinations[request.destination_count],
-                element->valuestring,
-                sizeof(request.destinations[0]));
-        request.destination_count++;
+        /* An address that is not a dotted quad becomes INADDR_NONE, which
+         * is the broadcast address — a typo would aim the stream at the
+         * whole network rather than fail. */
+        oal_destinations_result_t added =
+            oal_destinations_add(&request.destinations, element->valuestring);
+        if (added == OAL_DEST_INVALID || added == OAL_DEST_FULL) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                added == OAL_DEST_FULL ? "too many destinations"
+                                                       : "destination is not an IPv4 address");
+            return ESP_FAIL;
+        }
     }
 
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(root, "port");
@@ -287,6 +294,93 @@ static esp_err_t stream_stop_handler(httpd_req_t *req)
     }
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, "{\"status\":\"stopped\"}", HTTPD_RESP_USE_STRLEN);
+}
+
+/* ---------- POST /stream/destinations ---------- */
+
+/*
+ * Adds and removes destinations while a stream runs, so a Consumer that
+ * asks to join gets audio without the record being restarted for everyone
+ * already listening (decision 9).
+ *
+ * Both lists in one request because a Controller moving a speaker from one
+ * room to another wants the removal and the addition to happen together,
+ * and because doing it in two requests leaves a moment where the speaker
+ * is in neither.
+ */
+static void apply_destination_list(const cJSON *list, bool add,
+                                   unsigned *changed, unsigned *rejected)
+{
+    if (!cJSON_IsArray(list)) {
+        return;
+    }
+    const cJSON *element = NULL;
+    cJSON_ArrayForEach(element, list) {
+        if (!cJSON_IsString(element) || element->valuestring == NULL) {
+            (*rejected)++;
+            continue;
+        }
+        if (add) {
+            if (oal_stream_producer_add_destination(element->valuestring) == OAL_DEST_ADDED) {
+                (*changed)++;
+            } else if (!oal_address_is_ipv4(element->valuestring)) {
+                (*rejected)++;
+            }
+        } else if (oal_stream_producer_remove_destination(element->valuestring)) {
+            (*changed)++;
+        }
+    }
+}
+
+static esp_err_t destinations_handler(httpd_req_t *req)
+{
+    if ((s_config.roles & OAL_ROLE_PRODUCER) == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "not a producer");
+        return ESP_FAIL;
+    }
+
+    char body[512];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad json");
+        return ESP_FAIL;
+    }
+
+    unsigned changed = 0;
+    unsigned rejected = 0;
+    /* Removals first: moving a speaker between rooms must not be refused
+     * for filling the set with an entry that is on its way out. */
+    apply_destination_list(cJSON_GetObjectItemCaseSensitive(root, "remove"),
+                           false, &changed, &rejected);
+    apply_destination_list(cJSON_GetObjectItemCaseSensitive(root, "add"),
+                           true, &changed, &rejected);
+    cJSON_Delete(root);
+
+    oal_destinations_t current;
+    oal_stream_producer_destinations(&current);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send_chunk(req, "{\"destinations\":[", HTTPD_RESP_USE_STRLEN);
+    for (size_t i = 0; i < current.count; i++) {
+        char entry[OAL_ADDRESS_MAX + 4];
+        int n = snprintf(entry, sizeof(entry), "%s\"%s\"",
+                         i == 0 ? "" : ",", current.entries[i]);
+        if (n > 0 && n < (int)sizeof(entry)) {
+            httpd_resp_send_chunk(req, entry, n);
+        }
+    }
+    char tail[64];
+    int n = snprintf(tail, sizeof(tail), "],\"changed\":%u,\"rejected\":%u}",
+                     changed, rejected);
+    httpd_resp_send_chunk(req, tail, n);
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 /* ---------- GET /peers ---------- */
@@ -425,7 +519,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
-    server_config.max_uri_handlers = 10; /* eight registered; the default of eight leaves no room */
+    server_config.max_uri_handlers = 12; /* nine registered; the default of eight leaves no room */
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &server_config);
@@ -443,6 +537,8 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t stream_stop =
         { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
     httpd_uri_t peers = { .uri = "/peers", .method = HTTP_GET, .handler = peers_handler };
+    httpd_uri_t destinations =
+        { .uri = "/stream/destinations", .method = HTTP_POST, .handler = destinations_handler };
     httpd_register_uri_handler(server, &status);
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);
@@ -451,6 +547,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_register_uri_handler(server, &stream_start);
     httpd_register_uri_handler(server, &stream_stop);
     httpd_register_uri_handler(server, &peers);
+    httpd_register_uri_handler(server, &destinations);
 
     ESP_LOGI(TAG, "control server on port %d", CONTROL_PORT);
     return ESP_OK;
