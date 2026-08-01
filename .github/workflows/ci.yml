@@ -68,6 +68,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o rtp-packet-tests oal_rtp.c test/test_rtp_packet.c -lm &&
           ./rtp-packet-tests
+      - name: Channel profile
+        working-directory: firmware/components/oal_rtp
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o channel-tests oal_channel.c test/test_channel.c &&
+          ./channel-tests
       - name: Destination set
         working-directory: firmware/components/oal_rtp
         run: >

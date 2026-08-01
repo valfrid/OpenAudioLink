@@ -169,6 +169,31 @@ app.MapPost("/api/devices/{id}/roles",
         : Results.StatusCode(502);
 });
 
+app.MapPost("/api/devices/{id}/channel",
+    async (string id, ChannelRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    // Rejected here as well as on the node, so the operator gets the list
+    // of valid values rather than a bare 400 relayed from the firmware.
+    if (!AudioChannels.IsKnown(request.Channel))
+    {
+        return Results.BadRequest(new
+        {
+            error = $"unknown channel; expected one of {string.Join(", ", AudioChannels.All)}",
+        });
+    }
+
+    var ok = await commands.SetChannelAsync(device, request.Channel!, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", channel = request.Channel, appliesAt = "reboot" })
+        : Results.StatusCode(502);
+});
+
 // --- Node-to-node streaming (Phase 3, synthetic source) ---------------
 // The Hub coordinates but does not relay: it tells a producer which
 // consumers to send to, and the audio goes directly between them.
@@ -574,6 +599,8 @@ internal sealed record RolesRequest(IReadOnlyList<string>? Roles);
 
 internal sealed record NodeStreamRequest(
     IReadOnlyList<string>? Destinations, int? Port, string? Source, int? ToneHz);
+
+internal sealed record ChannelRequest(string? Channel);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "oal_channel.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,19 @@ oal_roles_t oal_config_get_roles(void);
 
 /** Persists roles. Rejects OAL_ROLE_NONE and unknown bits. */
 esp_err_t oal_config_set_roles(oal_roles_t roles);
+
+/*
+ * Which of the stream's two channels this node plays (decision 10). A
+ * single mono or one-side speaker is a first-class arrangement here, not
+ * a degraded stereo one, so this sits beside the roles rather than being
+ * inferred from anything.
+ */
+
+/** Stored channel profile, or stereo when unset or unreadable. */
+oal_channel_t oal_config_get_channel(void);
+
+/** Persists the channel profile. Rejects values outside the enum. */
+esp_err_t oal_config_set_channel(oal_channel_t channel);
 
 /** Longest node name, including the terminator. Matches the announce field. */
 #define OAL_NAME_MAX 32

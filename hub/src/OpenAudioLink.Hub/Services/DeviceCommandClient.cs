@@ -42,6 +42,18 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Sets which of the stream's two channels the device plays (decision
+    /// 10). Sent on its own rather than alongside roles, so changing a
+    /// speaker from stereo to mono cannot disturb what it is.
+    /// </summary>
+    public async Task<bool> SetChannelAsync(
+        DeviceRecord device, string channel, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Setting channel on {Device} to {Channel}", device.Name, channel);
+        return await PostAsync(device, "/config", JsonSerializer.Serialize(new { channel }), cancellationToken);
+    }
+
+    /// <summary>
     /// Tells the device to pull and install a firmware image from this Hub.
     /// The download URL uses the Hub address as seen from the device's
     /// subnet, so multi-homed hosts advertise a reachable address.

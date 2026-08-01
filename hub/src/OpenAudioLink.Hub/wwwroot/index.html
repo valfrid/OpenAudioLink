@@ -76,7 +76,7 @@
   <table id="devices" hidden>
     <thead>
       <tr>
-        <th>Status</th><th>Name</th><th>Roles</th><th>Firmware</th>
+        <th>Status</th><th>Name</th><th>Roles</th><th>Speaker</th><th>Firmware</th>
         <th>Uptime</th><th>Wi-Fi</th><th>Signal</th>
         <th>Address</th><th>Actions</th>
       </tr>
@@ -281,9 +281,12 @@
           `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
-          `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button>`;
+          `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
+          `<button data-cmd="channel" data-id="${esc(d.id)}" ` +
+          `data-channel="${esc(d.status?.audioChannel ?? 'stereo')}"${disabled}>Speaker…</button>`;
         const s = d.status;
         return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
+          `<td>${channelCell(d)}</td>` +
           `<td>${esc(d.firmwareVersion)}</td>` +
           `<td>${s ? esc(duration(s.uptimeSeconds)) : '—'}</td>` +
           `<td>${wifiCell(s)}</td><td>${signalCell(s)}</td>` +
@@ -543,6 +546,33 @@
           const error = await response.json().catch(() => ({}));
           say(`Could not set roles: ${error.error ?? response.status}`);
         }
+      } else if (button.dataset.cmd === 'channel') {
+        // One choice, not a set — a speaker plays one thing. Offered in the
+        // order a person decides between them: whole rooms first, halves of
+        // a pair last, since those are the rarer and costlier answer.
+        const current = button.dataset.channel;
+        const answer = prompt(
+          'What does this speaker play?\n' +
+          'stereo = both channels, one node driving two speakers\n' +
+          'mono   = (L+R)/2, one node driving one speaker\n' +
+          'left / right = one half of a pair split across two nodes\n\n' +
+          'Prefer stereo to a left/right pair where cabling allows: one\n' +
+          'node\u2019s two channels share a clock and cannot drift apart.',
+          current);
+        if (answer === null) return;
+        const channel = answer.trim().toLowerCase();
+        say(`Setting speaker to ${channel}…`);
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/channel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel }),
+        });
+        if (response.ok) {
+          say('Speaker profile stored — reboot the node for it to take effect.');
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the speaker profile: ${error.error ?? response.status}`);
+        }
       } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
@@ -649,6 +679,25 @@
       for (const option of consumerSelect.options) {
         option.selected = hadOptions ? chosen.includes(option.value) : true;
       }
+    }
+
+    // What a node does with the stream's two channels (decision 10). A
+    // producer has no speaker, so it says nothing rather than "stereo",
+    // which would read as a setting somebody chose.
+    const CHANNEL_LABEL = {
+      stereo: 'stereo pair',
+      mono: 'single (mono)',
+      left: 'left of a pair',
+      right: 'right of a pair',
+    };
+    function channelCell(device) {
+      if (!(device.roles ?? []).includes('consumer')) return '<span class="muted">—</span>';
+      const channel = device.status?.audioChannel;
+      if (!channel) return '<span class="muted">unknown</span>';
+      // Half of a pair is worth flagging: it is the one choice that buys a
+      // synchronisation problem a single node does not have.
+      const cls = (channel === 'left' || channel === 'right') ? 'rssi fair' : '';
+      return `<span class="${cls}">${esc(CHANNEL_LABEL[channel] ?? channel)}</span>`;
     }
 
     // How the loss arrived, not just how much. Isolated single packets are

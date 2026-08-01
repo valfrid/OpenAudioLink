@@ -84,6 +84,7 @@ public sealed class DeviceStatusService : BackgroundService
                 Bssid = status.Wifi?.Bssid,
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
+                AudioChannel = status.AudioChannel,
             });
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
@@ -105,6 +106,10 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("wifi")]
         public WifiStatus? Wifi { get; init; }
+
+        /// <summary>Named to avoid colliding with the Wi-Fi channel below.</summary>
+        [JsonPropertyName("channel")]
+        public string? AudioChannel { get; init; }
     }
 
     private sealed record WifiStatus

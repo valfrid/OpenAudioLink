@@ -35,7 +35,7 @@ configuration — never audio.
 | GET    | `/config`         | Read configuration                          |
 | PUT    | `/config`         | Write configuration                         |
 | POST   | `/factory-reset`  | Request factory reset (clears identity, Wi-Fi, config) |
-| POST   | `/config`         | Set the roles the node takes                |
+| POST   | `/config`         | Set the roles and speaker profile           |
 | GET    | `/stream`         | Stream state and measurement counters       |
 | POST   | `/stream/start`   | Producer: begin streaming to destinations   |
 | POST   | `/stream/stop`    | Stop a producer; clear a consumer's counters |
@@ -81,6 +81,35 @@ Volatile state lives here and not on the discovery announce. Signal
 strength changes constantly, and an announce is multicast to every device
 on the network every few seconds; a Controller that wants telemetry asks
 for it.
+
+### The speaker profile
+
+`GET /status` reports `"channel"`, and `POST /config` accepts it:
+
+| Value    | Plays            | Physical                        |
+| -------- | ---------------- | ------------------------------- |
+| `stereo` | both, unchanged  | one node, stereo DAC, two boxes |
+| `mono`   | (L+R)/2          | one node, one speaker           |
+| `left`   | L only           | one half of a pair              |
+| `right`  | R only           | the other half                  |
+
+The stream stays stereo whatever a node is set to. Every Consumer receives
+the same sequence numbers, timestamps, SSRC and samples, because that
+identity is what lets several speakers stay in step; what a node does with
+the two channels is its own business (`docs/DECISIONS.md` decision 10).
+
+`mono`, `left` and `right` place the chosen signal in **both** output
+slots, so one node drives one speaker or two identical ones with no
+further configuration.
+
+```json
+{ "roles": ["consumer"], "channel": "mono" }
+```
+
+Either field may be sent alone — changing a speaker from stereo to mono
+has nothing to do with whether it is still a Consumer. Both are validated
+before either is written, so a bad second field cannot leave a node half
+reconfigured. Like roles, this applies at the next boot.
 
 ### POST /stream/destinations
 
@@ -226,4 +255,4 @@ they were taken so nothing is shown as fresher than it is.
 
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
   Later additions within 0.1: `/stream*` measurement endpoints, `/peers`,
-  `/stream/destinations`.
+  `/stream/destinations`, the `channel` field on `/status` and `/config`.

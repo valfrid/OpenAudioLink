@@ -25,6 +25,13 @@ public sealed record DeviceStatus
     public int? Channel { get; init; }
     public int? Rssi { get; init; }
 
+    /// <summary>
+    /// Which of the stream's two channels this node plays: stereo, mono,
+    /// left or right (decision 10). Read from /status rather than the
+    /// announce, so the multicast every device hears stays lean.
+    /// </summary>
+    public string? AudioChannel { get; init; }
+
     /// <summary>When the Hub last read this, so a stale reading is visible as stale.</summary>
     public DateTimeOffset ObservedAt { get; init; }
 }

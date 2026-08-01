@@ -15,6 +15,7 @@ static const char *TAG = "oal_config";
 #define NVS_NAMESPACE "oal"
 #define NVS_KEY_ROLES "roles"
 #define NVS_KEY_NAME  "name"
+#define NVS_KEY_CHANNEL "channel"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -194,6 +195,60 @@ esp_err_t oal_config_set_roles(oal_roles_t roles)
         if (oal_roles_to_list(roles, text, sizeof(text)) > 0) {
             ESP_LOGI(TAG, "roles set to %s (takes effect on reboot)", text);
         }
+    }
+    return err;
+}
+
+/*
+ * The channel profile (decision 10). Stored as the wire name rather than
+ * the enum value, so a stored setting survives the enum being reordered
+ * and can be read out of an NVS dump without a lookup table.
+ */
+oal_channel_t oal_config_get_channel(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return OAL_CHANNEL_DEFAULT;
+    }
+
+    char stored[16];
+    size_t length = sizeof(stored);
+    esp_err_t err = nvs_get_str(nvs, NVS_KEY_CHANNEL, stored, &length);
+    nvs_close(nvs);
+
+    oal_channel_t channel;
+    if (err != ESP_OK || !oal_channel_parse(stored, &channel)) {
+        return OAL_CHANNEL_DEFAULT;
+    }
+    return channel;
+}
+
+esp_err_t oal_config_set_channel(oal_channel_t channel)
+{
+    /* Round-tripping the name is the validity check: an out-of-range enum
+     * formats as "stereo" and would be stored as a setting nobody asked
+     * for. */
+    oal_channel_t parsed;
+    const char *name = oal_channel_name(channel);
+    if (!oal_channel_parse(name, &parsed) || parsed != channel) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(nvs, NVS_KEY_CHANNEL, name);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "channel set to %s (takes effect on reboot)", name);
     }
     return err;
 }

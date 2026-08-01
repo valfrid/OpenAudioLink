@@ -1,5 +1,6 @@
 #include "oal_control.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -94,10 +95,11 @@ static esp_err_t status_handler(httpd_req_t *req)
     char body[640];
     int len = snprintf(body, sizeof(body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
-                       "\"roles\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
+                       "\"roles\":%s,\"channel\":\"%s\",\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
+                       oal_channel_name(oal_config_get_channel()),
                        s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi);
@@ -113,11 +115,13 @@ static esp_err_t status_handler(httpd_req_t *req)
 /* ---------- POST /config ---------- */
 
 /*
- * Sets the roles this node takes, as an array: {"roles":["consumer"]}.
- * Stored in NVS and applied at the next boot, because roles decide which
- * tasks start — switching a running node between producer and consumer
- * would mean tearing down live audio, and a reboot is both simpler and
- * more honest about what happened.
+ * Sets what this node is and what it plays:
+ * {"roles":["consumer"],"channel":"mono"}. Either field alone is valid.
+ *
+ * Stored in NVS and applied at the next boot. Roles decide which tasks
+ * start, and the channel decides what the playout does with each frame;
+ * changing either under a running stream would mean tearing down live
+ * audio, and a reboot is both simpler and more honest about what happened.
  */
 static esp_err_t config_handler(httpd_req_t *req)
 {
@@ -130,37 +134,75 @@ static esp_err_t config_handler(httpd_req_t *req)
     body[len] = '\0';
 
     cJSON *root = cJSON_ParseWithLength(body, len);
-    const cJSON *array = root != NULL ? cJSON_GetObjectItemCaseSensitive(root, "roles") : NULL;
-    if (!cJSON_IsArray(array)) {
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad json");
+        return ESP_FAIL;
+    }
+
+    const cJSON *array = cJSON_GetObjectItemCaseSensitive(root, "roles");
+    const cJSON *channel = cJSON_GetObjectItemCaseSensitive(root, "channel");
+
+    /* Which fields were present, recorded now. Everything below happens
+     * after the tree is freed, and testing a pointer into a freed tree is
+     * the kind of bug that works until the allocator is under pressure. */
+    const bool has_roles = cJSON_IsArray(array);
+    const bool has_channel = cJSON_IsString(channel);
+
+    /* Either may be set alone: changing a speaker from stereo to mono has
+     * nothing to do with whether it is still a consumer, and requiring
+     * both would make one setting able to clobber the other. */
+    if (!has_roles && !has_channel) {
         cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing roles array");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "expected roles or channel");
         return ESP_FAIL;
     }
 
     oal_roles_t roles = OAL_ROLE_NONE;
-    const cJSON *element = NULL;
-    cJSON_ArrayForEach(element, array) {
-        oal_role_t role = cJSON_IsString(element)
-            ? oal_role_from_name(element->valuestring) : OAL_ROLE_NONE;
-        if (role == OAL_ROLE_NONE) {
+    if (has_roles) {
+        const cJSON *element = NULL;
+        cJSON_ArrayForEach(element, array) {
+            oal_role_t role = cJSON_IsString(element)
+                ? oal_role_from_name(element->valuestring) : OAL_ROLE_NONE;
+            if (role == OAL_ROLE_NONE) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown role");
+                return ESP_FAIL;
+            }
+            roles |= role;
+        }
+        if (roles == OAL_ROLE_NONE) {
             cJSON_Delete(root);
-            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown role");
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "at least one role is required");
             return ESP_FAIL;
         }
-        roles |= role;
+    }
+
+    oal_channel_t wanted = OAL_CHANNEL_DEFAULT;
+    if (has_channel && !oal_channel_parse(channel->valuestring, &wanted)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown channel");
+        return ESP_FAIL;
     }
     cJSON_Delete(root);
 
-    if (oal_config_set_roles(roles) != ESP_OK) {
+    /* Both validated before either is written, so a bad second field
+     * cannot leave the node half-reconfigured. */
+    if (has_roles && oal_config_set_roles(roles) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "roles not stored");
+        return ESP_FAIL;
+    }
+    if (has_channel && oal_config_set_channel(wanted) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channel not stored");
         return ESP_FAIL;
     }
 
     char stored[OAL_ROLES_STR_MAX];
-    char response[128];
-    oal_roles_to_json(roles, stored, sizeof(stored));
+    char response[192];
+    oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
-                     "{\"status\":\"stored\",\"roles\":%s,\"appliesAt\":\"reboot\"}", stored);
+                     "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
+                     "\"appliesAt\":\"reboot\"}",
+                     stored, oal_channel_name(oal_config_get_channel()));
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, n);
 }
