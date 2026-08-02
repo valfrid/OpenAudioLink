@@ -43,9 +43,10 @@ closed `wontfix` — and the release assets are source archives only.
 
 So this repository builds it, the same way it builds firmware images and
 the Hub package: **Actions → librespot → Run workflow**, then download the
-artifact. Ten minutes, nothing installed locally. The workflow is
-`.github/workflows/librespot.yml`; it pins the version, runs the binary
-once before uploading it, and prints the SHA256 in the run summary.
+artifact. Nothing installed locally, and the first run took five and a
+half minutes. The workflow is `.github/workflows/librespot.yml`; it pins
+the version, runs the binary once before uploading it, and prints the
+SHA256 in the run summary.
 
 Building it on your own machine instead needs a Rust toolchain and the
 Microsoft C++ build tools.

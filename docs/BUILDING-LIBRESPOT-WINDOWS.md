@@ -15,7 +15,7 @@ builds it and you download the result. Nothing is installed on your PC.
 1. Open the repository on GitHub → **Actions** tab.
 2. Pick **librespot** in the left-hand list of workflows.
 3. Click **Run workflow**. It asks for a version; the default is fine.
-4. Wait about ten minutes.
+4. Wait. The first run took **5 minutes 27 seconds**.
 5. Open the finished run. The summary shows the size and SHA256 of what
    it built, and **Artifacts** at the bottom has
    `librespot-0.8.0-win-x64`. Download it and unzip.
@@ -26,6 +26,22 @@ builds it and you download the result. Nothing is installed on your PC.
 The runner already has Rust and the Microsoft C++ toolchain, which is the
 entire reason Option B is long. The workflow also runs the binary once
 before uploading it, so an artifact that exists is an artifact that starts.
+
+**Verified 2026-08-02.** Run 1 built librespot 0.8.0 on `windows-latest`
+and the binary reported
+
+```
+librespot 0.8.0 (Built on 2026-08-02, Build ID: hJW4W01L, Profile: release)
+```
+
+Two things that run showed and that are worth knowing:
+
+- **Artifacts expire after 90 days.** If the download link on an old run
+  is dead, re-run the workflow rather than hunting for the file.
+- The build prints a future-incompatibility warning about `num-bigint-dig`,
+  a dependency several levels below librespot. Harmless today; it means a
+  future Rust release may refuse to build this pinned version, and the fix
+  then is a newer librespot, not a change here.
 
 Why this is not just committed to the repository: a binary in Git is a
 binary nobody can audit and everybody has to trust. Building it on demand
