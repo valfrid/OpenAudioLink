@@ -361,13 +361,46 @@ curl.exe "http://localhost:41200/?action=getInfo"
 alias for `Invoke-WebRequest`, which takes different arguments and will
 look like a failure that is really a different program.
 
-A block of JSON comes back, including `"remoteName":"Test speaker"` and
-`"deviceType":"SPEAKER"`. That is Spotify's own discovery endpoint
-answering — the exact thing a phone talks to. If this works, librespot is
-running correctly and anything still wrong is network or firewall.
+A block of JSON comes back. The fields that matter:
+
+```json
+{"remoteName":"Test speaker","deviceType":"Speaker",
+ "status":101,"statusString":"OK","accountReq":"PREMIUM", ...}
+```
+
+That is Spotify's own discovery endpoint answering — the exact thing a
+phone talks to. If this works, librespot is running correctly, and
+anything still wrong is network or firewall.
 
 If it hangs or refuses the connection, the process is not up: look at the
 first window, which will say why.
+
+### What the first window should be saying
+
+Three lines, and two of them are worth reading rather than skipping:
+
+```
+librespot 0.8.0 (Built on ..., Profile: release)
+Mixing with softvol and volume control: Log(60.0)
+Using StdoutSink (pipe) with format: F32
+```
+
+**`StdoutSink (pipe) with format: F32`** is the Hub's exact audio
+configuration, accepted and active. If it says `S16` here, the `--format`
+argument did not arrive.
+
+**`Mixing with softvol`** is why volume set on the phone reaches the
+speakers without the Hub doing anything: with no hardware mixer to hand
+off to, librespot applies volume to the samples themselves, before they
+reach the pipe. `--help` on this build says so from the other direction —
+`--mixer` and the `--alsa-mixer-*` options all report "Not supported by
+the included audio backend(s)", because the build deliberately has no
+sound-card backend.
+
+One more reason `F32` is the right default: `--dither` defaults to `tpdf`
+for `S16`, `S24` and `S24_3`, and to **none** for the float formats.
+Asking for F32 skips both the quantisation and the dither noise added to
+mask it.
 
 ### 7.4 — audio actually comes out
 

@@ -132,6 +132,11 @@ the samples before they reach the pipe, so it reaches the speakers without
 the Hub doing anything. That is one of the two things `CAST-POINTS.md`
 asks for beyond mere function.
 
+Confirmed on the real binary, which announces
+`Mixing with softvol and volume control: Log(60.0)` at startup: with no
+hardware mixer to hand off to — the build has no sound-card backend at all
+— it has nowhere to apply volume except the samples.
+
 ## Two things worth understanding
 
 **Flow control is the pipe.** A pipe backend writes as fast as it can
