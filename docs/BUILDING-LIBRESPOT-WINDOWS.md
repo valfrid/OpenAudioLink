@@ -300,32 +300,121 @@ netsh advfirewall firewall add rule name="librespot" dir=in action=allow program
 
 ---
 
-## Step 7 — test librespot on its own, before involving the Hub
+## Step 7 — test the binary from the command line
 
-Worth doing once. It tells you which half of the system to look at if
-something is wrong later.
+Four checks, each one proving more than the last. Do them in order: the
+first that fails tells you where the problem is, and there is no point
+looking further down until it passes.
 
-In a Command Prompt:
+These apply however you got the binary — built locally or downloaded from
+the CI artifact. Replace `librespot.exe` below with the actual path if it
+is not in the folder you are standing in.
+
+### 7.1 — it is a program
 
 ```
-"%USERPROFILE%\.cargo\bin\librespot.exe" --name "Test speaker" --backend pipe --format F32 --device-type speaker >NUL
+librespot.exe --version
 ```
 
-In PowerShell the last part is `> $null` instead of `>NUL`.
+```
+librespot 0.8.0 (Built on 2026-08-02, Build ID: ..., Profile: release)
+```
 
-The redirect matters: the pipe backend writes raw audio to the console,
-and without it your terminal fills with binary garbage.
+Proves the file is not a truncated download and is built for your
+architecture. If Windows says it is not recognised as an internal or
+external command, you are in the wrong folder or the file is not there.
 
-Leave it running. On a phone on the same Wi-Fi, open Spotify, start any
-track, and open the device picker (the speaker icon at the bottom).
-**"Test speaker" should be listed.** Select it — the phone goes quiet,
-because the audio is going into `NUL`, which is the correct result.
+### 7.2 — this build has what the Hub needs
 
-Press **Ctrl+C** in the console to stop it.
+```
+librespot.exe --help
+```
 
-- **It appeared:** librespot is fine. Any later problem is the Hub or the
-  speakers.
-- **It did not appear:** see below. Do not move on until it does.
+A long list of options. Check that `--backend`, `--format`,
+`--device-type` and `--zeroconf-port` are all in it — those are what the
+Hub passes, and a build missing one would fail at a much more confusing
+moment.
+
+### 7.3 — it announces itself (no phone required)
+
+This is the one that matters, and it can be done entirely on the PC.
+
+**In one Command Prompt window**, start it with the zeroconf port pinned
+so the next command knows where to look:
+
+```
+librespot.exe --name "Test speaker" --backend pipe --format F32 --device-type speaker --zeroconf-port 41200 >NUL
+```
+
+In PowerShell the redirect is `> $null` instead of `>NUL`. The redirect
+matters: the pipe backend writes raw audio to standard output, and without
+it your terminal fills with binary garbage. Log messages go to standard
+*error*, so they stay visible — that is deliberate and useful.
+
+**In a second window**, ask the receiver about itself:
+
+```
+curl.exe "http://localhost:41200/?action=getInfo"
+```
+
+**Use `curl.exe`, with the extension.** In PowerShell, plain `curl` is an
+alias for `Invoke-WebRequest`, which takes different arguments and will
+look like a failure that is really a different program.
+
+A block of JSON comes back, including `"remoteName":"Test speaker"` and
+`"deviceType":"SPEAKER"`. That is Spotify's own discovery endpoint
+answering — the exact thing a phone talks to. If this works, librespot is
+running correctly and anything still wrong is network or firewall.
+
+If it hangs or refuses the connection, the process is not up: look at the
+first window, which will say why.
+
+### 7.4 — audio actually comes out
+
+The previous test proved it can be *found*. This proves it can *play*.
+
+Restart it, sending the audio to a file instead of discarding it:
+
+```
+librespot.exe --name "Test speaker" --backend pipe --format F32 --device-type speaker --zeroconf-port 41200 > C:\temp\test.raw
+```
+
+(Create `C:\temp` first if it does not exist.)
+
+On a phone on the same Wi-Fi, open Spotify, play any track, and pick
+**"Test speaker"** from the device picker (the speaker icon). The phone
+goes quiet, which is correct — the audio is going to the PC. The first
+window logs the login and the track name.
+
+Let it play about ten seconds, then **Ctrl+C**, and look at the file:
+
+```
+dir C:\temp\test.raw
+```
+
+**The size is the real result.** At 44.1 kHz, two channels, four bytes per
+sample, `F32` produces **352,800 bytes per second**, so ten seconds is
+roughly **3.5 MB**. Getting that means the whole chain works: login,
+streaming, decoding, and the pipe.
+
+| File size after ~10 s | What it means |
+| --- | --- |
+| ~3.5 MB | Correct. `F32`, 44.1 kHz stereo, as expected. |
+| ~1.8 MB | Half. The build is emitting `S16`, not `F32` — check the `--format` argument. |
+| 0 bytes | It was found but never played. Spotify Premium is required. |
+| No file at all | The redirect did not happen; retype the command. |
+
+Curious what is in it? Audacity can open raw PCM: **File → Import → Raw
+Data**, then set 32-bit float, little-endian, 2 channels, 44100 Hz. It
+should be the track you played.
+
+### What each outcome tells you
+
+- **7.3 and 7.4 both pass:** librespot is fine. Any later problem is the
+  Hub, the network to the speakers, or the speakers.
+- **7.3 passes, phone cannot see it:** firewall (step 6), or the phone is
+  not on the same network. See the network traps below.
+- **7.3 fails:** the build or the arguments. See the table below.
 
 ---
 
