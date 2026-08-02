@@ -52,6 +52,7 @@ two mesh points, 2.4 GHz. Firmware 0.6.x and 0.7.0.
 | 12 | 7 | 20 MHz | 2 hops | **0%** | **0** | **0%** | 1.23 ms |
 | 13 | 7 | 20 MHz | 2 hops | 3.46% | 19 | **0%** | 0.75 ms |
 | 14 | 7 | 20 MHz | 2 hops | **0%** | **0** | **0%** | 1.44 ms |
+| 15 | 7 | 20 MHz | 2 hops | **0%** | **0** | **0%** | **1.21 ms** |
 
 Runs 1–3 predate both the send-error counter and the access-point line, so
 their loss figures conflate three causes and their topology is unrecorded.
@@ -64,6 +65,13 @@ Runs 12-14 are the A/B that verified firmware 0.7.0 against the 0.6.6
 baseline: 12 and 14 are the two builds under the same conditions, both
 losing nothing at all over roughly 25,000 packets each. Run 13 is 0.7.0
 started moments after its own OTA reboot; see below.
+
+Run 15 is the longest and cleanest: 104,013 packets — nearly nine minutes —
+with nothing refused, nothing lost and not one gap recorded, *through two
+changes to the destination set while it played*. A second destination was
+added for about seventy seconds and then removed, which the producer's
+counters show as 104,006 packets against 117,954 datagrams. The consumer
+noticed nothing.
 
 ## What the series established
 
@@ -129,6 +137,14 @@ also the first time the refusal diagnostics paid for themselves: `ENOMEM`,
 transient, sender-side, retry cannot fix it* at a glance, where three
 firmware revisions were once spent inferring less than that from a bare
 count.
+
+**The audience can change without disturbing the stream.** Run 15 added a
+destination and later removed it while playing, and the consumer already
+listening recorded no gap, no reset and no reordering across either
+change. A speaker switched on halfway through a record joins what is
+already playing rather than interrupting it, which is what makes a
+Consumer able to join by asking (decision 9) rather than by having been
+present when the music started.
 
 **Nothing has ever been corrupted.** Zero payload errors across every run,
 with the pattern source recomputing all 480 samples of every packet. Zero
