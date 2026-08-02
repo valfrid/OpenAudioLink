@@ -146,6 +146,25 @@ running stream changes — not the sequence number, the timestamp or the
 SSRC — because every Consumer already listening is still playing it, and
 the receiver's probation handles arriving mid-stream.
 
+### Reading the Controller state
+
+`GET /status` reports who a node believes is in charge, and what it was
+last told:
+
+```json
+"controller": { "who": "peer", "id": "oal-…", "name": "OpenAudioLink Hub",
+                "address": "192.168.0.10" },
+"join":       { "asked": true, "status": "standby" }
+```
+
+`who` is `self`, `peer` or `none`. `join` is null on a node that does not
+hold Consumer, since only a Consumer joins.
+
+This exists because the correct behaviour with a Hub present is that
+nothing happens — the Consumer asks, the Hub says stand by, and silence
+follows. Working and broken look identical from outside without somewhere
+to read the decision.
+
 ### POST /join
 
 A Consumer that has finished booting asks the Controller what to do. The

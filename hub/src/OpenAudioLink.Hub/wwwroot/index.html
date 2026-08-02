@@ -76,8 +76,8 @@
   <table id="devices" hidden>
     <thead>
       <tr>
-        <th>Status</th><th>Name</th><th>Roles</th><th>Speaker</th><th>Firmware</th>
-        <th>Uptime</th><th>Wi-Fi</th><th>Signal</th>
+        <th>Status</th><th>Name</th><th>Roles</th><th>Speaker</th><th>Follows</th>
+        <th>Firmware</th><th>Uptime</th><th>Wi-Fi</th><th>Signal</th>
         <th>Address</th><th>Actions</th>
       </tr>
     </thead>
@@ -287,6 +287,7 @@
         const s = d.status;
         return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
           `<td>${channelCell(d)}</td>` +
+          `<td>${controllerCell(d)}</td>` +
           `<td>${esc(d.firmwareVersion)}</td>` +
           `<td>${s ? esc(duration(s.uptimeSeconds)) : '—'}</td>` +
           `<td>${wifiCell(s)}</td><td>${signalCell(s)}</td>` +
@@ -698,6 +699,26 @@
       // synchronisation problem a single node does not have.
       const cls = (channel === 'left' || channel === 'right') ? 'rssi fair' : '';
       return `<span class="${cls}">${esc(CHANNEL_LABEL[channel] ?? channel)}</span>`;
+    }
+
+    // Who a node believes is in charge, and what it was last told
+    // (decision 9). This column exists because the correct behaviour with a
+    // Hub present is that nothing happens: the speaker asks, the Hub says
+    // stand by, and silence follows. Without somewhere to read it, working
+    // and broken look identical.
+    function controllerCell(device) {
+      const status = device.status;
+      if (!status) return '<span class="muted">—</span>';
+      if (!status.controller) {
+        // A node that has found no Controller cannot be told anything, so
+        // this is worth flagging rather than leaving blank.
+        return '<span class="rssi fair">no controller</span>';
+      }
+      const who = status.controller === 'self'
+        ? 'itself' : esc(status.controller);
+      const join = status.joinStatus
+        ? `<br><span class="muted">told: ${esc(status.joinStatus)}</span>` : '';
+      return `${who}${join}`;
     }
 
     // How the loss arrived, not just how much. Isolated single packets are

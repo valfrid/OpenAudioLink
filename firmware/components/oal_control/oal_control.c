@@ -6,6 +6,7 @@
 
 #include "cJSON.h"
 #include "oal_discovery.h"
+#include "oal_join.h"
 #include "oal_stream.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
@@ -78,6 +79,31 @@ static int format_wifi(char *out, size_t out_size)
                     (int)ap.primary, ap.rssi);
 }
 
+/*
+ * Who this node believes holds the Controller role, and whether it has been
+ * answered (decision 9).
+ *
+ * Without this the whole house case is invisible: a Consumer asks, the Hub
+ * says stand by, and nothing happens — which is correct and looks exactly
+ * like nothing working. A node has to be able to say who it is listening
+ * to.
+ */
+static int format_controller(char *out, size_t out_size)
+{
+    oal_peer_t controller;
+    switch (oal_discovery_controller(&controller)) {
+    case OAL_CONTROLLER_SELF:
+        return snprintf(out, out_size, "{\"who\":\"self\"}");
+    case OAL_CONTROLLER_PEER:
+        return snprintf(out, out_size,
+                        "{\"who\":\"peer\",\"id\":\"%s\",\"name\":\"%s\","
+                        "\"address\":\"%s\"}",
+                        controller.id, controller.name, controller.address);
+    default:
+        return snprintf(out, out_size, "{\"who\":\"none\"}");
+    }
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     char roles[OAL_ROLES_STR_MAX];
@@ -93,17 +119,32 @@ static esp_err_t status_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    char body[640];
+    char controller[160];
+    if (format_controller(controller, sizeof(controller)) >= (int)sizeof(controller)) {
+        snprintf(controller, sizeof(controller), "{\"who\":\"none\"}");
+    }
+
+    /* Only a Consumer joins, so only a Consumer has anything to report
+     * about it. A producer saying "not asked" would read as a failure. */
+    char join[96] = "null";
+    if ((s_config.roles & OAL_ROLE_CONSUMER) != 0) {
+        snprintf(join, sizeof(join), "{\"asked\":%s,\"status\":\"%s\"}",
+                 oal_join_acknowledged() ? "true" : "false", oal_join_last_status());
+    }
+
+    char body[896];
     int len = snprintf(body, sizeof(body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
                        "\"roles\":%s,\"channel\":\"%s\",\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
+                       "\"controller\":%s,\"join\":%s,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        oal_channel_name(oal_config_get_channel()),
                        s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
-                       (unsigned)esp_get_free_heap_size(), wifi);
+                       (unsigned)esp_get_free_heap_size(), wifi,
+                       controller, join);
     if (len <= 0 || len >= (int)sizeof(body)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status too large");
         return ESP_FAIL;

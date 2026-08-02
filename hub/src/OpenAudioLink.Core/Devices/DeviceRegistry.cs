@@ -32,6 +32,19 @@ public sealed record DeviceStatus
     /// </summary>
     public string? AudioChannel { get; init; }
 
+    /// <summary>
+    /// Who this node believes holds the Controller role: "self", the name
+    /// of a peer, or null when it has found nobody (decision 9).
+    ///
+    /// Without it the house case is invisible — a Consumer asks, the Hub
+    /// says stand by, and nothing happens, which is correct and looks
+    /// exactly like nothing working.
+    /// </summary>
+    public string? Controller { get; init; }
+
+    /// <summary>The last answer a Controller gave this node's join request.</summary>
+    public string? JoinStatus { get; init; }
+
     /// <summary>When the Hub last read this, so a stale reading is visible as stale.</summary>
     public DateTimeOffset ObservedAt { get; init; }
 }

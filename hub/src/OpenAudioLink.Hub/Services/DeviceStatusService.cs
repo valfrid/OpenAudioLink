@@ -85,6 +85,13 @@ public sealed class DeviceStatusService : BackgroundService
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
                 AudioChannel = status.AudioChannel,
+                Controller = status.Controller?.Who switch
+                {
+                    "self" => "self",
+                    "peer" => status.Controller.Name,
+                    _ => null,
+                },
+                JoinStatus = status.Join?.Asked == true ? status.Join.Status : null,
             });
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
@@ -110,6 +117,30 @@ public sealed class DeviceStatusService : BackgroundService
         /// <summary>Named to avoid colliding with the Wi-Fi channel below.</summary>
         [JsonPropertyName("channel")]
         public string? AudioChannel { get; init; }
+
+        [JsonPropertyName("controller")]
+        public ControllerStatus? Controller { get; init; }
+
+        [JsonPropertyName("join")]
+        public JoinStatus? Join { get; init; }
+    }
+
+    private sealed record ControllerStatus
+    {
+        [JsonPropertyName("who")]
+        public string? Who { get; init; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; init; }
+    }
+
+    private sealed record JoinStatus
+    {
+        [JsonPropertyName("asked")]
+        public bool Asked { get; init; }
+
+        [JsonPropertyName("status")]
+        public string? Status { get; init; }
     }
 
     private sealed record WifiStatus
