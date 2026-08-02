@@ -474,7 +474,24 @@ so it suits one good room rather than every room.
 ## 9. Controller is a small role; the Hub is a device that hosts it
 
 **Date:** 2026-07-31
-**Status:** decided; the peer table in firmware is the first piece of work.
+**Status:** implemented and verified on hardware, 2026-08-02 (firmware 0.8.3).
+
+Both deployments, on two XIAO ESP32-S3 nodes and a Windows Hub:
+
+- *House.* Both nodes elected the Hub, the turntable dropped a claim it was
+  already holding, and the speaker was told `standby` — correct, because
+  the Hub knows about rooms and nobody had pressed play.
+- *Party.* With the Hub stopped, the turntable claimed the role within one
+  announce interval, the speaker joined it, and the speaker appeared in the
+  turntable's destination list. Nothing configured it: asking is what put
+  it there.
+
+Finding this took an evening, and almost none of it was the handshake. The
+node-to-Hub direction had never been exercised in the project's life — the
+Hub polls, pushes firmware and starts streams, all of it outbound — so a
+VPN subnet route quietly NATing the local network had been latent
+throughout and surfaced the moment something first needed to reach the Hub.
+See `protocol/DISCOVERY.md`.
 
 ### Decision
 
