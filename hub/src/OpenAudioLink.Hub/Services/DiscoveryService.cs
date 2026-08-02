@@ -277,7 +277,33 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                await SendToGroupAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
+                var announce = BuildAnnounce().Serialize();
+                await SendToGroupAsync(client, announce, groupEndpoint, stoppingToken);
+
+                // And directly to every device already known.
+                //
+                // Multicast is how a device is found the first time, and it
+                // is the one direction that has never been proven: the Hub
+                // hears every node while no node hears the Hub, because
+                // outbound multicast follows the routing table and a VPN
+                // adapter wins it. Naming the interface fixes that, but the
+                // Hub already has a unicast path to each node — it probes
+                // and controls them over it — and using the proven path for
+                // the announce as well makes a node knowing about the Hub
+                // no longer depend on multicast egress at all.
+                //
+                // The cost is one small datagram per node every five
+                // seconds, against a stream of two hundred packets a
+                // second.
+                foreach (var device in _registry.Snapshot())
+                {
+                    if (device.Online && IPAddress.TryParse(device.Address, out var address))
+                    {
+                        await TrySendAsync(
+                            client, announce,
+                            new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
+                    }
+                }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));
         }
