@@ -39,22 +39,20 @@ manages a binary you supplied rather than one it chose for you.
 **There is no official one.** The librespot project declines to publish
 precompiled binaries — the request is
 [issue #727](https://github.com/librespot-org/librespot/issues/727),
-closed `wontfix` — and the release assets are source archives only. Build
-it yourself:
+closed `wontfix` — and the release assets are source archives only.
 
-1. Install [rustup](https://rustup.rs). On the MSVC target it will ask for
-   the Visual Studio Build Tools ("Desktop development with C++"); that
-   linker is the usual thing to trip over. `rustup toolchain install
-   stable-x86_64-pc-windows-gnu` avoids it if you would rather not install
-   Visual Studio.
-2. `cargo install librespot --locked --no-default-features --features "native-tls,with-libmdns"`
-3. Copy `%USERPROFILE%\.cargo\bin\librespot.exe` next to the Hub.
+So this repository builds it, the same way it builds firmware images and
+the Hub package: **Actions → librespot → Run workflow**, then download the
+artifact. Ten minutes, nothing installed locally. The workflow is
+`.github/workflows/librespot.yml`; it pins the version, runs the binary
+once before uploading it, and prints the SHA256 in the run summary.
 
-**[BUILDING-LIBRESPOT-WINDOWS.md](BUILDING-LIBRESPOT-WINDOWS.md) walks
-through all of that from nothing**, including the firewall rule, a
-standalone test that isolates librespot from the Hub, and what each error
-message means. Not WSL: it builds Linux binaries, and Windows cannot start
-one.
+Building it on your own machine instead needs a Rust toolchain and the
+Microsoft C++ build tools.
+**[BUILDING-LIBRESPOT-WINDOWS.md](BUILDING-LIBRESPOT-WINDOWS.md) covers
+both routes from nothing**, plus the firewall rule and a standalone test
+that isolates librespot from the Hub. Not WSL: it builds Linux binaries,
+and Windows cannot start one.
 
 `--no-default-features` drops `rodio-backend`, which exists to talk to a
 sound card this Hub does not want it talking to. **`with-libmdns` must

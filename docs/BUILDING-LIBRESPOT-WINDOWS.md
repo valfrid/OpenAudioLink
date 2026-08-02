@@ -1,8 +1,47 @@
-# Building librespot on Windows
+# Getting librespot for Windows
 
-A step-by-step for someone who has never set up a Rust build. Nothing
-here assumes prior knowledge. Allow about an hour, most of it waiting for
-downloads.
+The librespot project does not publish Windows binaries and has decided
+not to ([issue #727](https://github.com/librespot-org/librespot/issues/727),
+closed `wontfix`), so it has to be built. There are two ways, and **the
+first one is almost certainly the one you want.**
+
+---
+
+# Option A — let CI build it (recommended)
+
+Same as the firmware images and the Hub package: a GitHub Actions runner
+builds it and you download the result. Nothing is installed on your PC.
+
+1. Open the repository on GitHub → **Actions** tab.
+2. Pick **librespot** in the left-hand list of workflows.
+3. Click **Run workflow**. It asks for a version; the default is fine.
+4. Wait about ten minutes.
+5. Open the finished run. The summary shows the size and SHA256 of what
+   it built, and **Artifacts** at the bottom has
+   `librespot-0.8.0-win-x64`. Download it and unzip.
+6. Put `librespot.exe` beside the Hub executable, then do **step 6
+   (firewall)** and **step 7 (test)** from Option B below — those two
+   still apply however you got the binary.
+
+The runner already has Rust and the Microsoft C++ toolchain, which is the
+entire reason Option B is long. The workflow also runs the binary once
+before uploading it, so an artifact that exists is an artifact that starts.
+
+Why this is not just committed to the repository: a binary in Git is a
+binary nobody can audit and everybody has to trust. Building it on demand
+from a pinned version, with the command visible in
+`.github/workflows/librespot.yml`, keeps it reproducible and keeps the
+licensing question where `CAST-POINTS.md` puts it — with the operator who
+chose to run it.
+
+---
+
+# Option B — build it on your own machine
+
+Worth it if you want to work on librespot itself, or you would rather not
+depend on CI. A step-by-step for someone who has never set up a Rust
+build; nothing below assumes prior knowledge. Allow about an hour, most
+of it waiting for downloads.
 
 ## Do not use WSL
 
@@ -34,26 +73,65 @@ you ever rebuild.
 Rust compiles the code, but on Windows it hands the final assembly step to
 Microsoft's linker, `link.exe`. That does not come with Windows.
 
-**The easy route:** skip to step 2. Modern `rustup-init.exe` notices the
-tools are missing and offers to install them for you. Say yes, let it
-finish, then carry on. If it does that, you are done with this step.
+The thing you need is called **Build Tools for Visual Studio**. It is the
+compiler and linker without the Visual Studio editor — the full IDE is
+several times larger and buys you nothing here. It is free.
 
-**Doing it yourself**, if rustup does not offer or you prefer to look:
+### Where the installer is
+
+The file is always named `vs_BuildTools.exe` and is about 4 MB; it is a
+downloader that fetches the real payload once you have chosen what you
+want.
+
+**Direct links** (Microsoft's permanent shortlinks; `18` is Visual Studio
+2026, `17` is 2022 — either works, take the newer unless you have a reason):
+
+- <https://aka.ms/vs/18/stable/vs_buildtools.exe>
+- <https://aka.ms/vs/17/release/vs_BuildTools.exe>
+
+**By navigation**, if those ever move:
 
 1. Go to <https://visualstudio.microsoft.com/downloads/>.
-2. Scroll past the big Visual Studio editions to **"All Downloads"** →
-   **"Tools for Visual Studio"**.
-3. Download **"Build Tools for Visual Studio 2022"**. This is the
-   compiler toolchain without the Visual Studio editor — it is what you
-   want; the full IDE is several times larger and buys you nothing here.
-4. Run the downloaded `vs_BuildTools.exe`. It fetches a small installer
-   first, which then shows a grid of tiles called **Workloads**.
-5. Tick **"Desktop development with C++"**. Leave the right-hand panel of
-   optional components at its defaults — the MSVC compiler and a Windows
-   SDK are what matter and both are on by default.
-6. Click **Install**. This is the long download.
-7. When it finishes you can close the installer. A reboot is usually not
-   needed.
+2. Scroll past the three big Visual Studio editions to **"All Downloads"**.
+3. Expand **"Tools for Visual Studio"**.
+4. **"Build Tools for Visual Studio"** is in that list. Click Download.
+
+**By command line**, if you would rather not use a browser — `winget` is
+built into Windows 10 and 11. Find the current package id with
+
+```
+winget search "Visual Studio Build Tools"
+```
+
+then install it with the C++ workload, which is the part that matters:
+
+```
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Without that `--override`, winget installs the installer shell with no
+compiler in it, and the build still fails on a missing `link.exe`.
+
+### Running it
+
+1. Run `vs_BuildTools.exe`. It updates itself, then opens the **Visual
+   Studio Installer** showing a grid of tiles headed **Workloads**.
+2. Tick **"Desktop development with C++"**. That single tile is the whole
+   requirement.
+3. Leave the **Installation details** panel on the right at its defaults.
+   The MSVC compiler and a Windows SDK are what Rust needs, and both are
+   already selected.
+4. Click **Install**. This is the long download — 3–7 GB depending on the
+   optional components.
+5. Close the installer when it finishes. A reboot is usually not needed.
+
+### rustup may offer to do this for you
+
+When you run `rustup-init.exe` in step 2 without the C++ tools present, it
+detects that and offers to launch the Visual Studio installer itself. If
+you get that prompt, take it — it is this step, done for you, with the
+right workload preselected. It is worth knowing what it is installing and
+why, which is what this section is for.
 
 ### If you would rather not install Visual Studio at all
 

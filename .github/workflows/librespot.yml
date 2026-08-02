@@ -1,0 +1,82 @@
+name: librespot
+
+# Builds the Spotify Connect receiver the Hub drives (docs/LIBRESPOT.md).
+#
+# The librespot project does not publish Windows binaries and has declined
+# to — issue #727, closed wontfix — so the alternative is every operator
+# installing a Rust toolchain and several gigabytes of Visual Studio to
+# produce a file that is identical on every machine. A runner that already
+# has both does it once instead.
+#
+# On demand, not on every push. This builds a third-party program that
+# changes when its version changes, never when this project does, and a
+# cold Rust build costs about ten minutes of a Windows runner.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "librespot version to build (from crates.io)"
+        default: "0.8.0"
+        required: true
+
+jobs:
+  windows:
+    name: librespot win-x64
+    runs-on: windows-latest
+    steps:
+      # The runner ships a Rust toolchain, but an old one would fail on a
+      # newer librespot's minimum version rather than on anything real.
+      - name: Use current stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustc --version
+
+      # --locked builds with the dependency versions librespot released
+      # against. --no-default-features drops rodio-backend, which exists to
+      # talk to a sound card this Hub does not want it talking to; the pipe
+      # backend it does want is not behind a feature at all.
+      #
+      # with-libmdns must stay. It is what advertises each receiver on the
+      # network, and without it the result runs perfectly and never appears
+      # in the phone's Spotify list.
+      - name: Build
+        run: >
+          cargo install librespot
+          --version ${{ inputs.version }}
+          --locked
+          --no-default-features
+          --features "native-tls,with-libmdns"
+          --root ${{ runner.temp }}\out
+
+      # Proves the artifact is a program that runs, not just a file that
+      # exists. A binary that cannot start is worth failing here rather
+      # than on someone's Hub.
+      - name: Check it runs
+        run: ${{ runner.temp }}\out\bin\librespot.exe --version
+
+      # So whoever downloads it can tell which build they have.
+      - name: Record what was built
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\out\bin\librespot.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          @(
+            "### librespot ${{ inputs.version }} (win-x64)"
+            ""
+            "| | |"
+            "| --- | --- |"
+            "| Size | $size MB |"
+            "| SHA256 | ``$hash`` |"
+            "| Features | ``native-tls,with-libmdns`` (no default features) |"
+            ""
+            "Download the artifact below, unzip it, and put ``librespot.exe``"
+            "beside the Hub executable. See docs/BUILDING-LIBRESPOT-WINDOWS.md."
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: librespot-${{ inputs.version }}-win-x64
+          path: ${{ runner.temp }}\out\bin\librespot.exe
+          if-no-files-found: error
