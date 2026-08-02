@@ -157,3 +157,46 @@ roles and port — and joining could never have worked.
 
 The Hub sets it per destination, choosing the same-subnet address that
 device should use, the same way an OTA URL is chosen.
+
+## When a device is discovered but cannot be reached
+
+Discovery succeeding says a device's announcements arrive. It says nothing
+about whether the address in them is reachable, and the two can differ in a
+way that looks like nothing being wrong at all.
+
+The case that cost an evening: a laptop running Tailscale had accepted a
+subnet route for `192.168.0.0/24` — its own LAN — advertised by a node on a
+remote network using the same range. Windows preferred the tunnel by a
+metric of 5 against 306, and the subnet router NATed what it forwarded, so
+nodes recorded the Hub at the router's address on the far network. The Hub
+appeared in every peer table with the correct id, name, roles and port.
+Only the address belonged to a machine running nothing, and no request from
+a node could ever arrive.
+
+What made it hard to see is that every direction that had ever been used
+still worked. The Hub polls nodes, pushes firmware and starts streams, and
+all of that is Hub to node. Nothing needed to reach the Hub until a
+Consumer had to ask a Controller to join, so the fault had been latent for
+the entire life of the project.
+
+Worth checking, in this order:
+
+1. Is the device in `GET /peers` on a node at all? If not, the announcement
+   is not arriving — on Windows, outbound multicast follows the routing
+   table and a VPN adapter routinely wins it.
+2. Is the address in that entry one the Hub actually has? Compare against
+   `ipconfig`. An address that is not on the machine means something
+   rewrote the source.
+3. Does `curl http://<that address>:41080/api/health` answer? A refusal
+   from an address that pings is a different machine answering to the same
+   number on another network.
+4. `Get-NetRoute -DestinationPrefix <your LAN>/24` — more than one route,
+   with a VPN interface winning on metric, is the cause. A ping that
+   answers in tens of milliseconds with no `arp -a` entry confirms it.
+
+`tailscale up --accept-routes=false` removes it. Routing a local network
+through a VPN gains nothing and costs tens of milliseconds on every packet
+to a device in the same room, which for synchronised audio is not a detail.
+
+The `address` field above exists because of this: a Controller states where
+it is rather than letting the network infer it.
