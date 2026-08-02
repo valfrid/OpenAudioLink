@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using OpenAudioLink.Core.Devices;
+using OpenAudioLink.Core.Net;
 using OpenAudioLink.Core.Discovery;
 using OpenAudioLink.Core.Protocol;
 using OpenAudioLink.Hub.Configuration;
@@ -72,12 +73,13 @@ public sealed class DiscoveryService : BackgroundService
         using var client = new UdpClient();
         client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         client.Client.Bind(new IPEndPoint(IPAddress.Any, ProtocolSuite.DiscoveryPort));
-        client.JoinMulticastGroup(ProtocolSuite.DiscoveryMulticastGroup);
         client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
         SuppressConnectionReset(client.Client, _logger);
 
+        _interfaces = JoinOnEveryInterface(client.Client, _logger);
+
         var groupEndpoint = new IPEndPoint(ProtocolSuite.DiscoveryMulticastGroup, ProtocolSuite.DiscoveryPort);
-        await TrySendAsync(
+        await SendToGroupAsync(
             client, new DiscoveryProbe { ProtocolVersion = ProtocolSuite.Version }.Serialize(),
             groupEndpoint, stoppingToken);
 
@@ -85,6 +87,86 @@ public sealed class DiscoveryService : BackgroundService
             ReceiveLoopAsync(client, stoppingToken),
             AnnounceLoopAsync(client, groupEndpoint, stoppingToken),
             ProbeLoopAsync(client, groupEndpoint, stoppingToken));
+    }
+
+    /// <summary>
+    /// Every interface this host could be reached on. Multicast is per
+    /// interface, and a host with more than one has to be told which — the
+    /// operating system otherwise picks by routing metric, and a VPN
+    /// adapter routinely wins.
+    /// </summary>
+    private IReadOnlyList<IPAddress> _interfaces = [];
+
+    /// <summary>
+    /// Joins the discovery group on every usable interface, and reports
+    /// which. Joining only the default one is why a Hub could see every
+    /// node while no node could see the Hub: the receive path happened to
+    /// land on the right adapter and the send path did not.
+    /// </summary>
+    private static IReadOnlyList<IPAddress> JoinOnEveryInterface(Socket socket, ILogger logger)
+    {
+        var joined = new List<IPAddress>();
+        foreach (var local in LocalAddressSelector.EnumerateLocalAddresses())
+        {
+            try
+            {
+                socket.SetSocketOption(
+                    SocketOptionLevel.IP, SocketOptionName.AddMembership,
+                    new MulticastOption(ProtocolSuite.DiscoveryMulticastGroup, local.Address));
+                joined.Add(local.Address);
+            }
+            catch (SocketException ex)
+            {
+                // An adapter that refuses is one nothing was reachable on
+                // anyway; the others still work.
+                logger.LogDebug(ex, "Could not join discovery group on {Address}", local.Address);
+            }
+        }
+
+        if (joined.Count == 0)
+        {
+            logger.LogWarning("No interface accepted the discovery group; devices will not see this Hub");
+        }
+        else
+        {
+            logger.LogInformation("Announcing on {Addresses}", string.Join(", ", joined));
+        }
+        return joined;
+    }
+
+    /// <summary>
+    /// Sends to the multicast group once per interface, naming the
+    /// interface each time.
+    ///
+    /// A single send goes wherever the routing table prefers, which on a
+    /// machine running a VPN is usually the VPN. Sending on all of them
+    /// costs a few hundred bytes every five seconds and removes the whole
+    /// question.
+    /// </summary>
+    private async Task SendToGroupAsync(
+        UdpClient client, byte[] payload, IPEndPoint destination, CancellationToken stoppingToken)
+    {
+        if (_interfaces.Count == 0)
+        {
+            await TrySendAsync(client, payload, destination, stoppingToken);
+            return;
+        }
+
+        foreach (var address in _interfaces)
+        {
+            try
+            {
+                client.Client.SetSocketOption(
+                    SocketOptionLevel.IP, SocketOptionName.MulticastInterface,
+                    address.GetAddressBytes());
+            }
+            catch (SocketException ex)
+            {
+                _logger.LogDebug(ex, "Could not select {Address} for multicast", address);
+                continue;
+            }
+            await TrySendAsync(client, payload, destination, stoppingToken);
+        }
     }
 
     /// <summary>
@@ -170,7 +252,7 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                await TrySendAsync(client, probe, groupEndpoint, stoppingToken);
+                await SendToGroupAsync(client, probe, groupEndpoint, stoppingToken);
 
                 foreach (var device in _registry.Snapshot())
                 {
@@ -195,7 +277,7 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                await TrySendAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
+                await SendToGroupAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));
         }
