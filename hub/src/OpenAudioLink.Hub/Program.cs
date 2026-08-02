@@ -28,8 +28,13 @@ if (string.IsNullOrEmpty(dataDirectory))
 }
 var configStore = new HubConfigStore(dataDirectory);
 
+var librespot = new LibrespotOptions();
+builder.Configuration.GetSection(LibrespotOptions.SectionName).Bind(librespot);
+
 builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(configStore.LoadOrCreate());
+builder.Services.AddSingleton(new HubPaths(dataDirectory));
+builder.Services.AddSingleton(librespot);
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
@@ -41,6 +46,10 @@ builder.Services.AddHttpClient(nameof(DeviceStatusService),
     client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
+// Registered twice on purpose: the host runs it, and the API reads what it
+// knows. Two registrations of the type would be two instances.
+builder.Services.AddSingleton<LibrespotService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<LibrespotService>());
 
 var app = builder.Build();
 
@@ -278,6 +287,7 @@ app.MapGet("/api/devices/{id}/stream",
 app.MapPost("/join",
     async (JoinRequest request, CastPointStore castPoints,
            DeviceRegistry registry, DeviceCommandClient commands,
+           HubConfig hubConfig, RtpStreamer streamer,
            ILoggerFactory loggers, CancellationToken cancellationToken) =>
 {
     var logger = loggers.CreateLogger("Join");
@@ -302,7 +312,19 @@ app.MapPost("/join",
     // This is what heals a speaker that rebooted mid-party: it asks, and the
     // producer is told about it again. Adding is idempotent, so a node that
     // never left costs nothing by asking.
-    if (registry.TryGet(playing.ProducerId, out var producer))
+    //
+    // The producer is either a node or this Hub — a cast point fed by
+    // Spotify is sent by the Hub itself — and the two are told in different
+    // ways, which is the only place that distinction shows.
+    if (playing.ProducerId == hubConfig.Id)
+    {
+        if (IPAddress.TryParse(device.Address, out var address))
+        {
+            streamer.AddDestination(address);
+            logger.LogInformation("{Device} rejoined {CastPoint}", device.Name, point.Name);
+        }
+    }
+    else if (registry.TryGet(playing.ProducerId, out var producer))
     {
         await commands.AddDestinationAsync(producer, device.Address, cancellationToken);
         logger.LogInformation(
@@ -316,9 +338,10 @@ app.MapPost("/join",
 // "Kitchen" has one consumer, "House" has twelve, and the Producer
 // replicates one packet to however many it is given either way.
 
-app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry) =>
+app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry, LibrespotService spotify) =>
 {
     var playing = store.Playing;
+    var receivers = spotify.Snapshot().ToDictionary(r => r.CastPointId);
     // Decorated with the devices' current names and liveness, so a room
     // whose speaker is unplugged says so instead of looking ready.
     return Results.Ok(store.Snapshot().Select(point => new
@@ -327,11 +350,22 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry) =>
         point.Name,
         point.Destinations,
         playing = playing?.CastPointId == point.Id,
+        // Whether the phone can see this room, and whether it is the one
+        // making sound. Without it a cast point that is not advertised looks
+        // identical to one that is.
+        receiver = receivers.TryGetValue(point.Id, out var receiver)
+            ? new { offered = receiver.Running, receiver.Playing, receiver.Error }
+            : null,
         members = point.Destinations.Select(id => registry.TryGet(id, out var device)
             ? new { id, name = device.Name, online = device.Online, known = true }
             : new { id, name = id, online = false, known = false }),
     }));
 });
+
+// What each cast point's Spotify Connect receiver is doing. Separate from
+// the cast point list because it is diagnostics: a receiver that will not
+// start says why here.
+app.MapGet("/api/librespot", (LibrespotService spotify) => Results.Ok(spotify.Snapshot()));
 
 app.MapPost("/api/castpoints", (CastPointRequest request, CastPointStore store) =>
 {
@@ -369,6 +403,7 @@ app.MapDelete("/api/castpoints/{id}", (string id, CastPointStore store) =>
 
 app.MapPost("/api/castpoints/{id}/play",
     async (string id, CastPointPlayRequest request, CastPointStore store, DeviceRegistry registry,
+           HubConfig hubConfig, RtpStreamer streamer,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>
 {
     if (!store.TryGet(id, out var point))
@@ -409,7 +444,14 @@ app.MapPost("/api/castpoints/{id}/play",
     string? stopped = null;
     if (conflict is not null)
     {
-        if (registry.TryGet(conflict.ProducerId, out var busy))
+        // The busy producer is either a node or this Hub. A Spotify-fed
+        // cast point is sent by the Hub itself, and telling a node to stop
+        // would be aimed at a device that is not sending anything.
+        if (conflict.ProducerId == hubConfig.Id)
+        {
+            await streamer.StopAsync();
+        }
+        else if (registry.TryGet(conflict.ProducerId, out var busy))
         {
             await commands.StopStreamAsync(busy, cancellationToken);
         }
@@ -430,8 +472,8 @@ app.MapPost("/api/castpoints/{id}/play",
 });
 
 app.MapPost("/api/castpoints/{id}/stop",
-    async (string id, CastPointStore store, DeviceRegistry registry,
-           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+    async (string id, CastPointStore store, DeviceRegistry registry, HubConfig hubConfig,
+           RtpStreamer streamer, DeviceCommandClient commands, CancellationToken cancellationToken) =>
 {
     if (!store.TryGet(id, out _))
     {
@@ -439,10 +481,20 @@ app.MapPost("/api/castpoints/{id}/stop",
     }
 
     var playing = store.Playing;
-    if (playing is not null && playing.CastPointId == id
-        && registry.TryGet(playing.ProducerId, out var producer))
+    if (playing is not null && playing.CastPointId == id)
     {
-        await commands.StopStreamAsync(producer, cancellationToken);
+        if (playing.ProducerId == hubConfig.Id)
+        {
+            // A Spotify-fed cast point resumes within a tick, because the
+            // receiver is still playing and the receiver is what drives the
+            // stream (docs/CAST-POINTS.md). Pausing belongs on the phone;
+            // this stops the sending, not the music.
+            await streamer.StopAsync();
+        }
+        else if (registry.TryGet(playing.ProducerId, out var producer))
+        {
+            await commands.StopStreamAsync(producer, cancellationToken);
+        }
     }
     store.MarkStopped(id);
     return Results.Ok(new { status = "stopped" });

@@ -681,3 +681,77 @@ clipping is not recoverable.
   airtime saving and a different decision from this one. Recorded as an
   option, not planned: it is the kind of per-use-case profile that only
   earns its complexity once four consumers are measured.
+
+---
+
+## 11. Spotify Connect is the first provider source, and the Hub resamples
+
+**Status:** implemented 2026-08-02, not yet verified end to end on
+hardware. See `CAST-POINTS.md` for the model and `LIBRESPOT.md` for how it
+is run.
+
+### The decision
+
+A cast point's receiver is one **librespot** process per cast point, named
+after it, owned by the Hub, and **the receiver drives the stream**: audio
+starting to flow is what starts RTP to that cast point's speakers.
+
+Spotify's 44.1 kHz is converted to the profile's 48 kHz **at the Hub**, by
+an exact 147:160 polyphase FIR.
+
+### Why librespot first
+
+Three routes were weighed in `CAST-POINTS.md` — Spotify Connect, AirPlay 2
+and UPnP — and the model is protocol-independent, so the question was only
+which adapter to build against first. Spotify Connect wins on the one
+criterion that matters here: it is the source this house actually plays
+music from. Building a second adapter later is adding an adapter, not
+changing the design.
+
+Being a Cast target was never on the table. Google licenses senders, not
+receivers; certified "Chromecast built-in" speakers run Google's own
+firmware, and the applications that matter require device attestation, so
+reverse-engineered receivers do not work with them. The user asked to keep
+the *experience* — pick a room from a phone — and that survives losing the
+protocol entirely.
+
+### Why the binary is not shipped
+
+Whether a particular reimplementation is licensed for a particular service
+is the operator's decision. The Hub locates and manages a binary they
+supplied. That keeps the licensing question where it belongs without making
+anyone configure anything: install a binary, and the Hub does the rest. A
+Hub without one logs a line and carries on.
+
+### Why the Hub resamples, rather than the node
+
+Two rates in one house means two drift problems instead of one. Doing it at
+the Hub keeps a single clock domain across the whole system, and the CPU it
+costs is about six million multiplies a second — nothing on a PC, and a
+real burden on an ESP32-S3 that also has an I²S deadline to meet.
+
+Doing it *well* was cheap enough not to compromise: the ratio is exact, so
+this is a polyphase FIR rather than an interpolator chasing a drifting
+phase. Measured against an ideal sine the worst error is about -110 dB and
+the response is flat to 20 kHz. The resampler should not be the thing
+anyone can hear, and at that margin it is not.
+
+### Consequences
+
+- The Hub becomes a Producer in ordinary use, not only for diagnostics.
+  This makes the Hub-to-node hop — still unmeasured, and now the path that
+  will carry almost all the audio — the most important gap in
+  `LINK-MEASUREMENTS.md`.
+- The Hub sends one stream at a time, so two cast points cannot play
+  different music at once. One Spotify account already plays to one device
+  at a time, so this only surfaces with two accounts.
+- Stopping a Spotify-fed cast point from the Hub's page stops the sending,
+  not the music: the receiver is still playing, so it resumes within a
+  tick. Pausing belongs on the phone. That is a consequence of the receiver
+  driving the stream, which is the right way round.
+- Volume set on the phone reaches the speakers for free, because librespot
+  applies it before the pipe. That was one of the two things
+  `CAST-POINTS.md` named as needed for parity rather than mere function.
+- A running stream's destination list had to become mutable, so a speaker
+  that reboots mid-song rejoins without the rest of the room skipping —
+  the same shape the firmware producer already carries.

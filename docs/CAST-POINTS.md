@@ -1,6 +1,7 @@
 # Cast points
 
-Status: design, not implemented
+Status: implemented at the Hub, with Spotify Connect as the first
+provider source (`LIBRESPOT.md`). Not yet verified end to end on hardware.
 
 ## The goal, in the user's words
 
@@ -154,18 +155,20 @@ destinations and this has been measured at length
 The Hub already starts and stops streams with an explicit destination
 list. A cast point is a saved destination list with a name on it.
 
-What is missing is the naming and persistence, the advertisement, the
-receiver adapters, and the resampling.
+The naming, the persistence, the advertisement, the first receiver adapter
+and the resampling have since been built. What is still missing is
+synchronised playout, and it is blocked on the DAC.
 
 ## Order of work
 
-1. Cast points at the Hub: create, name, choose consumers, persist, start
-   and stop a stream to one. Testable with the two nodes on the bench and
-   no protocol adapter at all.
-2. A Source interface, with WASAPI loopback as the first implementation —
-   it is already designed in `WINDOWS-AUDIO-CAPTURE.md`.
-3. Receiver orchestration: one instance per cast point, spawned and named
+1. ~~Cast points at the Hub: create, name, choose consumers, persist, start
+   and stop a stream to one.~~ Done.
+2. ~~A Source interface, with WASAPI loopback as the first
+   implementation~~ Done, in `WINDOWS-AUDIO-CAPTURE.md`.
+3. ~~Receiver orchestration: one instance per cast point, spawned and named
    by the Hub, its PCM captured and its idle/playing state driving the
-   stream. This is where the feature actually lands, and it is worth
-   building against one protocol before deciding it is the right one.
+   stream.~~ Done with librespot — `LIBRESPOT.md`. Spotify Connect was
+   chosen first because it is the source this house actually uses; the
+   adapter shape is protocol-independent, so AirPlay is a second adapter
+   rather than a second design.
 4. Synchronised playout, which is blocked on the DAC regardless.

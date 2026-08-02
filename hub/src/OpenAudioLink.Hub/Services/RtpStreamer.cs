@@ -35,12 +35,29 @@ public sealed class RtpStreamer : IAsyncDisposable
     private AudioStreamFormat _format = new();
     private StreamStatus _status = new(false, null, null, [], 0, "L24", 0, 0);
 
+    /// <summary>
+    /// Where the running stream is going. Swapped whole rather than
+    /// mutated, so the send loop can read it without a lock and never sees
+    /// a half-built list — the same shape the firmware producer uses for
+    /// the same reason.
+    /// </summary>
+    private volatile IPEndPoint[] _endpoints = [];
+
     public RtpStreamer(ILogger<RtpStreamer> logger)
     {
         _logger = logger;
     }
 
-    public StreamStatus Status => _status;
+    /// <summary>
+    /// The destination list is read back from <see cref="_endpoints"/>
+    /// rather than stored in the status record. The send loop rewrites the
+    /// status every iteration to publish its counters, so a destination
+    /// change written into the same record would be clobbered by the next
+    /// tick — the stream would go to the right place while reporting the
+    /// wrong one, which is worse than either.
+    /// </summary>
+    public StreamStatus Status =>
+        _status with { Destinations = [.. _endpoints.Select(e => e.Address.ToString())] };
 
     public AudioStreamFormat Format => _format;
 
@@ -70,9 +87,10 @@ public sealed class RtpStreamer : IAsyncDisposable
             _format = format;
             _cancellation = new CancellationTokenSource();
             var addresses = destinations.Select(d => d.ToString()).ToList();
+            _endpoints = [.. destinations.Select(d => new IPEndPoint(d, port))];
             _status = new StreamStatus(
                 true, sourceKind, source.Description, addresses, port, format.RtpmapName, 0, 0);
-            _worker = Task.Run(() => RunAsync(source, destinations, port, format, _cancellation.Token));
+            _worker = Task.Run(() => RunAsync(source, format, _cancellation.Token));
 
             _logger.LogInformation("Streaming {Description} as {Encoding} to {Count} destination(s) {Destinations}:{Port}",
                 source.Description, format.RtpmapName, addresses.Count, string.Join(", ", addresses), port);
@@ -87,6 +105,59 @@ public sealed class RtpStreamer : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Replaces where the running stream is going, without interrupting it.
+    ///
+    /// This is what lets a speaker that rebooted mid-song rejoin: it asks
+    /// the Controller, and the Controller puts it back in the list the
+    /// sender is already walking. Restarting the stream instead would make
+    /// every other speaker in the room skip.
+    /// </summary>
+    /// <returns>False when no stream is running.</returns>
+    public bool SetDestinations(IReadOnlyList<IPAddress> destinations)
+    {
+        if (destinations.Count == 0)
+        {
+            throw new ArgumentException("At least one destination is required.", nameof(destinations));
+        }
+
+        if (!_status.Running)
+        {
+            return false;
+        }
+
+        _endpoints = [.. destinations.Select(d => new IPEndPoint(d, _status.Port))];
+        _logger.LogInformation("Stream now goes to {Destinations}",
+            string.Join(", ", destinations.Select(d => d.ToString())));
+        return true;
+    }
+
+    /// <summary>
+    /// Adds one destination if it is not already there. Idempotent, because
+    /// a node that never left still asks to rejoin and must cost nothing by
+    /// asking.
+    /// </summary>
+    /// <returns>False when no stream is running.</returns>
+    public bool AddDestination(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+
+        if (!_status.Running)
+        {
+            return false;
+        }
+
+        var current = _endpoints;
+        if (current.Any(e => e.Address.Equals(address)))
+        {
+            return true;
+        }
+
+        _endpoints = [.. current, new IPEndPoint(address, _status.Port)];
+        _logger.LogInformation("{Address} joined the running stream", address);
+        return true;
     }
 
     public async Task StopAsync()
@@ -129,15 +200,15 @@ public sealed class RtpStreamer : IAsyncDisposable
     }
 
     private async Task RunAsync(
-        IAudioSource source, IReadOnlyList<IPAddress> destinations, int port, AudioStreamFormat format,
-        CancellationToken cancellationToken)
+        IAudioSource source, AudioStreamFormat format, CancellationToken cancellationToken)
     {
         using var owned = source;
         using var socket = new UdpClient(AddressFamily.InterNetwork);
-        if (destinations.Any(IsMulticast))
-        {
-            socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
-        }
+        // Set unconditionally: the destination list can change while the
+        // stream runs, so whether a multicast address is in it is not
+        // something this line can know once and for all. It costs nothing
+        // on a socket that only ever sends unicast.
+        socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
 
         if (OperatingSystem.IsWindows())
         {
@@ -157,7 +228,6 @@ public sealed class RtpStreamer : IAsyncDisposable
             }
         }
 
-        var endpoints = destinations.Select(d => new IPEndPoint(d, port)).ToArray();
         var packetizer = new RtpAudioPacketizer(format);
         var samples = new float[format.SamplesPerPacket];
         var packet = new byte[format.PacketBytes];
@@ -188,7 +258,12 @@ public sealed class RtpStreamer : IAsyncDisposable
                     // Every destination gets the identical packet — same
                     // SSRC, sequence and timestamp — so receivers applying the
                     // same playout delay stay aligned with each other.
-                    foreach (var endpoint in endpoints)
+                    //
+                    // Read once per packet rather than once per stream: a
+                    // speaker that rejoins mid-song is added to this array,
+                    // and every destination of one packet must be the same
+                    // generation of the list.
+                    foreach (var endpoint in _endpoints)
                     {
                         try
                         {
@@ -228,9 +303,6 @@ public sealed class RtpStreamer : IAsyncDisposable
             _status = _status with { Running = false, Error = ex.Message };
         }
     }
-
-    private static bool IsMulticast(IPAddress address) =>
-        address.GetAddressBytes()[0] is >= 224 and <= 239;
 
     public async ValueTask DisposeAsync()
     {

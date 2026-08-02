@@ -3,6 +3,15 @@ using OpenAudioLink.Core.Devices;
 
 namespace OpenAudioLink.Hub.Configuration;
 
+/// <summary>
+/// Where the Hub keeps what must survive a restart: its identity, the cast
+/// points, uploaded firmware, and each receiver's saved credentials.
+///
+/// Resolved once at startup and handed round, rather than each service
+/// working it out again from configuration and getting a different answer.
+/// </summary>
+public sealed record HubPaths(string DataDirectory);
+
 /// <summary>Persisted Hub identity and settings.</summary>
 public sealed record HubConfig
 {
