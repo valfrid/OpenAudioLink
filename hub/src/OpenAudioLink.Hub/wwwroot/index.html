@@ -743,28 +743,36 @@
       }
       if (!ids.size) return;
 
-      const rows = [];
-      for (const id of ids) {
+      // Every node read at once, not one after another. Read in sequence
+      // during a live stream, the second node's counters are a few hundred
+      // milliseconds ahead of the first — which showed a consumer having
+      // received more packets than the producer had sent.
+      const readings = await Promise.all([...ids].map(async (id) => {
         const name = (document.getElementById('link-producer').value === id
           ? document.getElementById('link-producer').selectedOptions[0]?.textContent
           : [...document.getElementById('link-consumers').options]
               .find(o => o.value === id)?.textContent) ?? id;
-
-        // A node the Hub cannot read gets a row saying so. Dropping it
-        // silently leaves a table that looks complete and is not: a run
-        // measured 47% loss with no producer row at all, and the missing
-        // row was the more interesting half of the result.
-        let stream;
         try {
           const response = await fetch(`/api/devices/${encodeURIComponent(id)}/stream`,
             { cache: 'no-store' });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          stream = await response.json();
+          return { id, name, stream: await response.json() };
         } catch (err) {
+          return { id, name, error: err.message ?? 'unreachable' };
+        }
+      }));
+
+      const rows = [];
+      for (const { name, stream, error } of readings) {
+        // A node the Hub cannot read gets a row saying so. Dropping it
+        // silently leaves a table that looks complete and is not: a run
+        // measured 47% loss with no producer row at all, and the missing
+        // row was the more interesting half of the result.
+        if (error) {
           rows.push(`<tr><td>${esc(name)}</td><td>—</td>` +
             `<td colspan="6"><span class="rssi poor">no answer</span> ` +
             `<span class="muted">— the Hub could not read this node's ` +
-            `counters (${esc(err.message ?? 'unreachable')}). Its numbers ` +
+            `counters (${esc(error)}). Its numbers ` +
             `are missing, not zero.</span></td></tr>`);
           continue;
         }

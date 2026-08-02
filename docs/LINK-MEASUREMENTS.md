@@ -34,7 +34,7 @@ prints the access points each run crossed; a run that does not say
 ## Results
 
 Hardware: two Seeed XIAO ESP32-S3, ~20 cm apart. Network: ASUS ZenWiFi,
-two mesh points, 2.4 GHz. Firmware 0.6.x.
+two mesh points, 2.4 GHz. Firmware 0.6.x and 0.7.0.
 
 | # | Channel | Width | Path | Consumer loss | Send errors | Air loss | Jitter |
 |---|---|---|---|---|---|---|---|
@@ -49,13 +49,21 @@ two mesh points, 2.4 GHz. Firmware 0.6.x.
 | 9 | 7 | 20 MHz | 2 hops | 29.0% | 1,499 | 0% | 7.60 ms |
 | 10 | 7 | 20 MHz | 2 hops | 46.7% | unreadable | — | 11.10 ms |
 | 11 | 7 | 20 MHz | **2 hops** | 0.045% | **0** | **0.045%** | **1.04 ms** |
+| 12 | 7 | 20 MHz | 2 hops | **0%** | **0** | **0%** | 1.23 ms |
+| 13 | 7 | 20 MHz | 2 hops | 3.46% | 19 | **0%** | 0.75 ms |
+| 14 | 7 | 20 MHz | 2 hops | **0%** | **0** | **0%** | 1.44 ms |
 
 Runs 1–3 predate both the send-error counter and the access-point line, so
 their loss figures conflate three causes and their topology is unrecorded.
 They are kept only to show that power save mattered (run 1 → run 2 changed
 nothing but `esp_wifi_set_ps(WIFI_PS_NONE)`).
 
-Runs 8–10 are a false trail, kept because of what they cost. See below.
+Runs 8-10 are a false trail, kept because of what they cost. See below.
+
+Runs 12-14 are the A/B that verified firmware 0.7.0 against the 0.6.6
+baseline: 12 and 14 are the two builds under the same conditions, both
+losing nothing at all over roughly 25,000 packets each. Run 13 is 0.7.0
+started moments after its own OTA reboot; see below.
 
 ## What the series established
 
@@ -109,6 +117,19 @@ baseline before changing code. And never ship two changes in one image:
 run 9 altered both the retry and `CONFIG_FREERTOS_HZ`, so even its failure
 taught nothing.
 
+**A node needs a minute after booting before it can be measured.** Run 13
+refused 19 packets with `ENOMEM`, and the consumer lost exactly 19 in a
+single contiguous gap — one burst at the start of a stream begun moments
+after an OTA reboot. Nothing was lost over the air. Rebooting and waiting
+gave run 14: 26,408 packets, nothing refused, nothing lost.
+
+This was a rule in the method below before it was a measurement. It is
+also the first time the refusal diagnostics paid for themselves: `ENOMEM`,
+"19 retries, none helped", and a single 19-packet gap say *startup
+transient, sender-side, retry cannot fix it* at a glance, where three
+firmware revisions were once spent inferring less than that from a bare
+count.
+
 **Nothing has ever been corrupted.** Zero payload errors across every run,
 with the pattern source recomputing all 480 samples of every packet. Zero
 duplicates and zero reordering throughout. The failure mode of this network
@@ -135,3 +156,6 @@ and a jitter buffer, not integrity checking.
 7. If a run disagrees with the established baseline, restart the access
    points, the nodes and the Hub, and re-run the baseline before believing
    anything. Runs 8-10 above are what happens otherwise.
+8. The second A is only needed when B disagrees with the first. Runs 12 and
+   14 both lost nothing at all, and a third run cannot explain a difference
+   that is not there.
