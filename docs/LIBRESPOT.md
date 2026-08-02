@@ -34,6 +34,43 @@ The Hub does not ship the binary. Whether a particular reimplementation is
 licensed for a particular service is the operator's decision, so the Hub
 manages a binary you supplied rather than one it chose for you.
 
+### Getting a Windows binary
+
+**There is no official one.** The librespot project declines to publish
+precompiled binaries — the request is
+[issue #727](https://github.com/librespot-org/librespot/issues/727),
+closed `wontfix` — and the release assets are source archives only. Build
+it yourself:
+
+1. Install [rustup](https://rustup.rs). On the MSVC target it will ask for
+   the Visual Studio Build Tools ("Desktop development with C++"); that
+   linker is the usual thing to trip over. `rustup toolchain install
+   stable-x86_64-pc-windows-gnu` avoids it if you would rather not install
+   Visual Studio.
+2. ```
+   cargo install librespot --locked --no-default-features ^
+       --features "native-tls,with-libmdns"
+   ```
+3. Copy `%USERPROFILE%\.cargo\bin\librespot.exe` next to the Hub.
+
+`--no-default-features` drops `rodio-backend`, which exists to talk to a
+sound card this Hub does not want it talking to. **`with-libmdns` must
+stay**: it is what advertises each receiver on the network, and without it
+nothing appears in the phone's picker. `native-tls` on Windows is
+SChannel, so no OpenSSL. The pipe backend is not feature-gated and is
+always present.
+
+Checked against **librespot 0.8.0** (crates.io, November 2025): every
+argument the Hub passes exists under those exact names, and `--format`
+accepts `F32`.
+
+Other projects do ship Windows binaries — `go-librespot` and various forks
+— but they are separate implementations with their own command lines, and
+the Hub drives librespot's. If you use one, expect to adjust the
+arguments.
+
+### Telling the Hub where it is
+
 Either put `librespot` (or `librespot.exe`) beside the Hub executable, or
 put it on `PATH`, or name it in `appsettings.json`:
 
