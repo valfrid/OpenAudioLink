@@ -24,6 +24,7 @@
 
 #include "oal_config.h"
 #include "oal_control.h"
+#include "oal_join.h"
 #include "oal_discovery.h"
 #include "oal_stream.h"
 #include "oal_wifi.h"
@@ -178,5 +179,11 @@ void app_main(void)
      * send, which it cannot know by itself. */
     if ((roles & OAL_ROLE_CONSUMER) != 0) {
         ESP_ERROR_CHECK(oal_stream_consumer_start(OAL_RTP_DEFAULT_PORT));
+
+        /* Listening is not the same as being known about. A Consumer finds
+         * the Controller and says it is ready, which is what gets it added
+         * to a stream — by asking, rather than by having been present when
+         * the music started (decision 9). */
+        ESP_ERROR_CHECK(oal_join_start(discovery.id, OAL_RTP_DEFAULT_PORT));
     }
 }

@@ -128,3 +128,16 @@ announce datagram's source address.
   `hub`) replaced by `roles`, a list drawn from the architecture's own
   vocabulary. Two names for one concept was the problem; a device holding
   several roles at once was the thing the single field could not express.
+
+## The `claimed` field
+
+An announcement may carry `"claimed": true`. It means the sender holds the
+Controller role because nobody else did, rather than because it was
+configured to (`docs/DECISIONS.md` decision 9).
+
+Precedence uses it: a configured Controller outranks a claimer, and among
+equals the lower `id` wins. Every node computes the same answer alone, from
+announcements already on the wire — there are no votes and no terms.
+
+The field is absent rather than false when not claiming, so a node that
+does not understand it sees exactly what it saw before.

@@ -42,6 +42,7 @@ configuration — never audio.
 | POST   | `/stream/destinations` | Add or remove destinations while streaming |
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 | GET    | `/peers`          | Other nodes this one has heard announce      |
+| POST   | `/join`           | A Consumer telling the Controller it is ready |
 
 ### GET /status
 
@@ -144,6 +145,46 @@ A late joiner starts wherever the stream has reached. Nothing about the
 running stream changes — not the sequence number, the timestamp or the
 SSRC — because every Consumer already listening is still playing it, and
 the receiver's probation handles arriving mid-stream.
+
+### POST /join
+
+A Consumer that has finished booting asks the Controller what to do. The
+Consumer initiates and the Controller decides (`docs/DECISIONS.md`
+decision 9).
+
+```json
+{ "id": "mac-1cdbd4447900", "port": 41100 }
+```
+
+The answer is one of:
+
+```json
+{ "status": "playing" }
+{ "status": "standby" }
+{ "status": "notController" }
+```
+
+The Consumer's behaviour never depends on which kind of Controller
+answered. A turntable that also produces adds the caller to its
+destinations and answers `playing` if a stream is running; a Hub, which
+knows about rooms and knows nobody pressed play, answers `standby`. Same
+request, same code path, different answer.
+
+`notController` comes with 409 and means the election has moved. The
+caller runs the same election and re-targets on its next round, so this is
+a moment during a handover rather than an error.
+
+**Where to send is taken from the connection**, not from the request, so a
+node cannot be talked into streaming somewhere else by asking. When the
+socket is not plain IPv4 the `id` is looked up in the peer table instead —
+where the address also came from an announcement's source rather than from
+anything a caller wrote.
+
+**Asking is idempotent and repeated.** A Consumer asks every 5 s until
+answered and every 30 s after that. Repeating is the whole recovery
+mechanism: it is what puts a speaker back in the stream after the
+Controller restarts and loses its destination list, and adding a
+destination already present changes nothing.
 
 ### GET /peers
 
@@ -255,4 +296,5 @@ they were taken so nothing is shown as fresher than it is.
 
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
   Later additions within 0.1: `/stream*` measurement endpoints, `/peers`,
-  `/stream/destinations`, the `channel` field on `/status` and `/config`.
+  `/stream/destinations`, `/join`, the `channel` field on `/status` and
+  `/config`, and `claimed` on announcements.

@@ -42,6 +42,14 @@ typedef struct {
     uint32_t roles;              /* oal_roles_t bitmask */
     char address[OAL_PEER_ADDRESS_MAX]; /* dotted quad */
     uint16_t control_port;
+
+    /**
+     * True when this peer took the Controller role because nobody else had
+     * it, rather than being configured to hold it (decision 9). Carried in
+     * the announce so precedence can be computed without asking anyone.
+     */
+    bool claimed;
+
     int64_t last_seen_us;
 } oal_peer_t;
 

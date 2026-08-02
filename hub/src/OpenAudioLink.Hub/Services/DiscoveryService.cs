@@ -212,5 +212,9 @@ public sealed class DiscoveryService : BackgroundService
         Roles = DeviceRole.HubRoles,
         HardwareProfile = "windows-hub",
         FirmwareVersion = HubInfo.Version,
+        // Nodes join by asking the Controller, so the Controller has to say
+        // where it can be reached. Without this a node assumes the device
+        // control port and knocks on a door the Hub does not have.
+        ControlPort = ProtocolSuite.DefaultHubPort,
     };
 }

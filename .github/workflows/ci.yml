@@ -86,6 +86,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o peer-tests oal_peers.c test/test_peers.c &&
           ./peer-tests
+      - name: Controller election
+        working-directory: firmware/components/oal_discovery
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o election-tests oal_election.c test/test_election.c &&
+          ./election-tests
 
   firmware:
     name: Firmware testnode (${{ matrix.target }})

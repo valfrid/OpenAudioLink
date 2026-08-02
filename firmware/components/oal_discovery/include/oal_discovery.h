@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include "oal_config.h"
+#include "oal_election.h"
 #include "oal_peers.h"
 
 #ifdef __cplusplus
@@ -51,6 +52,26 @@ size_t oal_discovery_peers(oal_peer_t *out, size_t max);
 
 /** How many peers are currently live. Cheaper than copying the table. */
 size_t oal_discovery_peer_count(void);
+
+/*
+ * Who holds the Controller role (decision 9). Recomputed every announce
+ * interval from the peer table; see oal_election.h for the precedence.
+ *
+ * A node holding Producer that finds nobody claims the role and says so in
+ * its announcements, which is how a turntable at a party ends up running
+ * the party without anybody configuring it.
+ */
+typedef enum {
+    OAL_CONTROLLER_UNKNOWN = 0, /* nobody holds it, or we are still settling */
+    OAL_CONTROLLER_SELF,
+    OAL_CONTROLLER_PEER,
+} oal_controller_who_t;
+
+/**
+ * Reports who holds Controller, copying the holder into @p out when it is a
+ * peer. @p out may be NULL.
+ */
+oal_controller_who_t oal_discovery_controller(oal_peer_t *out);
 
 #ifdef __cplusplus
 }

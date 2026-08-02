@@ -17,20 +17,35 @@ static oal_discovery_config_t s_config;
 static char s_announce[256];
 static int s_announce_len;
 
+/*
+ * Controller state (decision 9). Held under the peer table's lock because
+ * it is derived from the table and read by the control server.
+ */
+static oal_controller_who_t s_controller;
+static oal_peer_t s_controller_peer;
+static bool s_claimed;
+
+/*
+ * A claimed role is announced so other nodes can rank it below a Hub. The
+ * field is absent rather than false when not claiming, so an older node
+ * reading this announcement sees exactly what it saw before.
+ */
 static int build_announce(void)
 {
     char roles[OAL_ROLES_STR_MAX];
-    if (oal_roles_to_json(s_config.roles, roles, sizeof(roles)) < 0) {
+    oal_roles_t announced = s_config.roles | (s_claimed ? OAL_ROLE_CONTROLLER : 0u);
+    if (oal_roles_to_json(announced, roles, sizeof(roles)) < 0) {
         return -1;
     }
 
     return snprintf(s_announce, sizeof(s_announce),
                     "{\"oal\":\"" OAL_PROTOCOL_VERSION "\",\"type\":\"announce\","
                     "\"id\":\"%s\",\"name\":\"%s\",\"roles\":%s,"
-                    "\"hw\":\"%s\",\"fw\":\"%s\",\"ctrlPort\":%d}",
+                    "\"hw\":\"%s\",\"fw\":\"%s\",\"ctrlPort\":%d%s}",
                     s_config.id, s_config.name, roles,
                     s_config.hardware_profile, s_config.firmware_version,
-                    OAL_DEVICE_CONTROL_PORT);
+                    OAL_DEVICE_CONTROL_PORT,
+                    s_claimed ? ",\"claimed\":true" : "");
 }
 
 /*
@@ -83,6 +98,7 @@ static void remember_peer(const cJSON *root, const struct sockaddr_in *from)
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(root, "ctrlPort");
     peer.control_port = cJSON_IsNumber(port)
         ? (uint16_t)port->valueint : OAL_DEVICE_CONTROL_PORT;
+    peer.claimed = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "claimed"));
     inet_ntoa_r(from->sin_addr, peer.address, (int)sizeof(peer.address));
     peer.last_seen_us = esp_timer_get_time();
 
@@ -104,6 +120,95 @@ size_t oal_discovery_peers(oal_peer_t *out, size_t max)
     size_t written = oal_peer_table_live(&s_peers, esp_timer_get_time(), out, max);
     xSemaphoreGive(s_peers_lock);
     return written;
+}
+
+oal_controller_who_t oal_discovery_controller(oal_peer_t *out)
+{
+    if (s_peers_lock == NULL
+        || xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return OAL_CONTROLLER_UNKNOWN;
+    }
+    oal_controller_who_t who = s_controller;
+    if (out != NULL && who == OAL_CONTROLLER_PEER) {
+        *out = s_controller_peer;
+    }
+    xSemaphoreGive(s_peers_lock);
+    return who;
+}
+
+/*
+ * Recomputed from the live peers every announce interval. Cheap — at most
+ * sixteen string compares — and doing it repeatedly rather than on an event
+ * means a node that misses an announcement corrects itself on the next one
+ * instead of staying wrong.
+ */
+static void run_election(void)
+{
+    static oal_peer_t live[OAL_MAX_PEERS];
+    static oal_election_peer_t candidates[OAL_MAX_PEERS];
+
+    if (xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+
+    size_t count = oal_peer_table_live(&s_peers, esp_timer_get_time(), live, OAL_MAX_PEERS);
+    for (size_t i = 0; i < count; i++) {
+        candidates[i].id = live[i].id;
+        candidates[i].roles = live[i].roles;
+        candidates[i].claimed = live[i].claimed;
+    }
+
+    size_t winner = 0;
+    oal_election_result_t result =
+        oal_election_run(s_config.id, s_config.roles, candidates, count, &winner);
+
+    oal_controller_who_t was = s_controller;
+    bool was_claimed = s_claimed;
+
+    switch (result) {
+    case OAL_ELECTION_SELF:
+        s_controller = OAL_CONTROLLER_SELF;
+        /* Claimed only when the role was not configured. The Hub holds it
+         * by configuration and must never announce itself as a claimer. */
+        s_claimed = (s_config.roles & OAL_ROLE_CONTROLLER) == 0;
+        break;
+    case OAL_ELECTION_PEER:
+        s_controller = OAL_CONTROLLER_PEER;
+        s_controller_peer = live[winner];
+        s_claimed = false;
+        break;
+    default:
+        s_controller = OAL_CONTROLLER_UNKNOWN;
+        s_claimed = false;
+        break;
+    }
+
+    bool changed = (was != s_controller) || (was_claimed != s_claimed);
+    xSemaphoreGive(s_peers_lock);
+
+    if (!changed) {
+        return;
+    }
+
+    /* The announcement carries the claim, so it has to be rebuilt when the
+     * claim moves — otherwise a node that stood down keeps telling the
+     * network it is in charge. */
+    int length = build_announce();
+    if (length > 0 && length < (int)sizeof(s_announce)) {
+        s_announce_len = length;
+    }
+
+    switch (s_controller) {
+    case OAL_CONTROLLER_SELF:
+        ESP_LOGI(TAG, "controller: this node%s", s_claimed ? " (claimed)" : "");
+        break;
+    case OAL_CONTROLLER_PEER:
+        ESP_LOGI(TAG, "controller: %s at %s", s_controller_peer.name, s_controller_peer.address);
+        break;
+    default:
+        ESP_LOGI(TAG, "controller: none");
+        break;
+    }
 }
 
 size_t oal_discovery_peer_count(void)
@@ -195,9 +300,19 @@ static void discovery_task(void *arg)
     char rx[512];
     TickType_t next_announce = xTaskGetTickCount();
 
+    /* Three announce intervals before the first election. Claiming the
+     * moment the network comes up would have every node decide alone
+     * before it has heard anybody, and a Hub that was already running
+     * would be discovered a moment too late. */
+    const TickType_t settle_until =
+        xTaskGetTickCount() + pdMS_TO_TICKS(OAL_ANNOUNCE_INTERVAL_MS * 3);
+
     for (;;) {
         TickType_t now = xTaskGetTickCount();
         if ((int32_t)(now - next_announce) >= 0) {
+            if ((int32_t)(now - settle_until) >= 0) {
+                run_election();
+            }
             if (sendto(sock, s_announce, s_announce_len, 0,
                        (struct sockaddr *)&group_addr, sizeof(group_addr)) < 0) {
                 ESP_LOGW(TAG, "announce failed: errno %d", errno);

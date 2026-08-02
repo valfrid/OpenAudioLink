@@ -269,6 +269,48 @@ app.MapGet("/api/devices/{id}/stream",
         : Results.Text(stream.RootElement.GetRawText(), "application/json");
 });
 
+// --- Joining (docs/DECISIONS.md decision 9) ---------------------------
+// A Consumer that has finished booting asks the Controller what to do. The
+// Hub is a Controller that knows about rooms, so it usually answers "stand
+// by" — the difference between a Hub and a turntable is entirely in the
+// answer, never in the question.
+
+app.MapPost("/join",
+    async (JoinRequest request, CastPointStore castPoints,
+           DeviceRegistry registry, DeviceCommandClient commands,
+           ILoggerFactory loggers, CancellationToken cancellationToken) =>
+{
+    var logger = loggers.CreateLogger("Join");
+    var id = request.Id ?? "";
+    if (!registry.TryGet(id, out var device))
+    {
+        // A node the Hub has not heard announce. It will announce shortly
+        // and ask again, so this is a moment rather than a failure.
+        logger.LogDebug("Join from unknown device {Id}", id);
+        return Results.Ok(new { status = "standby", reason = "not yet discovered" });
+    }
+
+    var playing = castPoints.Playing;
+    if (playing is null
+        || !castPoints.TryGet(playing.CastPointId, out var point)
+        || !point.Destinations.Contains(device.Id))
+    {
+        return Results.Ok(new { status = "standby" });
+    }
+
+    // The speaker belongs to what is playing, so put it back in the stream.
+    // This is what heals a speaker that rebooted mid-party: it asks, and the
+    // producer is told about it again. Adding is idempotent, so a node that
+    // never left costs nothing by asking.
+    if (registry.TryGet(playing.ProducerId, out var producer))
+    {
+        await commands.AddDestinationAsync(producer, device.Address, cancellationToken);
+        logger.LogInformation(
+            "{Device} rejoined {CastPoint}", device.Name, point.Name);
+    }
+    return Results.Ok(new { status = "playing", castPoint = point.Name });
+});
+
 // --- Cast points (docs/CAST-POINTS.md) --------------------------------
 // A named place to send audio. A zone and a group are the same object:
 // "Kitchen" has one consumer, "House" has twelve, and the Producer
@@ -599,6 +641,8 @@ internal sealed record RolesRequest(IReadOnlyList<string>? Roles);
 
 internal sealed record NodeStreamRequest(
     IReadOnlyList<string>? Destinations, int? Port, string? Source, int? ToneHz);
+
+internal sealed record JoinRequest(string? Id, int? Port);
 
 internal sealed record ChannelRequest(string? Channel);
 

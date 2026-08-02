@@ -8,6 +8,7 @@
 #include "oal_discovery.h"
 #include "oal_stream.h"
 #include "esp_http_server.h"
+#include "lwip/sockets.h"
 #include "esp_https_ota.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -425,6 +426,101 @@ static esp_err_t destinations_handler(httpd_req_t *req)
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+/* ---------- POST /join ---------- */
+
+/*
+ * A Consumer saying it is ready (decision 9). The Consumer initiates and
+ * this decides.
+ *
+ * What is answered depends on what this node is. A Controller that also
+ * produces adds the caller to its destinations — and because the two roles
+ * are on the same node, that is a function call rather than a request over
+ * the air, which is the whole reason the party system has no control plane
+ * to fail.
+ */
+/*
+ * Where to send, for a node that asked to be sent to.
+ *
+ * The connection's own address first: it cannot be forged by asking, and
+ * it is right even for a node whose announcement has not arrived yet. When
+ * the socket is not plain IPv4 — dual-stack builds hand back a mapped
+ * address — fall back to the id in the request and look it up in the peer
+ * table, where the address came from the announcement's source rather than
+ * from anything the caller wrote.
+ */
+static void join_address(httpd_req_t *req, const char *body, char *out, size_t out_size)
+{
+    out[0] = '\0';
+
+    struct sockaddr_storage peer;
+    socklen_t peer_len = sizeof(peer);
+    if (getpeername(httpd_req_to_sockfd(req), (struct sockaddr *)&peer, &peer_len) == 0
+            && peer.ss_family == AF_INET) {
+        struct sockaddr_in *v4 = (struct sockaddr_in *)&peer;
+        inet_ntoa_r(v4->sin_addr, out, (int)out_size);
+        return;
+    }
+
+    cJSON *root = cJSON_ParseWithLength(body, strlen(body));
+    const cJSON *id = root != NULL
+        ? cJSON_GetObjectItemCaseSensitive(root, "id") : NULL;
+    if (cJSON_IsString(id) && id->valuestring != NULL) {
+        static oal_peer_t peers[OAL_MAX_PEERS];
+        size_t count = oal_discovery_peers(peers, OAL_MAX_PEERS);
+        for (size_t i = 0; i < count; i++) {
+            if (strcmp(peers[i].id, id->valuestring) == 0) {
+                snprintf(out, out_size, "%s", peers[i].address);
+                break;
+            }
+        }
+    }
+    cJSON_Delete(root);
+}
+
+static esp_err_t join_handler(httpd_req_t *req)
+{
+    char body[128];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    if (oal_discovery_controller(NULL) != OAL_CONTROLLER_SELF) {
+        /* Not ours to answer. The caller runs the same election we do and
+         * will re-target on its next round, so this is a moment during a
+         * handover rather than an error to act on. */
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "{\"status\":\"notController\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    char address[OAL_ADDRESS_MAX] = { 0 };
+    join_address(req, body, address, sizeof(address));
+
+    const char *status = "standby";
+    if (address[0] != '\0' && (s_config.roles & OAL_ROLE_PRODUCER) != 0) {
+        oal_destinations_result_t added = oal_stream_producer_add_destination(address);
+        if (added == OAL_DEST_ADDED) {
+            ESP_LOGI(TAG, "%s joined; now streaming to it too", address);
+        }
+        if (added == OAL_DEST_ADDED || added == OAL_DEST_ALREADY_PRESENT) {
+            oal_stream_producer_state_t producer;
+            oal_stream_producer_get(&producer);
+            /* Honest about what is happening rather than about what was
+             * asked for: a destination on a Producer with nothing to send
+             * is standing by, not playing. */
+            status = producer.running ? "playing" : "standby";
+        }
+    }
+
+    char response[64];
+    int n = snprintf(response, sizeof(response), "{\"status\":\"%s\"}", status);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, n);
+}
+
 /* ---------- GET /peers ---------- */
 
 /*
@@ -561,7 +657,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
-    server_config.max_uri_handlers = 12; /* nine registered; the default of eight leaves no room */
+    server_config.max_uri_handlers = 12; /* ten registered; the default of eight leaves no room */
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &server_config);
@@ -579,6 +675,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t stream_stop =
         { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
     httpd_uri_t peers = { .uri = "/peers", .method = HTTP_GET, .handler = peers_handler };
+    httpd_uri_t join = { .uri = "/join", .method = HTTP_POST, .handler = join_handler };
     httpd_uri_t destinations =
         { .uri = "/stream/destinations", .method = HTTP_POST, .handler = destinations_handler };
     httpd_register_uri_handler(server, &status);
@@ -589,6 +686,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_register_uri_handler(server, &stream_start);
     httpd_register_uri_handler(server, &stream_stop);
     httpd_register_uri_handler(server, &peers);
+    httpd_register_uri_handler(server, &join);
     httpd_register_uri_handler(server, &destinations);
 
     ESP_LOGI(TAG, "control server on port %d", CONTROL_PORT);

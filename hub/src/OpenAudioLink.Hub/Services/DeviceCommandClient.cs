@@ -42,6 +42,18 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Adds a destination to a running stream without interrupting it, so a
+    /// speaker that asks to join hears the record everyone else is already
+    /// listening to rather than restarting it for them.
+    /// </summary>
+    public async Task<bool> AddDestinationAsync(
+        DeviceRecord producer, string address, CancellationToken cancellationToken)
+    {
+        var body = JsonSerializer.Serialize(new { add = new[] { address } });
+        return await PostAsync(producer, "/stream/destinations", body, cancellationToken);
+    }
+
+    /// <summary>
     /// Sets which of the stream's two channels the device plays (decision
     /// 10). Sent on its own rather than alongside roles, so changing a
     /// speaker from stereo to mono cannot disturb what it is.
