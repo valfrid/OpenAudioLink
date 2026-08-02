@@ -1,6 +1,7 @@
 using System.Net;
 using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.Devices;
+using OpenAudioLink.Core.Net;
 using OpenAudioLink.Core.Protocol;
 using OpenAudioLink.Hub.Configuration;
 
@@ -182,6 +183,7 @@ public sealed class LibrespotService : BackgroundService
     private void Reconcile(string executable)
     {
         var points = _castPoints.Snapshot();
+        var zeroconf = ChooseZeroconfInterface();
 
         lock (_instances)
         {
@@ -197,11 +199,24 @@ public sealed class LibrespotService : BackgroundService
             {
                 if (_instances.TryGetValue(point.Id, out var existing))
                 {
-                    if (existing.Name == point.Name)
+                    if (existing.Name == point.Name && existing.ZeroconfInterface == zeroconf)
                     {
                         continue;
                     }
-                    _logger.LogInformation("{Old} was renamed to {New}", existing.Name, point.Name);
+
+                    if (existing.Name != point.Name)
+                    {
+                        _logger.LogInformation("{Old} was renamed to {New}", existing.Name, point.Name);
+                    }
+                    else
+                    {
+                        // Usually the first speaker being discovered, which
+                        // is what tells the Hub which of its addresses is
+                        // the one on the speakers' network.
+                        _logger.LogInformation(
+                            "{Name} will re-announce on {Address}", point.Name, zeroconf ?? "all interfaces");
+                    }
+
                     existing.Dispose();
                     _instances.Remove(point.Id);
                     _playingSince.Remove(point.Id);
@@ -216,10 +231,57 @@ public sealed class LibrespotService : BackgroundService
                 Directory.CreateDirectory(cache);
 
                 _instances[point.Id] = new LibrespotInstance(
-                    point.Id, point.Name, executable, cache, _options, StreamFormat,
+                    point.Id, point.Name, executable, cache, zeroconf, _options, StreamFormat,
                     _loggers.CreateLogger($"Librespot.{point.Id}"));
             }
         }
+    }
+
+    /// <summary>
+    /// Which of this host's addresses the receivers should announce on.
+    ///
+    /// Left to itself, librespot binds every interface and lets the
+    /// operating system decide where multicast goes — by route metric. That
+    /// is wrong on any machine with a VPN, and measurably so: on the machine
+    /// this was found on, Tailscale held metric 5 against Wi-Fi's 50, so
+    /// every announcement went out over the overlay to nobody while the
+    /// phone sat on the LAN seeing nothing.
+    ///
+    /// The Hub can answer better than the routing table can, because it
+    /// knows something the routing table does not: where the speakers are.
+    /// An address sharing a subnet with a speaker is reachable from that
+    /// subnet by definition, and the phone is on it too. This is
+    /// <see cref="LocalAddressSelector"/>'s reasoning, applied to
+    /// announcements instead of firmware downloads.
+    /// </summary>
+    /// <returns>An address, or null to leave the choice to librespot.</returns>
+    private string? ChooseZeroconfInterface()
+    {
+        if (!string.IsNullOrWhiteSpace(_options.ZeroconfInterface))
+        {
+            return _options.ZeroconfInterface.Trim();
+        }
+
+        var locals = LocalAddressSelector.EnumerateLocalAddresses().ToList();
+        foreach (var device in _registry.Snapshot())
+        {
+            if (!device.Online || !IPAddress.TryParse(device.Address, out var target))
+            {
+                continue;
+            }
+
+            var local = LocalAddressSelector.SelectSameSubnet(target, locals);
+            if (local is not null)
+            {
+                return local.ToString();
+            }
+        }
+
+        // No speaker has been seen yet, so there is nothing to match
+        // against. librespot's own default is right often enough, and the
+        // moment a speaker appears this is recomputed and the receivers
+        // restart on the correct address.
+        return null;
     }
 
     private async Task DriveStreamAsync(CancellationToken cancellationToken)

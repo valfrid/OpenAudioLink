@@ -60,10 +60,11 @@ public sealed class LibrespotInstance : IDisposable
 
     public LibrespotInstance(
         string castPointId, string name, string executable, string cacheDirectory,
-        LibrespotOptions options, AudioStreamFormat format, ILogger logger)
+        string? zeroconfInterface, LibrespotOptions options, AudioStreamFormat format, ILogger logger)
     {
         CastPointId = castPointId;
         Name = name;
+        ZeroconfInterface = zeroconfInterface;
         _executable = executable;
         _cacheDirectory = cacheDirectory;
         _options = options;
@@ -88,6 +89,13 @@ public sealed class LibrespotInstance : IDisposable
 
     /// <summary>What the phone shows. Changing it means a new process.</summary>
     public string Name { get; }
+
+    /// <summary>
+    /// The address this instance announces on, or null for librespot's
+    /// default of all interfaces. Like the name, it is fixed at spawn, so
+    /// changing it means a new process.
+    /// </summary>
+    public string? ZeroconfInterface { get; }
 
     /// <summary>True while the process is up, whether or not it is playing.</summary>
     public bool Running => _processRunning;
@@ -331,6 +339,15 @@ public sealed class LibrespotInstance : IDisposable
         // The audio cache is the part not worth keeping: it is large, it is
         // per cast point, and the audio is going straight out to the air.
         yield return "--disable-audio-cache";
+
+        // Without this librespot binds every interface and lets the
+        // operating system choose where multicast goes, which on a machine
+        // with a VPN is the wrong interface — see LibrespotOptions.
+        if (!string.IsNullOrWhiteSpace(ZeroconfInterface))
+        {
+            yield return "--zeroconf-interface";
+            yield return ZeroconfInterface;
+        }
 
         if (!string.IsNullOrWhiteSpace(_options.ExtraArguments))
         {

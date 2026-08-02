@@ -108,6 +108,7 @@ the phone's picker, which is the thing this whole design exists to avoid.
 librespot --name "<cast point name>" --backend pipe --format F32
           --device-type speaker --bitrate 320 --initial-volume 50
           --cache <data>/librespot/<cast point id> --disable-audio-cache
+          --zeroconf-interface <this host's address on the speakers' subnet>
 ```
 
 **`--backend pipe`** writes raw PCM to stdout. librespot's own log goes to
@@ -136,6 +137,34 @@ Confirmed on the real binary, which announces
 `Mixing with softvol and volume control: Log(60.0)` at startup: with no
 hardware mixer to hand off to — the build has no sound-card backend at all
 — it has nowhere to apply volume except the samples.
+
+**`--zeroconf-interface` is not optional on a machine with a VPN.** Without
+it librespot binds every interface and lets the operating system choose
+where multicast goes, which it does by route metric. On the machine this
+was found on:
+
+```
+InterfaceAlias   InterfaceMetric   ConnectionState
+Tailscale                      5         Connected
+Wi-Fi                         50         Connected
+```
+
+Tailscale wins by a factor of ten, so every announcement left over the
+overlay to nobody. The symptom is precise and misleading: the receiver is
+reachable at its address — a phone's browser gets a full answer from
+`http://<host>:<port>/?action=getInfo` — and completely absent from
+Spotify's device list, because being *found* and being *reached* travel by
+different paths.
+
+The Hub picks the address itself rather than asking the routing table,
+because it knows something the routing table does not: where the speakers
+are. An address sharing a subnet with a known speaker is reachable from
+that subnet by definition, and the phone is on it too. That is
+`LocalAddressSelector`'s reasoning — written for firmware downloads after
+the same VPN bit this project once before — applied to announcements.
+`Librespot:ZeroconfInterface` overrides it. Until the first speaker is
+discovered there is nothing to match against, so the choice is left to
+librespot and revisited the moment one appears.
 
 ## Two things worth understanding
 

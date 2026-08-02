@@ -61,6 +61,25 @@ public sealed class LibrespotOptions
     public int IdleSeconds { get; set; } = 5;
 
     /// <summary>
+    /// Which of this host's IPv4 addresses librespot announces on.
+    ///
+    /// Empty means the Hub works it out: the address sharing a subnet with
+    /// a known speaker, which is by definition an address the phone can
+    /// reach too. Set it only to override that.
+    ///
+    /// This exists because leaving the choice to the operating system is
+    /// wrong on any machine with a VPN. librespot's own default is "all
+    /// interfaces", and a socket bound that way lets Windows pick where
+    /// multicast goes — by route metric. On the machine this was found on,
+    /// Tailscale sat at metric 5 against Wi-Fi's 50, so the announcements
+    /// went out over the overlay to nobody while the speakers, the phone
+    /// and the Hub all sat on the LAN wondering. It is the same trap
+    /// <see cref="OpenAudioLink.Core.Net.LocalAddressSelector"/> was
+    /// written for, one layer down.
+    /// </summary>
+    public string ZeroconfInterface { get; set; } = "";
+
+    /// <summary>
     /// Extra arguments appended verbatim, for anything this class does not
     /// model. Split on spaces, so an argument containing one needs the
     /// operator to think of another way.
