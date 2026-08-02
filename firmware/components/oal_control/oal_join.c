@@ -78,28 +78,39 @@ static bool ask(const oal_peer_t *controller)
     }
 
     esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, body, length);
 
+    /*
+     * Opened and read rather than performed. esp_http_client_perform()
+     * consumes the response itself, so reading afterwards yields nothing —
+     * the request succeeded and the Controller's answer was thrown away,
+     * which showed up as a node that had plainly joined and could not say
+     * what it had been told.
+     */
     bool accepted = false;
-    if (esp_http_client_perform(client) == ESP_OK) {
-        int status = esp_http_client_get_status_code(client);
-        char answer[96] = { 0 };
-        int read = esp_http_client_read_response(client, answer, sizeof(answer) - 1);
-        if (read > 0) {
-            answer[read] = '\0';
-            remember_status(answer);
+    if (esp_http_client_open(client, length) == ESP_OK) {
+        if (esp_http_client_write(client, body, length) == length
+                && esp_http_client_fetch_headers(client) >= 0) {
+            char answer[96] = { 0 };
+            int read = esp_http_client_read(client, answer, sizeof(answer) - 1);
+            if (read > 0) {
+                answer[read] = '\0';
+                remember_status(answer);
+            }
+
+            /*
+             * Any answer at all counts. A Controller that refuses, or one
+             * too old to know what joining is, has still told us it exists
+             * — and standing by is the right thing to do in both cases.
+             * Treating a refusal as a failure would mean asking every five
+             * seconds forever.
+             */
+            int status = esp_http_client_get_status_code(client);
+            accepted = status >= 200 && status < 500;
+            if (!accepted) {
+                ESP_LOGW(TAG, "join to %s answered %d", controller->name, status);
+            }
         }
-        /*
-         * Any answer at all counts. A Controller that refuses, or one too
-         * old to know what joining is, has still told us it exists — and
-         * standing by is the right thing to do in both cases. Treating a
-         * refusal as a failure would mean asking every five seconds
-         * forever.
-         */
-        accepted = status >= 200 && status < 500;
-        if (!accepted) {
-            ESP_LOGW(TAG, "join to %s answered %d", controller->name, status);
-        }
+        esp_http_client_close(client);
     }
 
     esp_http_client_cleanup(client);
