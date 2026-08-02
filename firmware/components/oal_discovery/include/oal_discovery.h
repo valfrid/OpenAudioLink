@@ -17,7 +17,7 @@ extern "C" {
 #define OAL_ANNOUNCE_INTERVAL_MS  5000
 
 typedef struct {
-    char id[40];                    /* "mac-…" or "oal-…", see protocol/IDENTITY.md */
+    char id[OAL_PEER_ID_MAX];       /* "mac-…" or "oal-…", see protocol/IDENTITY.md */
     char name[32];
     oal_roles_t roles;              /* set, not one value; see oal_config.h */
     const char *hardware_profile;   /* e.g. "esp32s3-devkit" */

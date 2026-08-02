@@ -238,8 +238,36 @@ static void null_arguments_are_survivable(void)
     CHECK_EQ(table.count, 0);
 }
 
+/*
+ * A Hub announces "oal-" plus a 36-character GUID — forty characters, which
+ * needs forty-one bytes. Storing it in forty silently dropped the last one,
+ * and two Hubs differing only there would have become one peer.
+ */
+static void a_full_length_hub_id_survives(void)
+{
+    TEST("a full length hub id survives");
+    oal_peer_table_t table;
+    oal_peer_table_reset(&table);
+
+    const char *hub = "oal-6be61cdb-366a-46c9-a001-c2c37982ada3";
+    CHECK(strlen(hub) == 40);
+
+    oal_peer_t peer = make_peer(hub, "192.168.0.66", 1 * SECOND);
+    CHECK_STR(peer.id, hub);
+
+    oal_peer_table_record(&table, &peer);
+    CHECK_STR(table.entries[0].id, hub);
+
+    /* And an id differing only in that last character stays a second peer. */
+    oal_peer_t other = make_peer("oal-6be61cdb-366a-46c9-a001-c2c37982ada4",
+                                 "192.168.0.67", 2 * SECOND);
+    CHECK(oal_peer_table_record(&table, &other));
+    CHECK_EQ(table.count, 2);
+}
+
 int main(void)
 {
+    a_full_length_hub_id_survives();
     a_new_peer_is_added();
     re_announcing_updates_rather_than_duplicates();
     a_moved_peer_keeps_one_row();

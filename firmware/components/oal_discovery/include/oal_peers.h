@@ -32,7 +32,13 @@ extern "C" {
  */
 #define OAL_PEER_STALE_MS 30000
 
-#define OAL_PEER_ID_MAX      40
+/*
+ * A Hub identity is "oal-" plus a 36-character GUID: forty characters, so
+ * forty-one bytes with the terminator. At forty the last character was
+ * being cut off, which two Hubs differing only in their final character
+ * would have collapsed into one peer.
+ */
+#define OAL_PEER_ID_MAX      48
 #define OAL_PEER_NAME_MAX    32
 #define OAL_PEER_ADDRESS_MAX 16
 
