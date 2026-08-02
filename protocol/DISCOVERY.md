@@ -141,3 +141,19 @@ announcements already on the wire — there are no votes and no terms.
 
 The field is absent rather than false when not claiming, so a node that
 does not understand it sees exactly what it saw before.
+
+## The `address` field
+
+An announcement may carry `"address"`. It is where the sender should be
+reached, and it takes precedence over the datagram's source address.
+
+Reading the source is right for a device announcing for itself on its own
+segment, and it is what a node does when the field is absent. It is wrong
+the moment anything rewrites the source: a VPN subnet router that NATs what
+it forwards had a Hub recorded at the router's address, so every node
+addressed the Controller at a machine that was not running one. Nothing
+about discovery looked wrong — the Hub was found, with the right name, id,
+roles and port — and joining could never have worked.
+
+The Hub sets it per destination, choosing the same-subnet address that
+device should use, the same way an OTA URL is chosen.

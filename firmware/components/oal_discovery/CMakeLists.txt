@@ -3,5 +3,5 @@ idf_component_register(
          "oal_election.c"
          "oal_peers.c"
     INCLUDE_DIRS "include"
-    REQUIRES lwip oal_config
+    REQUIRES lwip oal_config oal_rtp
     PRIV_REQUIRES json esp_hw_support esp_timer)

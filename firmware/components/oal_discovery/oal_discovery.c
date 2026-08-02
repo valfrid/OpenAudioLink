@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "oal_destinations.h"
 
 static const char *TAG = "oal_discovery";
 
@@ -99,7 +100,23 @@ static void remember_peer(const cJSON *root, const struct sockaddr_in *from)
     peer.control_port = cJSON_IsNumber(port)
         ? (uint16_t)port->valueint : OAL_DEVICE_CONTROL_PORT;
     peer.claimed = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "claimed"));
-    inet_ntoa_r(from->sin_addr, peer.address, (int)sizeof(peer.address));
+
+    /*
+     * The sender's own claim about where it is, when it makes one, and the
+     * datagram's source otherwise.
+     *
+     * Reading the source is right for a device announcing for itself on its
+     * own segment, and wrong the moment anything rewrites it. A VPN subnet
+     * router that NATs what it forwards had a node record the router's
+     * address for the Hub and address the Controller there — everything
+     * about discovery looked correct and joining could never work.
+     */
+    const cJSON *stated = cJSON_GetObjectItemCaseSensitive(root, "address");
+    if (cJSON_IsString(stated) && oal_address_is_ipv4(stated->valuestring)) {
+        snprintf(peer.address, sizeof(peer.address), "%s", stated->valuestring);
+    } else {
+        inet_ntoa_r(from->sin_addr, peer.address, (int)sizeof(peer.address));
+    }
     peer.last_seen_us = esp_timer_get_time();
 
     if (xSemaphoreTake(s_peers_lock, pdMS_TO_TICKS(100)) != pdTRUE) {

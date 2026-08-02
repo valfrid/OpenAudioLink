@@ -92,6 +92,20 @@ public sealed record DeviceAnnouncement : DiscoveryMessage
 
     [JsonPropertyName("ctrlPort")]
     public int? ControlPort { get; init; }
+
+    /// <summary>
+    /// Where to reach this device, when it cannot be inferred from the
+    /// datagram's source.
+    ///
+    /// A receiver normally learns the address from the packet, which is
+    /// right for a device announcing for itself on its own segment. It is
+    /// wrong the moment anything rewrites the source — a VPN subnet router
+    /// that NATs what it forwards will have a node record the router's
+    /// address and address the Controller there, which discovery cannot
+    /// detect because everything else about it looks correct.
+    /// </summary>
+    [JsonPropertyName("address")]
+    public string? Address { get; init; }
 }
 
 /// <summary>Controller request for an immediate unicast announce.</summary>

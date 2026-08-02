@@ -277,8 +277,7 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
-                var announce = BuildAnnounce().Serialize();
-                await SendToGroupAsync(client, announce, groupEndpoint, stoppingToken);
+                await SendToGroupAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
 
                 // And directly to every device already known.
                 //
@@ -297,12 +296,22 @@ public sealed class DiscoveryService : BackgroundService
                 // second.
                 foreach (var device in _registry.Snapshot())
                 {
-                    if (device.Online && IPAddress.TryParse(device.Address, out var address))
+                    if (!device.Online || !IPAddress.TryParse(device.Address, out var address))
                     {
-                        await TrySendAsync(
-                            client, announce,
-                            new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
+                        continue;
                     }
+
+                    // Told, not inferred: the same-subnet address this
+                    // device should use, chosen the way an OTA URL is. A
+                    // device that reads the source instead would record
+                    // whatever rewrote it on the way.
+                    var announce = (BuildAnnounce() with
+                    {
+                        Address = LocalAddressSelector.ForDevice(device.Address),
+                    }).Serialize();
+                    await TrySendAsync(
+                        client, announce,
+                        new IPEndPoint(address, ProtocolSuite.DiscoveryPort), stoppingToken);
                 }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken));
