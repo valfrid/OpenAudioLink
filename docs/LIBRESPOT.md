@@ -47,11 +47,14 @@ it yourself:
    linker is the usual thing to trip over. `rustup toolchain install
    stable-x86_64-pc-windows-gnu` avoids it if you would rather not install
    Visual Studio.
-2. ```
-   cargo install librespot --locked --no-default-features ^
-       --features "native-tls,with-libmdns"
-   ```
+2. `cargo install librespot --locked --no-default-features --features "native-tls,with-libmdns"`
 3. Copy `%USERPROFILE%\.cargo\bin\librespot.exe` next to the Hub.
+
+**[BUILDING-LIBRESPOT-WINDOWS.md](BUILDING-LIBRESPOT-WINDOWS.md) walks
+through all of that from nothing**, including the firewall rule, a
+standalone test that isolates librespot from the Hub, and what each error
+message means. Not WSL: it builds Linux binaries, and Windows cannot start
+one.
 
 `--no-default-features` drops `rodio-backend`, which exists to talk to a
 sound card this Hub does not want it talking to. **`with-libmdns` must
