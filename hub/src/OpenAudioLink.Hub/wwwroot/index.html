@@ -275,9 +275,11 @@
         const dot = `<span class="dot${d.online ? ' online' : ''}"></span>${d.online ? 'online' : 'offline'}`;
         const disabled = d.online ? '' : ' disabled';
         const roles = d.roles ?? [];
-        // The Hub is its own controller; offering to reboot or reassign it
-        // from its own page would be a footgun, not a feature.
-        const actions = roles.includes('controller') ? '' :
+        // Another Hub, identified by what it runs on rather than by the
+        // role it holds: a node that claimed Controller (decision 9) is
+        // still a node, and hiding its buttons left a turntable that took
+        // charge with no way to reboot or reconfigure it.
+        const actions = d.hardwareProfile === 'windows-hub' ? '' :
           `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
@@ -710,8 +712,13 @@
       const status = device.status;
       if (!status) return '<span class="muted">—</span>';
       if (!status.controller) {
-        // A node that has found no Controller cannot be told anything, so
-        // this is worth flagging rather than leaving blank.
+        // The node did not report one. Older firmware does not, and that is
+        // not the same as having looked and found nobody.
+        return '<span class="muted">—</span>';
+      }
+      if (status.controller === 'none') {
+        // Looked, found nobody. Nothing can reach this node, so it is worth
+        // flagging rather than leaving blank.
         return '<span class="rssi fair">no controller</span>';
       }
       const who = status.controller === 'self'

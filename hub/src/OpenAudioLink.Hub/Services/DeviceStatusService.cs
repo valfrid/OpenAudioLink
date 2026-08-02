@@ -48,8 +48,13 @@ public sealed class DeviceStatusService : BackgroundService
                 // Only devices that are online and not this Hub: polling a
                 // device that has stopped announcing just burns a timeout
                 // per cycle, and the Hub has no /status of its own.
+                //
+                // Identity, not role. Holding Controller used to mean being
+                // the Hub, and since a node can claim the role (decision 9)
+                // it no longer does — filtering on the role made a turntable
+                // that took charge stop being watched at all.
                 var targets = _registry.Snapshot()
-                    .Where(d => d.Online && d.Id != _config.Id && !d.Roles.Contains(DeviceRole.Controller))
+                    .Where(d => d.Online && d.Id != _config.Id)
                     .ToList();
 
                 // In parallel: one slow node must not delay the readings of
@@ -85,10 +90,15 @@ public sealed class DeviceStatusService : BackgroundService
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
                 AudioChannel = status.AudioChannel,
+                // Null means the node did not say, which older firmware
+                // does not. That is a different thing from having looked
+                // and found nobody, and showing them alike would report a
+                // fault that is really a version.
                 Controller = status.Controller?.Who switch
                 {
                     "self" => "self",
                     "peer" => status.Controller.Name,
+                    "none" => "none",
                     _ => null,
                 },
                 JoinStatus = status.Join?.Asked == true ? status.Join.Status : null,
