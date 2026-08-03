@@ -166,6 +166,73 @@ the same VPN bit this project once before — applied to announcements.
 discovered there is nothing to match against, so the choice is left to
 librespot and revisited the moment one appears.
 
+## Being found is not one problem, it is two
+
+A receiver is in one of two states, and they are reached by different
+routes. Conflating them cost an evening, so they are set out here.
+
+**Unclaimed.** Nobody has signed it in. The only way anyone learns it
+exists is the mDNS announcement, and the only way it becomes usable is a
+Spotify client on the same network finding it and handing over
+credentials (`addUser` on the zeroconf HTTP server). This is the state a
+new receiver starts in, and it is entirely dependent on multicast
+surviving the local network.
+
+**Claimed.** It has authenticated — through that handover, or through
+`--enable-oauth` — and registered itself with Spotify as a device on that
+account. It now appears in the picker wherever that account is used,
+including away from home, with no multicast involved at all.
+
+The consequence is the important part: **a receiver has to be claimed
+once, and after that discovery stops mattering.** The community reports
+the same thing from the other side — a device only appears in Spotify's
+device list once it has been connected to at least once, and the Web API
+lists only recently-connected devices.
+
+So a cast point needs a one-time sign-in, and is then stable. That is
+precisely what setting up a Chromecast feels like, and it fits what
+`CAST-POINTS.md` asks for: the Hub's page is for setup and nothing else.
+
+### Where it goes wrong, and it is usually the network
+
+If a phone cannot see an unclaimed receiver, the announcement is not
+reaching it. The cause found repeatedly by others, and matching what was
+measured here, is **mesh Wi-Fi not forwarding mDNS between its access
+points** — librespot discussion #1314 records it plainly: *"everything
+works only if the client is in the same cell as the librespot server"*,
+fixed by putting the mesh in access point mode rather than router mode.
+Issue #1672 is the same symptom, closed without a root cause.
+
+That produces a very specific and misleading picture, all of which was
+observed here:
+
+- the phone reaches the receiver's address perfectly, because unicast is
+  bridged between cells as normal
+- the receiver logs mDNS questions from half the house, because those
+  devices share its cell
+- the phone never sees it, because it is on a different one
+- Chromecasts still appear in the phone's list, because Google keeps a
+  cloud-backed device list and does not depend on local discovery
+
+Two checks separate it from everything else. Put the phone physically
+beside the host and toggle its Wi-Fi so it re-associates to the nearest
+access point — if the receiver appears and then vanishes when you walk
+away, it is the mesh. And run `hub/scripts/Test-Librespot.ps1` from
+another machine with `-SkipLocalChecks`: discoverable from the host but
+not from elsewhere is the same verdict.
+
+### What this means for guests
+
+**Claiming is per account.** A guest with their own Spotify account has to
+discover the receiver locally and claim it themselves, exactly as they
+would a real Connect speaker. So a house that wants guests to be able to
+play in the kitchen needs working mDNS; signing the receivers in solves
+the owner's case and not theirs.
+
+That makes the mesh's behaviour a real constraint on the product rather
+than a local annoyance, and worth fixing at the router rather than
+working around here.
+
 ## Two things worth understanding
 
 **Flow control is the pipe.** A pipe backend writes as fast as it can
