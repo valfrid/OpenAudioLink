@@ -152,6 +152,64 @@ duplicates and zero reordering throughout. The failure mode of this network
 is a missing packet, never a wrong one — so the transport needs concealment
 and a jitter buffer, not integrity checking.
 
+## The multicast leg, which is a different network from the audio one
+
+Everything above measures unicast RTP between two nodes. Discovery is
+multicast, it travels by different rules, and one can be perfect while the
+other is broken — the whole of 2026-08-02 went into learning that. Kept
+here because the causes are network facts, not Spotify facts, and they
+will resurface with AirPlay or anything else that announces itself.
+
+**A VPN interface can carry the announcements away.** A socket bound to
+`0.0.0.0` lets the operating system choose which interface multicast
+leaves by, and it chooses on route metric. On the machine this was found
+on, Tailscale sat at metric 5 against Wi-Fi's 50:
+
+```
+InterfaceAlias   InterfaceMetric   ConnectionState
+Tailscale                      5         Connected
+Wi-Fi                         50         Connected
+```
+
+The symptom is precise and misleading: the host is reachable at its
+address — a phone's browser gets a full answer from its HTTP port — and
+completely undiscoverable, because being found and being reached travel
+different paths. `LocalAddressSelector` was written after this VPN caused
+a different failure and its remarks already name Tailscale; the same
+reasoning now picks the announcement interface (`LIBRESPOT.md`). Hyper-V,
+WSL, Docker and VMware all create adapters that can do this. **Always bind
+announcements to the address on the subnet the listeners are on, never to
+`0.0.0.0`.**
+
+**Mesh Wi-Fi drops mDNS between its nodes.** Others report it for exactly
+this hardware — an SNBForums thread titled *"ASUS ZenWifi AX (XT8) mesh:
+devices only accessible if on the same node"* — and librespot discussion
+#1314 records the general case: *"everything works only if the client is
+in the same cell"*.
+
+The reported fix is counter-intuitive: **disable IGMP Snooping, per band**
+(Wireless → Professional → band → Enable IGMP Snooping → Disable). The
+XT8 is tri-band, so 2.4 GHz, 5 GHz-1 and 5 GHz-2 each need it, and doing
+one is a common half-fix. Snooping should always flood the 224.0.0.0/24
+link-local range that mDNS lives in; Broadcom's implementation on this
+platform does not reliably do so. LAN → IPTV carries the same two toggles
+for the wired side. Reboot the router and then the nodes afterwards —
+AiMesh nodes take configuration on sync.
+
+Note this cuts the other way from the audio findings above. Crossing the
+mesh backhaul costs unicast RTP about 6x the loss; for multicast it can
+cost everything.
+
+**Unmanaged switches are not suspects.** They have no IGMP snooping, so
+they flood multicast to every port. A wired segment built from them is
+clean by construction, which usefully removes a variable.
+
+**Wiring the Hub is worth more than it looks.** Once the Hub is the
+producer, a wireless Hub means every packet goes Hub → air → AP → air →
+speaker. Wired, the Hub's own transmission leaves the air entirely,
+halving the airtime each stream costs — the same third-hop arithmetic as
+above, applied to the hop that carries all of the audio.
+
 ## Method
 
 1. Put both nodes on the same access point. They pick by signal strength,
