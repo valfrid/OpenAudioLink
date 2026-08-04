@@ -193,7 +193,59 @@ So a cast point needs a one-time sign-in, and is then stable. That is
 precisely what setting up a Chromecast feels like, and it fits what
 `CAST-POINTS.md` asks for: the Hub's page is for setup and nothing else.
 
-### Where it goes wrong, and it is usually the network
+### Where it went wrong here: the host could not hear
+
+Found 2026-08-03, after an evening of measuring the wrong direction.
+
+Windows had classified a **wired** home LAN as a **Public** network, which
+switches off its built-in inbound mDNS rules. The receiver could send and
+could not receive, and every test we had measured sending.
+
+What that looks like, all of which was true at once:
+
+- the receiver answers `?action=getInfo` from a phone's browser, fully
+- its log shows announcements going out on the right interface
+- a direct query from another machine gets an answer back
+- and no phone can discover it
+
+Because discovery is a *question*, and the question never arrived. The
+receiver answered every request that reached it and was never asked.
+
+**Check what the host receives, not what it sends.** With
+`RUST_LOG=libmdns=trace`, a healthy host on a normal home network shows a
+constant stream of neighbours asking about `_googlecast`, `_shelly`,
+`_home-assistant`, `_workstation`. The broken one showed packets from its
+own VPN address and nothing else. That silence was the whole diagnosis.
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Ethernet" -NetworkCategory Private
+netsh advfirewall firewall add rule name="mDNS in" dir=in action=allow protocol=UDP localport=5353 profile=any
+```
+
+`hub/scripts/install-service.ps1` now opens 5353 and warns when Windows
+has classified a network Public — the Hub's own discovery listens on
+multicast `239.255.41.10:41000` and would have failed identically.
+
+**A second mDNS responder on the same machine muddies every reading.** On
+this host a Home Assistant VM shared the hardware and had its own address
+on the LAN. Answers to a query for the receiver came back with *its*
+source address rather than the host's, which reads as a relay or a NAT and
+sent this investigation chasing a VPN that was not involved. Shutting the
+VM down made the answers arrive straight from the host.
+
+Nothing was broken by it, but it cost time: when a reply comes from an
+address that is not the one you are testing, find out what that address is
+before theorising about it. Virtual machines, containers and any
+reflecting responder can all do this.
+
+One instrument to distrust: **an mDNS browser app is not proof of
+absence.** Those apps build their list from the
+`_services._dns-sd._udp.local` meta-query, and libmdns does not answer it,
+so `_spotify-connect._tcp` never appears there whether or not it is
+reachable. A direct PTR query for `_spotify-connect._tcp.local` — what
+`Test-Librespot.ps1` sends, and what Spotify sends — is the honest test.
+
+### Where else it goes wrong, and it is usually the network
 
 If a phone cannot see an unclaimed receiver, the announcement is not
 reaching it. The cause found repeatedly by others, and matching what was

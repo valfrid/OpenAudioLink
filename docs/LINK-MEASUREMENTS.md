@@ -181,6 +181,37 @@ WSL, Docker and VMware all create adapters that can do this. **Always bind
 announcements to the address on the subnet the listeners are on, never to
 `0.0.0.0`.**
 
+**A Windows host can be deaf to multicast while appearing perfectly
+healthy — and this was the actual cause here.** Windows classifies
+networks itself and gets wired home LANs wrong; on a network it has
+labelled **Public** it disables its own inbound mDNS rules. The host then
+sends fine and receives nothing.
+
+The symptom is as misleading as a symptom can be. Every outbound test
+passes. The receiver answers any request made directly to its address. A
+phone's browser fetches its status page. It logs its announcements going
+out. And it is undiscoverable, because a discovery request is a question
+that has to arrive, and none did.
+
+What made it visible in the end was watching what the host *received*.
+With `RUST_LOG=libmdns=trace`, a healthy host on this network shows a
+steady stream of neighbours asking about `_googlecast`, `_shelly`,
+`_home-assistant`, `_workstation`. The broken one showed only packets from
+its own VPN address. **A host that hears nothing from its own LAN is the
+finding; everything else was instrumentation.**
+
+Two commands fixed it:
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Ethernet" -NetworkCategory Private
+netsh advfirewall firewall add rule name="mDNS in" dir=in action=allow protocol=UDP localport=5353 profile=any
+```
+
+`install-service.ps1` now opens 5353 alongside 41000 and warns when
+Windows has classified a network Public, because the Hub's own discovery
+listens on multicast `239.255.41.10:41000` and would have failed in
+exactly the same silent way.
+
 **Mesh Wi-Fi drops mDNS between its nodes.** Others report it for exactly
 this hardware — an SNBForums thread titled *"ASUS ZenWifi AX (XT8) mesh:
 devices only accessible if on the same node"* — and librespot discussion

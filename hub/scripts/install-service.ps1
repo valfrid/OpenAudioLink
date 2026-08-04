@@ -25,7 +25,13 @@ param(
     [string]$DataPath    = "$env:ProgramData\OpenAudioLink",
     [string]$ServiceName = 'OpenAudioLinkHub',
     [string]$DisplayName = 'OpenAudioLink Hub',
-    [int]   $Port        = 41080
+    [int]   $Port        = 41080,
+
+    # Opens the Hub's ports on networks Windows has classified Public as
+    # well. Off by default, because "Public" is meant to mean a network you
+    # do not trust. Use it only when Windows has mislabelled a home LAN and
+    # you would rather not reclassify it — the script says so if it has.
+    [switch]$AllowPublicNetworks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,17 +92,63 @@ sc.exe config $ServiceName start= delayed-auto | Out-Null
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/60000 | Out-Null
 
 # --- firewall ----------------------------------------------------------
-Write-Host "Opening firewall ports"
+# Every one of these is inbound multicast or an inbound connection, and
+# each has a way of failing silently. A Hub that cannot receive on 41000
+# discovers no devices; a receiver that cannot receive on 5353 is invisible
+# to every phone in the house while insisting it is announcing correctly.
+$firewallProfiles = if ($AllowPublicNetworks) { 'Private','Domain','Public' } else { 'Private','Domain' }
+
+Write-Host "Opening firewall ports ($($firewallProfiles -join ', '))"
 foreach ($rule in @(
     @{ Name = 'OpenAudioLink Hub - web UI and API'; Protocol = 'TCP'; Port = $Port },
-    @{ Name = 'OpenAudioLink Hub - discovery';      Protocol = 'UDP'; Port = 41000 }
+    @{ Name = 'OpenAudioLink Hub - discovery';      Protocol = 'UDP'; Port = 41000 },
+    # Spotify Connect receivers announce themselves here (docs/LIBRESPOT.md).
+    # Without it they answer nobody, because nobody's question arrives.
+    @{ Name = 'OpenAudioLink Hub - mDNS';           Protocol = 'UDP'; Port = 5353 }
 )) {
     Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue |
         Remove-NetFirewallRule -ErrorAction SilentlyContinue
     New-NetFirewallRule -DisplayName $rule.Name `
                         -Direction Inbound -Action Allow `
                         -Protocol $rule.Protocol -LocalPort $rule.Port `
-                        -Profile Private,Domain | Out-Null
+                        -Profile $firewallProfiles | Out-Null
+}
+
+# The receivers are separate processes, so a port rule is not enough on
+# every configuration; a program rule covers whatever else they open.
+$librespot = Join-Path $InstallPath 'librespot.exe'
+if (Test-Path $librespot) {
+    $name = 'OpenAudioLink Hub - librespot'
+    Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow `
+                        -Program $librespot -Profile $firewallProfiles | Out-Null
+    Write-Host "  found librespot; Spotify Connect receivers are enabled"
+}
+else {
+    Write-Host "  no librespot.exe here; cast points will not be offered to Spotify" -ForegroundColor DarkGray
+}
+
+# --- the trap that cost an evening -------------------------------------
+# Windows classifies networks by itself and gets wired home LANs wrong. On
+# a Public network it disables its own inbound mDNS rules, and the symptom
+# is perfect: the Hub reaches everything, answers every request made to its
+# address, and hears no multicast at all — so nothing discovers it and it
+# discovers nothing. Worth a loud message rather than a silent failure.
+$public = Get-NetConnectionProfile -ErrorAction SilentlyContinue |
+          Where-Object { $_.NetworkCategory -eq 'Public' }
+if ($public -and -not $AllowPublicNetworks) {
+    Write-Host ""
+    Write-Host "WARNING: Windows has classified these networks as Public:" -ForegroundColor Yellow
+    foreach ($p in $public) {
+        Write-Host "    $($p.InterfaceAlias)  ($($p.Name))" -ForegroundColor Yellow
+    }
+    Write-Host "  The rules above do not apply there, so discovery will not work." -ForegroundColor Yellow
+    Write-Host "  If that is your home network, reclassify it:" -ForegroundColor Yellow
+    foreach ($p in $public) {
+        Write-Host "    Set-NetConnectionProfile -InterfaceAlias '$($p.InterfaceAlias)' -NetworkCategory Private" -ForegroundColor Yellow
+    }
+    Write-Host "  Or re-run this script with -AllowPublicNetworks." -ForegroundColor Yellow
 }
 
 # --- start -------------------------------------------------------------
