@@ -1,7 +1,17 @@
 # Spotify Connect at the Hub
 
-Status: implemented. Sign-in verified on hardware 2026-08-03; the
-audio path end to end is not yet.
+Status: implemented, and verified as far as the pipe.
+
+- **2026-08-03** — sign-in verified on hardware; the receiver appears in
+  Spotify's picker as a Connect device.
+- **2026-08-04** — real audio verified. 933 MB captured from the pipe and
+  played back as `f32l`, 2 channels, 44100 Hz: recognisable music at the
+  right pitch and speed. Those are exactly the parameters `PcmDecoder` and
+  `LibrespotOptions` assume, so the decode path is now checked against
+  Spotify rather than only against its own unit tests.
+
+Still unverified: the Hub consuming that pipe in place of a file, and a
+node playing the result.
 
 This is the first provider source for cast points (`CAST-POINTS.md`). It
 is what makes the feature the feature: choosing "Kitchen" in Spotify on a
