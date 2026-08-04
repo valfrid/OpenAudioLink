@@ -170,18 +170,48 @@ chosen.
 XSMT is a hard mute that looks exactly like a dead DAC. Most modules pull
 it up or have a jumper; confirm it rather than assume.
 
-The other two mode pins matter less but should be checked:
+### The four configuration pins
+
+FLT, DEMP, XSMT and FMT set the DAC's behaviour, and each appears twice on
+the board: as a solder jumper on the back, and as a through-hole on the
+left header. They want:
 
 | Pin | Set to | Meaning |
 | --- | --- | --- |
-| FMT | low | I²S format, which is what the ESP32 emits |
-| DEMP | low | de-emphasis off |
 | FLT | low | normal-latency filter |
-| XSMT | **high** | unmuted |
+| DEMP | low | de-emphasis off |
+| **XSMT** | **high** | **unmuted** |
+| FMT | low | I²S format, which is what the ESP32 emits |
 
-Most boards ship with all four already correct. FMT high would give
-left-justified data, which sounds like loud noise rather than silence —
-a useful thing to recognise.
+**By jumper.** The `1 2 3 4` on the front are `H1L` to `H4L` on the back,
+in that order — 1 is FLT, 2 is DEMP, 3 is XSMT, 4 is FMT. Each block has
+three pads: the middle one is the pin, bridged to the **H** side for 3.3 V
+or the **L** side for ground. Never bridge both; that shorts the rail to
+ground.
+
+**By header, which is easier.** The left column carries
+`FLT DEMP XSMT FMT A3V3 AGND ROUT AGND LROUT`, so the four pins and both
+references sit on one header:
+
+| From | To |
+| --- | --- |
+| XSMT (3rd) | **A3V3** (5th) — two rows apart |
+| FLT (1st) | AGND |
+| DEMP (2nd) | AGND |
+| FMT (4th) | AGND |
+
+`A3V3` is the board's own regulated rail and XSMT is a CMOS input drawing
+microamps, so it is a perfectly good source for the logic high.
+
+**Check before soldering.** These boards vary and many arrive already
+configured. Continuity from each pin on the left header settles it in two
+minutes: FLT, DEMP and FMT should read connected to ground, and XSMT to
+A3V3 rather than to ground. Whatever is already right needs nothing.
+
+If only one pin gets checked, make it XSMT. FMT high would at least be
+*audible* — left-justified data misread as I²S sounds like loud noise —
+whereas XSMT low is silence, and silence is the failure that looks like a
+dead board, a dead wire, a dead DAC or a firmware fault all at once.
 
 Keep the BCK wire short. At 48 kHz, stereo, 32-bit slots it runs at
 3.072 MHz, which is not fast but is fast enough that a long unshielded
