@@ -32,19 +32,21 @@ menu "OpenAudioLink Test Node"
         depends on OAL_I2S_ENABLED
         default 7
         help
-            D8 on a XIAO ESP32S3. The ESP32-S3 routes I2S through its GPIO
-            matrix so any free pin works, but avoid D6 and D7 — those are
+            D8 on a XIAO ESP32S3. The three defaults are chosen so that a
+            PCM5102A laid beside the board wires with no crossed leads —
+            see docs/HARDWARE.md. The ESP32-S3 routes I2S through its GPIO
+            matrix so any free pin works, but avoid D6 and D7, which are
             the UART the serial log comes out of.
 
     config OAL_I2S_WS_GPIO
         int "I2S word select (LRCK) GPIO"
         depends on OAL_I2S_ENABLED
-        default 8
+        default 9
 
     config OAL_I2S_DOUT_GPIO
         int "I2S data (DIN) GPIO"
         depends on OAL_I2S_ENABLED
-        default 9
+        default 8
 
     config OAL_PLAYOUT_MS
         int "Playout buffer (ms)"

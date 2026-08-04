@@ -56,11 +56,11 @@ Wiring to a XIAO ESP32S3:
 
 | Board | XIAO |
 | --- | --- |
-| Vin | 5 V |
+| Vin | VUSB (5 V) |
 | GND | GND |
 | BCLK | D8 (GPIO7) |
-| LRC | D9 (GPIO8) |
-| DIN | D10 (GPIO9) |
+| LRC | D10 (GPIO9) |
+| DIN | D9 (GPIO8) |
 | GAIN | leave floating |
 | SD | leave alone |
 
@@ -112,16 +112,51 @@ so match by **name**, not position.
 
 | Module | XIAO ESP32S3 | |
 | --- | --- | --- |
-| VIN / VCC | 5V | the module regulates it down itself |
+| VIN | VUSB (5V) | the module regulates it down itself; 3V3 also works |
 | GND | GND | |
+| LCK / LRCK | D10 (GPIO9) | word select |
+| DIN | D9 (GPIO8) | data |
 | BCK | D8 (GPIO7) | bit clock |
-| LCK / LRCK | D9 (GPIO8) | word select |
-| DIN | D10 (GPIO9) | data |
-| **SCK** | **GND** | see below |
+| **SCK** | **the DAC's own GND pad** | see below |
 
-**Deliberately the same three signal pins as the MAX98357A**, so the
-firmware does not have to know which board is attached. Avoid D6/D7 —
-those carry the UART the serial log comes out of.
+Avoid D6/D7 — those carry the UART the serial log comes out of.
+
+### Laying the two boards out
+
+The header orders are fixed — `SCK BCK DIN LCK GND VIN` on the DAC,
+`VUSB GND 3V3 D10 D9 D8 D7` on the XIAO — but which GPIO carries which
+signal is not, because the ESP32-S3 routes I²S through its matrix. The
+defaults above are chosen so the two boards wire with **no crossed
+leads**.
+
+**Rotate the DAC 180° relative to the XIAO**, so `VIN` sits opposite
+`VUSB`:
+
+```
+  XIAO ESP32S3              PCM5102A
+  (USB up)                  (jack down)
+
+  VUSB ●──────────────────● VIN
+  GND  ●──────────────────● GND ──┐
+  3V3  ●                  ● LCK   │
+  D10  ●─────────────────╱        │
+  D9   ●─────────────────╱ DIN    │
+  D8   ●─────────────────╱ BCK    │
+  D7   ●   (leave free)   ● SCK ──┘
+```
+
+Two straight power wires, then three parallel diagonals each stepping
+down one row, because `3V3` on the XIAO has no counterpart on the DAC and
+absorbs the offset.
+
+**`SCK` is jumpered to the DAC's own `GND` pad**, four rows up on the
+same header. It never enters the gap between the boards, so it cannot
+cross anything — and it keeps the grounding decision physically next to
+the pin it applies to.
+
+The MAX98357A has a different header order again, so it wires with one
+crossed lead at these defaults. That is a soldering inconvenience and
+nothing more; change the GPIOs in `menuconfig` if it bothers you.
 
 **Two things account for almost every "wired correctly, no sound".**
 
@@ -282,7 +317,7 @@ table above.
 The first sound this project makes should be the Hub's test tone:
 
 1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.0.
-2. The log says `I2S out on BCLK=7 WS=8 DOUT=9, 48000 Hz, stereo, 20 ms
+2. The log says `I2S out on BCLK=7 WS=9 DOUT=8, 48000 Hz, stereo, 20 ms
    buffer`. If it does not, audio never started and the reason is on the
    line after it — the node still receives and still counts, so this is
    survivable rather than fatal.
