@@ -26,6 +26,7 @@
 #include "oal_control.h"
 #include "oal_join.h"
 #include "oal_discovery.h"
+#include "oal_playout.h"
 #include "oal_stream.h"
 #include "oal_wifi.h"
 
@@ -179,6 +180,31 @@ void app_main(void)
      * send, which it cannot know by itself. */
     if ((roles & OAL_ROLE_CONSUMER) != 0) {
         ESP_ERROR_CHECK(oal_stream_consumer_start(OAL_RTP_DEFAULT_PORT));
+
+#if CONFIG_OAL_I2S_ENABLED
+        /* Audio out is attached rather than built in, so a node with no
+         * DAC still receives and still measures the link — which is how
+         * every number in LINK-MEASUREMENTS.md was gathered. A failure
+         * here is logged and survived for the same reason. */
+        static oal_playout_config_t playout = {
+            .bclk_gpio   = CONFIG_OAL_I2S_BCLK_GPIO,
+            .ws_gpio     = CONFIG_OAL_I2S_WS_GPIO,
+            .dout_gpio   = CONFIG_OAL_I2S_DOUT_GPIO,
+            .sample_rate = OAL_RTP_SAMPLE_RATE,
+            .target_ms   = CONFIG_OAL_PLAYOUT_MS,
+        };
+        /* Read once at boot: /config stores a channel change and reports
+         * that it applies at reboot, so this is where it takes effect. */
+        playout.channel = oal_config_get_channel();
+
+        esp_err_t audio = oal_playout_start(&playout);
+        if (audio == ESP_OK) {
+            oal_stream_consumer_set_sink(oal_playout_submit);
+        } else {
+            ESP_LOGW(TAG, "no audio output: %s (still receiving and counting)",
+                     esp_err_to_name(audio));
+        }
+#endif
 
         /* Listening is not the same as being known about. A Consumer finds
          * the Controller and says it is ready, which is what gets it added

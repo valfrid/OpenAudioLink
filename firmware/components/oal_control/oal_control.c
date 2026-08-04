@@ -7,6 +7,7 @@
 #include "cJSON.h"
 #include "oal_discovery.h"
 #include "oal_join.h"
+#include "oal_playout.h"
 #include "oal_stream.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
@@ -259,7 +260,7 @@ static esp_err_t config_handler(httpd_req_t *req)
  */
 static esp_err_t stream_get_handler(httpd_req_t *req)
 {
-    char body[640];
+    char body[832];
     int len;
 
     if ((s_config.roles & OAL_ROLE_PRODUCER) != 0) {
@@ -285,13 +286,35 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stats too large");
             return ESP_FAIL;
         }
+        /*
+         * The playout counters travel with the reception statistics
+         * because they answer the same question from the other side. Loss
+         * on the air and a ring that ran dry both sound like a click, and
+         * only having both numbers says which happened.
+         */
+        oal_playout_state_t audio;
+        oal_playout_get(&audio);
+
         len = snprintf(body, sizeof(body),
                        "{\"role\":\"consumer\",\"listening\":%s,\"port\":%u,"
                        "\"payloadErrors\":%u,\"foreignPackets\":%u,"
-                       "\"lastSsrc\":\"%08x\",\"stats\":%s}",
+                       "\"lastSsrc\":\"%08x\","
+                       "\"playout\":{\"running\":%s,\"playing\":%s,\"channel\":\"%s\","
+                       "\"bufferedFrames\":%u,\"targetFrames\":%u,"
+                       "\"silenceFrames\":%u,\"droppedFrames\":%u,"
+                       "\"framesPlayed\":%llu,\"writeErrors\":%u},"
+                       "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
                        (unsigned)c.payload_errors, (unsigned)c.foreign_packets,
-                       (unsigned)c.last_ssrc, stats);
+                       (unsigned)c.last_ssrc,
+                       audio.running ? "true" : "false",
+                       audio.playing ? "true" : "false",
+                       oal_channel_name(audio.channel),
+                       (unsigned)audio.buffered_frames, (unsigned)audio.target_frames,
+                       (unsigned)audio.silence_frames, (unsigned)audio.dropped_frames,
+                       (unsigned long long)audio.frames_played,
+                       (unsigned)audio.write_errors,
+                       stats);
     }
 
     if (len <= 0 || len >= (int)sizeof(body)) {

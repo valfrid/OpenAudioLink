@@ -271,3 +271,55 @@ sharing a board with a radio:
 - RTP/UDP transport
 - receiver node plays audio
 - measure latency, packet loss behaviour and drift
+
+## Bringing up the DAC
+
+Firmware 0.9.0 adds the playout path: a Consumer starts an I²S output at
+boot, buffers what arrives and feeds the DAC from it. Pins come from
+`idf.py menuconfig` under **OpenAudioLink Test Node**, defaulting to the
+table above.
+
+The first sound this project makes should be the Hub's test tone:
+
+1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.0.
+2. The log says `I2S out on BCLK=7 WS=8 DOUT=9, 48000 Hz, stereo, 20 ms
+   buffer`. If it does not, audio never started and the reason is on the
+   line after it — the node still receives and still counts, so this is
+   survivable rather than fatal.
+3. From the Hub, send a test tone to the node: **Stream → test tone**, or
+   `POST /api/stream/test-tone` with the node as the destination.
+4. `GET /stream` on the node now carries a `playout` object beside the
+   reception statistics.
+
+Read those two together, because they answer the same question from
+different sides:
+
+| What you see | What it means |
+| --- | --- |
+| `playing: true`, `silenceFrames` steady | Working. A click would be loss on the air, and `stats` says so |
+| `silenceFrames` climbing steadily | The ring is running dry — raise `OAL_PLAYOUT_MS`, or the network is losing packets |
+| `droppedFrames` climbing steadily | The ring is overfilling, which means the sender's clock is faster than this DAC's |
+| `running: false` | I²S never started; the pins are wrong or in use |
+| Silence, everything else healthy | XSMT, or `SCK` not grounded. See the wiring notes above |
+
+**A click and a dropout are different faults**, and this is the pairing
+that tells them apart: loss on the air shows in `stats`, a ring that ran
+dry shows in `silenceFrames`, and drift shows as one of them climbing
+slowly while the other stays at zero.
+
+Expect about **40 ms** from the Hub to the speaker: 20 ms of playout
+buffer and 20 ms of DMA. Both are visible in the log line and adjustable.
+
+### What is deliberately not solved yet
+
+**Drift.** The sender's 48 kHz and the DAC's differ by a few parts per
+million, so the ring slowly fills or empties over hours. Both ends are
+handled — full drops the oldest, empty plays silence — and both are
+counted, so the effect is visible rather than mysterious. Correcting it by
+trimming the ESP32's APLL belongs with decision 2's multi-speaker
+synchronisation, and doing it now would be tuning something nothing yet
+depends on.
+
+**Concealment.** A lost packet is 5 ms of silence, not an interpolation.
+That is audible on a sustained tone and nearly inaudible on music, and it
+is worth measuring before deciding it needs fixing.

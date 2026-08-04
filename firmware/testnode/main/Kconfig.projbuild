@@ -18,4 +18,42 @@ menu "OpenAudioLink Test Node"
         help
             Human-readable name announced during discovery.
 
+    config OAL_I2S_ENABLED
+        bool "Play received audio through an I2S DAC"
+        default y
+        help
+            Consumers bring up an I2S output and play what they receive.
+            Turn it off for a node with no DAC attached: the RTP statistics
+            are unaffected, and every link measurement so far was made
+            without one.
+
+    config OAL_I2S_BCLK_GPIO
+        int "I2S bit clock (BCK) GPIO"
+        depends on OAL_I2S_ENABLED
+        default 7
+        help
+            D8 on a XIAO ESP32S3. The ESP32-S3 routes I2S through its GPIO
+            matrix so any free pin works, but avoid D6 and D7 — those are
+            the UART the serial log comes out of.
+
+    config OAL_I2S_WS_GPIO
+        int "I2S word select (LRCK) GPIO"
+        depends on OAL_I2S_ENABLED
+        default 8
+
+    config OAL_I2S_DOUT_GPIO
+        int "I2S data (DIN) GPIO"
+        depends on OAL_I2S_ENABLED
+        default 9
+
+    config OAL_PLAYOUT_MS
+        int "Playout buffer (ms)"
+        depends on OAL_I2S_ENABLED
+        default 20
+        range 5 100
+        help
+            How much audio to gather before playing any of it, which is
+            also how far the speaker lags the source. Measured jitter is
+            1-2 ms, so 20 ms is generous; the DMA adds another 20 on top.
+
 endmenu

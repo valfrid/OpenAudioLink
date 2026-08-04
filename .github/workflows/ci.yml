@@ -80,6 +80,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o destination-tests oal_destinations.c test/test_destinations.c &&
           ./destination-tests
+      - name: PCM conversion
+        working-directory: firmware/components/oal_audio
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o pcm-tests oal_pcm.c test/test_pcm.c &&
+          ./pcm-tests
       - name: Peer table
         working-directory: firmware/components/oal_discovery
         run: >

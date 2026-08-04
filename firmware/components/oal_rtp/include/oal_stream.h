@@ -87,6 +87,29 @@ typedef struct {
  */
 esp_err_t oal_stream_consumer_start(uint16_t port);
 
+/**
+ * Where a received packet's audio goes after it has been counted.
+ *
+ * @param payload L24 big-endian stereo, which the sink may modify in place
+ *                — the statistics and the pattern check are already done.
+ * @param frames  frames, not bytes.
+ *
+ * Called from the receive task, so it must not block for long: this task
+ * is the only thing emptying the socket, and a slow sink shows up later as
+ * packet loss that the network did not cause.
+ */
+typedef void (*oal_stream_sink_t)(uint8_t *payload, size_t frames);
+
+/**
+ * Attaches an audio sink, or NULL to detach.
+ *
+ * A callback rather than a direct call into the playout code, so this
+ * component keeps knowing nothing about DACs. It measures the network; a
+ * node with no audio hardware still runs it, and the link measurements
+ * were all made without one.
+ */
+void oal_stream_consumer_set_sink(oal_stream_sink_t sink);
+
 void oal_stream_consumer_get(oal_stream_consumer_state_t *out);
 
 /** Clears the counters without dropping the socket, to begin a measurement. */

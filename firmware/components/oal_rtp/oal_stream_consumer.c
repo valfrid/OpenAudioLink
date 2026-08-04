@@ -12,6 +12,7 @@ static const char *TAG = "oal_consumer";
 
 static oal_stream_consumer_state_t s_state;
 static volatile bool s_reset_requested;
+static oal_stream_sink_t s_sink;
 
 /*
  * Arrival time is taken in RTP timestamp units — 48 000 ticks a second —
@@ -99,8 +100,25 @@ static void consumer_task(void *arg)
             s_state.payload_errors += oal_rtp_verify_payload(
                 packet + OAL_RTP_HEADER_BYTES, (size_t)len - OAL_RTP_HEADER_BYTES,
                 header.timestamp);
+
+            /* Only what would have been played reaches the speaker. A
+             * duplicate or a packet too late to use has already been
+             * counted; playing it as well would put the audio out of order
+             * to fix a statistic. */
+            oal_stream_sink_t sink = s_sink;
+            if (sink != NULL) {
+                uint32_t frames = oal_rtp_frames_in((size_t)len);
+                if (frames > 0) {
+                    sink(packet + OAL_RTP_HEADER_BYTES, frames);
+                }
+            }
         }
     }
+}
+
+void oal_stream_consumer_set_sink(oal_stream_sink_t sink)
+{
+    s_sink = sink;
 }
 
 esp_err_t oal_stream_consumer_start(uint16_t port)
