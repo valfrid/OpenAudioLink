@@ -204,18 +204,29 @@ A browser opens on that machine, you approve, and a credential blob lands
 in the cache directory. The Hub already passes exactly that `--cache`
 path, so from then on its own instance starts signed in.
 
-### What it costs, and it is not nothing
+Verified on both a desktop client and a phone: signing in once registers
+the device against the account, and it then appears everywhere that
+account is used. The machine that did the authorising is not special.
 
-**Guests cannot claim a speaker.** The zeroconf hand-over — a stranger's
-phone finding an unclaimed receiver and giving it credentials — is the
-mechanism that makes a real Connect speaker usable by whoever is in the
-room, and current clients do not offer it. A cast point belongs to the
-account that signed it in.
+### What it costs, and how much of that matters
 
-That is a genuine reduction against a Chromecast Audio, and it is
-Spotify's decision rather than this design's. It is also an argument for a
-second adapter: AirPlay does not work this way, and a house that wants
-guests playing in the kitchen may need one.
+**A cast point belongs to the account that signed it in.** The zeroconf
+hand-over — a phone finding an unclaimed receiver and giving it
+credentials — is what makes a real Connect speaker usable by whoever is in
+the room, and current clients do not offer it.
+
+Two things reduce that from a blocker to a footnote for most households:
+
+- **A shared account covers a household.** Two people on one account both
+  see every cast point, which is the ordinary case in a home.
+- **Spotify Jam covers a party.** Guests join the host's session and add
+  to the queue, so one signed-in account serves a room full of people
+  without any of them claiming anything.
+
+What remains is the household where people keep separate accounts: only
+the account that signed in can cast. That is Spotify's decision rather
+than this design's, and it is the standing argument for a second adapter —
+AirPlay has no account at all, and anyone on the network can play to it.
 
 **A one-time browser step per room.** A Hub running as a Windows service
 has no browser, and librespot's OAuth redirect lands on `127.0.0.1`, so
