@@ -105,6 +105,76 @@ Refitting a dead powered speaker suits this well: the enclosure and driver
 are the parts that are expensive and hard to make, and 2.5 W into a real
 cabinet is far louder than 2.5 W into a bare driver.
 
+### PCM5102A — wiring
+
+The common GY-PCM5102A module. Header pins vary in order between clones,
+so match by **name**, not position.
+
+| Module | XIAO ESP32S3 | |
+| --- | --- | --- |
+| VIN / VCC | 5V | the module regulates it down itself |
+| GND | GND | |
+| BCK | D8 (GPIO7) | bit clock |
+| LCK / LRCK | D9 (GPIO8) | word select |
+| DIN | D10 (GPIO9) | data |
+| **SCK** | **GND** | see below |
+
+**Deliberately the same three signal pins as the MAX98357A**, so the
+firmware does not have to know which board is attached. Avoid D6/D7 —
+those carry the UART the serial log comes out of.
+
+**Two things account for almost every "wired correctly, no sound".**
+
+**SCK must be tied to GND.** It is the system-clock *input*, and grounding
+it tells the PCM5102A to run its internal PLL off the bit clock instead.
+Left floating, the DAC never locks and you get silence or noise. The ESP32
+can output a master clock, but not needing one is the reason this part was
+chosen.
+
+**XSMT must be high.** It is an active-low soft mute, so a low or floating
+XSMT is a hard mute that looks exactly like a dead DAC. Most modules pull
+it up or have a jumper; confirm it rather than assume.
+
+The other two mode pins matter less but should be checked:
+
+| Pin | Set to | Meaning |
+| --- | --- | --- |
+| FMT | low | I²S format, which is what the ESP32 emits |
+| DEMP | low | de-emphasis off |
+| FLT | low | normal-latency filter |
+| XSMT | **high** | unmuted |
+
+Most boards ship with all four already correct. FMT high would give
+left-justified data, which sounds like loud noise rather than silence —
+a useful thing to recognise.
+
+Keep the BCK wire short. At 48 kHz, stereo, 32-bit slots it runs at
+3.072 MHz, which is not fast but is fast enough that a long unshielded
+jumper next to a Wi-Fi antenna is asking for trouble.
+
+### PCM1808 — wiring, and why it can wait
+
+The ADC is the **Producer** side, and nothing is waiting on it: the Hub
+already produces, from system audio and now from Spotify. The DAC is the
+blocked path — it is what makes this project audible for the first time —
+so wire that first and get one thing working before adding a second.
+
+When it is time, the decision to make first is which end owns the clock:
+
+- **PCM1808 as master.** The module's onboard oscillator drives its SCK,
+  and the PCM1808 generates BCK and LRCK. The ESP32's I²S then runs as a
+  slave. Fewer wires from the ESP, but ESP-IDF's I²S slave mode is the
+  fussier of the two.
+- **ESP32 as master.** The ESP supplies MCLK, BCK and LRCK; the PCM1808
+  follows. The ESP32-S3 can route MCLK to any pin through its GPIO matrix,
+  and it keeps both audio directions on the same clock — which is what
+  decision 2's synchronisation goals want.
+
+The `MD0`/`MD1` pins select the mode and the SCK-to-sample-rate ratio, and
+the mapping differs between modules. Read the silkscreen and the module's
+own datasheet before wiring those two; the rest (VCC 5V, GND, OUT, BCK,
+LRC) is straightforward.
+
 ### CX31993 USB dongle
 
 Status: recorded, blocked, nothing scheduled.
