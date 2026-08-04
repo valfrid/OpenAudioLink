@@ -419,23 +419,38 @@ On a phone on the same Wi-Fi, open Spotify, play any track, and pick
 goes quiet, which is correct — the audio is going to the PC. The first
 window logs the login and the track name.
 
-Let it play about ten seconds, then **Ctrl+C**, and look at the file:
+**It will race through the playlist, and that is correct.** The pipe
+backend has no clock of its own: it writes as fast as it decodes and
+relies on whoever reads to pace it. A sound card paces it, and so does the
+Hub, which stops reading once it holds 100 ms of audio and lets the pipe
+fill. A *file* paces nothing, so librespot finishes each track in about a
+second and moves to the next. Seeing that happen is the flow-control
+mechanism visible by its absence.
+
+So do not time this test — measure it. Let **one** track finish, press
+**Ctrl+C** promptly, and compare the size against that track's length,
+which librespot logs when it loads it:
 
 ```
 dir C:\temp\test.raw
 ```
 
-**The size is the real result.** At 44.1 kHz, two channels, four bytes per
-sample, `F32` produces **352,800 bytes per second**, so ten seconds is
-roughly **3.5 MB**. Getting that means the whole chain works: login,
-streaming, decoding, and the pipe.
+**F32 stereo at 44.1 kHz is 352,800 bytes per second of music.** A track
+librespot reported as `(186056 ms)` should have written about **65.6 MB**.
 
-| File size after ~10 s | What it means |
+| Bytes per second of track | What it means |
 | --- | --- |
-| ~3.5 MB | Correct. `F32`, 44.1 kHz stereo, as expected. |
-| ~1.8 MB | Half. The build is emitting `S16`, not `F32` — check the `--format` argument. |
-| 0 bytes | It was found but never played. Spotify Premium is required. |
-| No file at all | The redirect did not happen; retype the command. |
+| ~352,800 | Correct: `F32`, 44.1 kHz, stereo |
+| ~176,400 | Half. The build is emitting `S16` — check `--format` |
+| 0 | Found but never played. Spotify Premium is required |
+| No file at all | The redirect did not happen; retype the command |
+
+Stop it promptly. Unpaced, a playlist fills a disk in minutes.
+
+There is no simple way to make this run in real time standalone on
+Windows, and it does not need to: the Hub is the consumer that paces it,
+and this test only has to prove the audio is correct, not that it arrives
+on time.
 
 Curious what is in it? Audacity can open raw PCM: **File → Import → Raw
 Data**, then set 32-bit float, little-endian, 2 channels, 44100 Hz. It
