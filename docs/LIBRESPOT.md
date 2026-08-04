@@ -1,6 +1,7 @@
 # Spotify Connect at the Hub
 
-Status: implemented, not yet verified end to end on hardware
+Status: implemented. Sign-in verified on hardware 2026-08-03; the
+audio path end to end is not yet.
 
 This is the first provider source for cast points (`CAST-POINTS.md`). It
 is what makes the feature the feature: choosing "Kitchen" in Spotify on a
@@ -166,6 +167,50 @@ the same VPN bit this project once before — applied to announcements.
 discovered there is nothing to match against, so the choice is left to
 librespot and revisited the moment one appears.
 
+## A receiver has to sign in. Discovery is not enough.
+
+**Established 2026-08-03, after two evenings of measuring the wrong
+things.** Current Spotify clients do not offer *unclaimed* zeroconf
+devices in their picker. A librespot that announces itself perfectly, on a
+network that provably carries the announcement, is invisible to every
+Spotify client until it has authenticated.
+
+The proof was a client on the same machine as the receiver, over loopback,
+with no network involved at all — and still nothing in the list. Running
+the same receiver with `--enable-oauth` and approving it in a browser put
+it in the picker immediately, beside the Google Cast devices and the
+account's other Connect endpoints.
+
+So the setup flow is: **each cast point signs in once, and is then simply
+there.** Which is what setting up any Connect speaker feels like, and what
+`CAST-POINTS.md` wants of the Hub's page — setup, and nothing else.
+
+```
+librespot --name "Kitchen" --backend pipe --format F32 --device-type speaker
+          --cache <hub data>/librespot/<cast point id> --enable-oauth
+```
+
+A browser opens on that machine, you approve, and a credential blob lands
+in the cache directory. The Hub already passes exactly that `--cache`
+path, so from then on its own instance starts signed in.
+
+### What it costs, and it is not nothing
+
+**Guests cannot claim a speaker.** The zeroconf hand-over — a stranger's
+phone finding an unclaimed receiver and giving it credentials — is the
+mechanism that makes a real Connect speaker usable by whoever is in the
+room, and current clients do not offer it. A cast point belongs to the
+account that signed it in.
+
+That is a genuine reduction against a Chromecast Audio, and it is
+Spotify's decision rather than this design's. It is also an argument for a
+second adapter: AirPlay does not work this way, and a house that wants
+guests playing in the kitchen may need one.
+
+**A one-time browser step per room.** A Hub running as a Windows service
+has no browser, and librespot's OAuth redirect lands on `127.0.0.1`, so
+the sign-in has to happen at the Hub machine. Once per cast point, ever.
+
 ## Being found is not one problem, it is two
 
 A receiver is in one of two states, and they are reached by different
@@ -193,7 +238,10 @@ So a cast point needs a one-time sign-in, and is then stable. That is
 precisely what setting up a Chromecast feels like, and it fits what
 `CAST-POINTS.md` asks for: the Hub's page is for setup and nothing else.
 
-### Where it went wrong here: the host could not hear
+### A real fault found on the way: the host could not hear
+
+Worth keeping even though it was not the answer, because it was a genuine
+fault and the Hub would have hit it too.
 
 Found 2026-08-03, after an evening of measuring the wrong direction.
 

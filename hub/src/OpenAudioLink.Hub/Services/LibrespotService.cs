@@ -66,6 +66,7 @@ public sealed class LibrespotService : BackgroundService
 
     private string? _streaming;
     private string? _lastComplaint;
+    private string _executablePath = "librespot";
 
     public LibrespotService(
         CastPointStore castPoints, DeviceRegistry registry, RtpStreamer streamer,
@@ -135,6 +136,7 @@ public sealed class LibrespotService : BackgroundService
             return;
         }
 
+        _executablePath = executable;
         _logger.LogInformation("Spotify Connect receivers will run from {Path}", executable);
 
         using var timer = new PeriodicTimer(Tick);
@@ -229,6 +231,7 @@ public sealed class LibrespotService : BackgroundService
                     : _options.CacheDirectory;
                 var cache = Path.Combine(root, point.Id);
                 Directory.CreateDirectory(cache);
+                WarnIfNotSignedIn(point.Name, cache);
 
                 _instances[point.Id] = new LibrespotInstance(
                     point.Id, point.Name, executable, cache, zeroconf, _options, StreamFormat,
@@ -282,6 +285,36 @@ public sealed class LibrespotService : BackgroundService
         // moment a speaker appears this is recomputed and the receivers
         // restart on the correct address.
         return null;
+    }
+
+    /// <summary>
+    /// Says, once per cast point, that it has never been signed in.
+    ///
+    /// Current Spotify clients do not offer *unclaimed* receivers in their
+    /// device picker (docs/LIBRESPOT.md). A cast point that has never
+    /// signed in therefore runs perfectly, announces itself correctly, and
+    /// is invisible — which took this project two evenings to establish
+    /// and should take the next person one log line.
+    /// </summary>
+    private void WarnIfNotSignedIn(string name, string cache)
+    {
+        if (File.Exists(Path.Combine(cache, "credentials.json")))
+        {
+            return;
+        }
+
+        // Built as one value rather than as placeholders: the point of the
+        // message is a line the operator can paste, and a structured logger
+        // is entitled to render placeholders however it likes.
+        var command =
+            $"\"{_executablePath}\" --name \"{name}\" --backend pipe " +
+            $"--format {PcmDecoder.ToLibrespotName(_options.SampleFormat)} " +
+            $"--device-type {_options.DeviceType} --cache \"{cache}\" --enable-oauth";
+
+        _logger.LogWarning(
+            "{Name} has never signed in to Spotify, so it will not appear in any device " +
+            "picker. Sign it in once, at this machine, with a browser available:\n  {Command}",
+            name, command);
     }
 
     private async Task DriveStreamAsync(CancellationToken cancellationToken)
