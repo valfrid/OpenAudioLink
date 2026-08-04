@@ -24,3 +24,10 @@ Thumbs.db
 # Local configuration and logs
 *.log
 appsettings.Local.json
+
+# Never in a public repository. The Spotify credential blob is reusable
+# playback access to a real account, and a captured pipe is most of an
+# album. Both live outside the tree in normal use; these are the safety net.
+credentials.json
+*.raw
+data/
