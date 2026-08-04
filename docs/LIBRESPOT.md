@@ -333,6 +333,54 @@ That makes the mesh's behaviour a real constraint on the product rather
 than a local annoyance, and worth fixing at the router rather than
 working around here.
 
+## "error audio key": stale credentials, and the fix
+
+Symptom: every track loads and is skipped about a second later, and the
+log carries
+
+```
+ERROR librespot_core::audio_key] error audio key 0 2
+WARN  Unable to load key, continuing without decryption: Service unavailable
+ERROR Unable to read audio file: Symphonia Decoder Error: channel closed
+ERROR Skipping to next track, unable to load track
+```
+
+librespot cannot fetch the decryption keys, so nothing can be decoded.
+
+This is [librespot issue #1649](https://github.com/librespot-org/librespot/issues/1649),
+**open with no documented fix**, reported against 0.7.0 and 0.8.0 and
+triggered by OAuth authentication with Spotify Connect playback. It is
+hitting Music Assistant, Home Assistant and spotify-player as well.
+
+**What worked here, 2026-08-03: delete the credential cache and sign in
+again.**
+
+```
+rmdir /s /q <hub data>\librespot\<cast point id>
+```
+
+then start once with `--enable-oauth`. The keys began working immediately
+and every track loaded cleanly. A stale token appears to be at least one
+cause, which is worth knowing given the upstream issue documents none.
+
+If a cast point starts skipping every track, that is the first thing to
+try. It costs one browser sign-in.
+
+## Do not judge the pipe by a file
+
+A file never blocks, so redirecting the pipe to one paces nothing:
+librespot decodes flat out, finishes a three-minute track in about a
+second, and races through the playlist. That is the flow-control
+mechanism visible by its absence, and it looks alarmingly like a fault.
+
+Measured here: **933 MB in a couple of minutes**, which at 352,800 bytes
+per second of music is about 45 minutes of audio. That is what success
+looks like on this test — not a file that grows in real time.
+
+The Hub is the consumer that paces it, by stopping at 100 ms of buffered
+audio and letting the pipe fill. Nothing else in this project should ever
+read that pipe as fast as it can.
+
 ## Two things worth understanding
 
 **Flow control is the pipe.** A pipe backend writes as fast as it can
