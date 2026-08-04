@@ -18,6 +18,16 @@ on:
         description: "librespot version to build (from crates.io)"
         default: "0.8.0"
         required: true
+      features:
+        description: >
+          Cargo features. with-libmdns is librespot's own mDNS responder and
+          is the default. with-dns-sd uses the system responder instead
+          (Apple Bonjour on Windows) and is the fallback when libmdns
+          announces correctly and nothing discovers it — see
+          docs/LIBRESPOT.md. It may not build without the Bonjour SDK
+          present, which is the thing to find out.
+        default: "native-tls,with-libmdns"
+        required: true
 
 jobs:
   windows:
@@ -46,7 +56,7 @@ jobs:
           --version ${{ inputs.version }}
           --locked
           --no-default-features
-          --features "native-tls,with-libmdns"
+          --features "${{ inputs.features }}"
           --root ${{ runner.temp }}\out
 
       # Proves the artifact is a program that runs, not just a file that
@@ -69,7 +79,7 @@ jobs:
             "| --- | --- |"
             "| Size | $size MB |"
             "| SHA256 | ``$hash`` |"
-            "| Features | ``native-tls,with-libmdns`` (no default features) |"
+            "| Features | ``${{ inputs.features }}`` (no default features) |"
             ""
             "Download the artifact below, unzip it, and put ``librespot.exe``"
             "beside the Hub executable. See docs/BUILDING-LIBRESPOT-WINDOWS.md."
