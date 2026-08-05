@@ -154,6 +154,14 @@ same header. It never enters the gap between the boards, so it cannot
 cross anything — and it keeps the grounding decision physically next to
 the pin it applies to.
 
+The alternative — carrying ground across from the XIAO's `GND` — was
+tried on the first build and is worse for a reason that is not obvious
+until it happens: the wire has to arc over the whole board, and landing
+one hole short puts it on `D7` instead. That looks like a finished
+joint, shorts a GPIO to ground harmlessly enough that nothing complains,
+and leaves `SCK` floating. The symptom is silence, which is the symptom
+of everything else too.
+
 The MAX98357A has a different header order again, so it wires with one
 crossed lead at these defaults. That is a soldering inconvenience and
 nothing more; change the GPIOs in `menuconfig` if it bothers you.
