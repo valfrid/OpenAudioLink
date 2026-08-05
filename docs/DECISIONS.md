@@ -817,6 +817,56 @@ Keeping (1) and (3) apart matters. A servo that tries to correct both with
 one control ends up chasing measurement noise with the sample clock, which
 is audible.
 
+### Two ways to do the rate matching, and Espressif ship the other one
+
+Rate matching has two shapes, and they are worth naming because the second
+is a component we could adopt rather than write:
+
+- **Trim the clock.** Pull the I²S clock a few parts per million through
+  the APLL until the ring stops drifting. Costs no CPU and touches no
+  samples: at a matched rate the audio is still bit-exact.
+- **Resample the audio instead.** Leave the clock alone and convert the
+  incoming stream by the tiny ratio it is off by — 1.000004 and slowly
+  varying. This is asynchronous sample rate conversion, and it is what you
+  reach for when you cannot control the playback clock.
+
+**`espressif/esp_asrc`** (registry v1.0.1; promoted to an official module in
+ESP-GMF v1.0) does the second. Rates at integer multiples of 4000 or
+11025 Hz up to 192 kHz, 16/24/32-bit signed interleaved plus 8-bit
+unsigned, any channel count, and a hardware/software cooperative design —
+it drives an ASRC peripheral on chips that have one and falls back to an
+optimised software path on those that do not, selected by
+`ESP_ASRC_PERF_TYPE_AUTO` / `HW_ONLY` / `SW_SPEED` / `SW_MEMORY`.
+
+**The clock trim is still the right first choice here**, for two reasons
+that are specific to this system rather than general:
+
+- **We own the playback clock.** Both candidate DACs are slaves — the
+  PCM5102A runs its PLL off the bit clock with SCK grounded, and the
+  MAX98357A never had a master clock. The ESP32 generates the rate, so the
+  cheap mechanism is available. ASRC exists for the case where it is not.
+- **The cost lands on every consumer, continuously.** ASRC on the playout
+  path is arithmetic on every sample for as long as music plays, competing
+  with an I²S deadline, on an S3 that as far as I know has no ASRC
+  peripheral — so the software path, whose CPU cost is unpublished. The
+  APLL trim costs a register write per correction.
+
+Three things to check before treating it as the fallback, none of which I
+could read from here — `components.espressif.com` is unreachable from this
+environment, so the above is from the registry summary and not from the
+API docs:
+
+1. **Whether the ratio can vary at runtime under an external error
+   signal.** A drift servo needs to nudge it continuously from the ring's
+   fill level. "Asynchronous" in some ASRC APIs only means the two rates
+   need not share a clock, with the ratio fixed at open.
+2. **Software-path CPU on an S3**, measured, alongside playout.
+3. **The licence.** `esp_audio_effects` is "Espressif Modified MIT" — must
+   be used with Espressif products, redistribution for non-Espressif
+   products prohibited, shipped prebuilt. Assume the same here until
+   checked, with the same conclusion: opt-in behind Kconfig, never in the
+   default build of an MIT-licensed project.
+
 ### What exists today, honestly
 
 Nothing that synchronises. What exists is the instrumentation for it:
