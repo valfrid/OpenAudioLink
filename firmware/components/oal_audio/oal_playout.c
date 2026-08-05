@@ -349,14 +349,32 @@ static void playout_task(void *arg)
     for (;;) {
         take_chunk(chunk);
 
-        size_t written = 0;
-        esp_err_t err = i2s_channel_write(
-            s_tx, chunk, sizeof(chunk), &written, pdMS_TO_TICKS(200));
-        if (err != ESP_OK) {
-            s_state.write_errors++;
-            continue;
+        /*
+         * Write the whole chunk, not as much of it as the driver felt
+         * like taking. A short write returns ESP_OK, and treating it as
+         * done silently discarded the tail: samples that had already been
+         * removed from the ring, so nothing counted them and the DAC
+         * appeared to be consuming faster than it plays. That is
+         * indistinguishable from a fast clock, which is exactly the
+         * question this file is currently being asked.
+         */
+        size_t offset = 0;
+        while (offset < sizeof(chunk)) {
+            size_t written = 0;
+            esp_err_t err = i2s_channel_write(
+                s_tx, (const uint8_t *)chunk + offset, sizeof(chunk) - offset,
+                &written, pdMS_TO_TICKS(200));
+            if (err != ESP_OK) {
+                s_state.write_errors++;
+                break;
+            }
+            if (written == 0) {
+                s_state.write_errors++;
+                break;
+            }
+            offset += written;
+            s_state.frames_played += written / (OAL_RTP_CHANNELS * sizeof(int32_t));
         }
-        s_state.frames_played += written / (OAL_RTP_CHANNELS * sizeof(int32_t));
 
         trace();
     }
