@@ -387,6 +387,8 @@ app.MapPost("/api/castpoints", (CastPointRequest request, CastPointStore store) 
         CastPointError.NameRequired => Results.BadRequest(new { error = "a name is required" }),
         CastPointError.NameUnusable => Results.BadRequest(
             new { error = "that name has no letters or digits to build an id from" }),
+        CastPointError.NameTaken => Results.Conflict(
+            new { error = "a cast point with that name already exists" }),
         _ => Results.BadRequest(new { error = error.ToString() }),
     };
 });
@@ -401,6 +403,10 @@ app.MapPut("/api/castpoints/{id}", (string id, CastPointRequest request, CastPoi
     if (error == CastPointError.NameRequired)
     {
         return Results.BadRequest(new { error = "a name is required" });
+    }
+    if (error == CastPointError.NameTaken)
+    {
+        return Results.Conflict(new { error = "a cast point with that name already exists" });
     }
     if (error != CastPointError.None)
     {

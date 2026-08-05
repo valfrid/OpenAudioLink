@@ -11,6 +11,15 @@ public enum CastPointError
     NameRequired,
     NameUnusable,
     NoDestinations,
+
+    /// <summary>
+    /// Another cast point already has this name. The id would have been
+    /// made unique, but the name is what Spotify shows: two "Party"
+    /// entries in the picker are indistinguishable to the person choosing,
+    /// and each has its own credentials, so one can be signed in and the
+    /// other not.
+    /// </summary>
+    NameTaken,
 }
 
 /// <summary>
@@ -107,6 +116,11 @@ public sealed class CastPointStore
 
         lock (_gate)
         {
+            if (_points.Any(p => NameMatches(p.Name, name)))
+            {
+                return CastPointError.NameTaken;
+            }
+
             var point = new CastPoint
             {
                 Id = CastPointId.MakeUnique(slug, candidate => _points.Any(p => p.Id == candidate)),
@@ -142,6 +156,14 @@ public sealed class CastPointStore
                 return CastPointError.NotFound;
             }
 
+            // Renaming onto another cast point's name is the same clash as
+            // creating one; renaming a cast point to what it is already
+            // called is not, which is why this skips itself.
+            if (_points.Any(p => p.Id != id && NameMatches(p.Name, name)))
+            {
+                return CastPointError.NameTaken;
+            }
+
             _points[index] = _points[index] with
             {
                 Name = name.Trim(),
@@ -151,6 +173,13 @@ public sealed class CastPointStore
             return CastPointError.None;
         }
     }
+
+    /// <summary>
+    /// Case- and whitespace-insensitive, because the clash is about what a
+    /// person reads in a device picker, not about what they typed.
+    /// </summary>
+    private static bool NameMatches(string existing, string? candidate) =>
+        string.Equals(existing.Trim(), candidate?.Trim(), StringComparison.OrdinalIgnoreCase);
 
     public bool Delete(string id)
     {
