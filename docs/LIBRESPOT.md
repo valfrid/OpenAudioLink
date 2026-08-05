@@ -402,6 +402,36 @@ The Hub is the consumer that paces it, by stopping at 100 ms of buffered
 audio and letting the pipe fill. Nothing else in this project should ever
 read that pipe as fast as it can.
 
+## No lossless, and it is not librespot's doing
+
+[Issue #1583](https://github.com/librespot-org/librespot/issues/1583):
+Spotify's lossless tier does not reach third-party Connect devices at all.
+Every Connect endpoint receives 320 kbps Ogg Vorbis regardless of what it
+can decode, and lossless works only inside Spotify's own applications.
+
+Not DRM, and not a gap in librespot — it decodes FLAC perfectly well. The
+data is simply not sent. A fork cannot fix it, for the same reason a fork
+cannot remove the sign-in: the missing half is on Spotify's servers. If
+Connect ever carries FLAC, librespot can implement it without difficulty.
+
+**What it means for the RTP profile.** Through this source the ceiling is
+320 kbps Vorbis, so carrying it as L24 at 48 kHz costs 2.3 Mbit/s of air
+for content that will never fill it. Nothing is lost by doing so and
+nothing is gained. The profile is sized for the best source the system
+will ever carry — a turntable through the ADC, or local files — and
+Spotify is not it.
+
+**If lossless matters, there is a route with a price.** Spotify's desktop
+application does play lossless, and the Hub can capture its output through
+WASAPI loopback (`WINDOWS-AUDIO-CAPTURE.md`). What it costs is the thing
+this whole design is built around: the room would be chosen at the Hub
+rather than on the phone. One app becomes two. A genuine choice rather
+than an upgrade.
+
+That route also needs `SystemAudioSource` to stop refusing a sample-rate
+mismatch — the desktop app's lossless is 44.1 kHz. `RationalResampler`
+already does the conversion; it is listed in `ROADMAP.md` as a known gap.
+
 ## Two things worth understanding
 
 **Flow control is the pipe.** A pipe backend writes as fast as it can

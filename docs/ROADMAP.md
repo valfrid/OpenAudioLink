@@ -124,12 +124,34 @@ Goals:
 - Hub control without Hub audio relay
 - standalone limited Controller mode later
 
+## Known gaps, small enough to fix when convenient
+
+- **`SystemAudioSource` refuses a sample-rate mismatch.** It throws when
+  the Windows endpoint is not at 48 kHz, with a comment saying resampling
+  is not implemented. It is now: `RationalResampler` was built for
+  librespot and does exactly this. Wiring it in matters more than it
+  sounds, because Spotify's lossless tier is only available inside their
+  own desktop app — capturing that app's output is the only route to
+  lossless from Spotify (`LIBRESPOT.md`), and it arrives at 44.1 kHz.
+- **Drift correction.** The playout ring absorbs it and counts both ends
+  but does not trim the clock. Belongs with decision 2's multi-speaker
+  synchronisation rather than on its own.
+- **Concealment.** A lost packet is 5 ms of silence, not an
+  interpolation. Worth measuring before deciding it needs fixing.
+
 ## Later candidates
 
 Priority is intentionally not fixed:
 
 - USB audio input
-- Spotify Connect
+- ~~Spotify Connect~~ — done, `LIBRESPOT.md`
+- AirPlay as a second provider adapter. The strongest remaining argument
+  is that it needs no account at all, where Spotify Connect binds a cast
+  point to whoever signed it in
+- Chromecast as a *provider*: a dongle's output into an ESP32 Producer,
+  keeping the Cast front end that already works and is account-free while
+  OpenAudioLink distributes to speakers. Analog through the PCM1808 first,
+  because it needs no new parts and no sample-rate conversion
 - internet radio
 - Home Assistant integration
 - Bluetooth input
@@ -137,3 +159,4 @@ Priority is intentionally not fixed:
 - more hardware profiles
 - alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode,
   a PC Consumer application, a Raspberry Pi Consumer (see decision 8)
+- a wall control surface — see `CONTROL-SURFACE.md`
