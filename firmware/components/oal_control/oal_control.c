@@ -725,6 +725,25 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     server_config.server_port = CONTROL_PORT;
     server_config.max_uri_handlers = 12; /* ten registered; the default of eight leaves no room */
 
+    /*
+     * Close the oldest connection rather than refusing the newest.
+     *
+     * The default is to refuse, and a node that refuses is a node that has
+     * disappeared: the Hub polls it, the portal will not load, and OTA
+     * cannot start. It happened on hardware — `httpd_accept_conn: error in
+     * accept (23)`, lwIP out of sockets, repeating forever — because
+     * nothing here ever gets to decide when a client goes away. A caller
+     * that opens a connection and leaves it idle costs one of the seven
+     * slots until it feels like closing, and two Hubs polling, a browser
+     * tab left open, or a client that keeps its connection alive is enough
+     * to take them all.
+     *
+     * Dropping the least recently used one is the right trade for a device
+     * whose requests are all short: the worst case is one client having to
+     * reconnect, against the whole control plane going dark.
+     */
+    server_config.lru_purge_enable = true;
+
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &server_config);
     if (err != ESP_OK) {

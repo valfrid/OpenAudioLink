@@ -43,7 +43,18 @@ builder.Services.AddHttpClient<DeviceCommandClient>();
 // A short timeout on purpose: a node that does not answer promptly is a
 // node whose reading would be stale anyway, and the poll comes round again.
 builder.Services.AddHttpClient(nameof(DeviceStatusService),
-    client => client.Timeout = TimeSpan.FromSeconds(3));
+        client => client.Timeout = TimeSpan.FromSeconds(3))
+    // Do not hoard connections to a device with seven sockets in total.
+    // .NET keeps pooled connections alive for minutes, which is right for a
+    // web service and wrong for an ESP32: an idle connection there is one
+    // of very few slots, and a node that runs out stops accepting anything
+    // at all — no status, no portal, no OTA. Seen on hardware as lwIP
+    // refusing every accept with errno 23.
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(10),
+        MaxConnectionsPerServer = 2,
+    });
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
 // Registered twice on purpose: the host runs it, and the API reads what it
