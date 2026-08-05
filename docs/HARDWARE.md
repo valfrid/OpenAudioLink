@@ -484,10 +484,27 @@ an access point that periodically leaves the channel to scan stops
 serving its clients for about this long and delivers the backlog
 afterwards.
 
-The cheap test settles both in the right order — move the Hub to the
-wired server, which removes the first hop entirely; if the holes survive
-that, try a plain SSID with roaming assistance and band steering off.
-Neither has been run yet.
+**Moving the Hub to the wired server settled it.** Minutes at a time of
+`+0 ppm`, zero underruns, zero drops, zero silence, with the ring sitting
+at 105 ms against its 100 ms target and swinging about 35 ms. The holes
+were the laptop's own wireless hop, not the mesh.
+
+What is left looks like ordinary radio: one five-second window short by
+40 ms, in the same interval that RSSI moved from −52 to −57, and the
+window after it took a 55 ms deficit without a single underrun. That is
+a buffer doing its job rather than a fault, and it is the point at which
+this stopped being worth chasing.
+
+Getting there needed one more fix, and it is the reason the wired test
+looked at first like a regression: **the audio socket must send from the
+interface that can reach the receiver.** It bound to `0.0.0.0` and let
+the routing table choose, so on a server with Tailscale and a Hyper-V
+switch the audio left by an interface the node cannot be reached from —
+the Hub counting packets sent, the node reporting nothing received, both
+telling the truth. `LocalAddressSelector` was written for exactly this
+and was already used for OTA and for librespot's zeroconf; the audio
+socket was simply never given it. A machine with one interface cannot
+show this fault, which is why every earlier test passed.
 
 One lesson worth keeping: the node's arrival figure is measured when the
 *node reads the socket*, so it cannot tell a late sender from a late
