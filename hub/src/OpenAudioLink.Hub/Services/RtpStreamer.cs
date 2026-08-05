@@ -106,7 +106,18 @@ public sealed class RtpStreamer : IAsyncDisposable
             _endpoints = [.. destinations.Select(d => new IPEndPoint(d, port))];
             _status = new StreamStatus(
                 true, sourceKind, source.Description, addresses, port, format.RtpmapName, 0, 0);
-            _worker = Task.Run(() => RunAsync(source, format, _cancellation.Token));
+            // A dedicated thread, not the thread pool. The send loop has a
+            // deadline every 5 ms and shares the pool with everything else
+            // the Hub does — librespot's pipe reader alone moves 176 KB a
+            // second — so its continuations queue behind other work. On
+            // hardware that showed up at the far end as the sender falling
+            // 80 ms behind and then catching up in a lump, with no packet
+            // ever lost. LongRunning gives the loop a thread of its own.
+            _worker = Task.Factory.StartNew(
+                () => Run(source, format, _cancellation.Token),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
 
             _logger.LogInformation("Streaming {Description} as {Encoding} to {Count} destination(s) {Destinations}:{Port}",
                 source.Description, format.RtpmapName, addresses.Count, string.Join(", ", addresses), port);
@@ -215,9 +226,19 @@ public sealed class RtpStreamer : IAsyncDisposable
         _logger.LogInformation("Stream stopped after {Packets} packets", _status.PacketsSent);
     }
 
-    private async Task RunAsync(
+    /// <summary>
+    /// The send loop. Deliberately synchronous: every <c>await</c> inside it
+    /// is a chance for the continuation to queue behind other work, and a
+    /// loop that must wake 200 times a second cannot afford that. It owns
+    /// its thread, so blocking on a send costs nothing but its own time.
+    /// </summary>
+    private void Run(
         IAudioSource source, AudioStreamFormat format, CancellationToken cancellationToken)
     {
+        // Above the Hub's ordinary work, below anything the OS needs. This
+        // is the one loop in the process with a hard deadline.
+        Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
+
         using var owned = source;
         using var socket = new UdpClient(AddressFamily.InterNetwork);
         // Set unconditionally: the destination list can change while the
@@ -287,7 +308,7 @@ public sealed class RtpStreamer : IAsyncDisposable
                     {
                         try
                         {
-                            await socket.SendAsync(packet.AsMemory(0, length), endpoint, cancellationToken);
+                            socket.Client.SendTo(packet, 0, length, SocketFlags.None, endpoint);
                         }
                         catch (SocketException ex)
                         {
@@ -309,7 +330,7 @@ public sealed class RtpStreamer : IAsyncDisposable
                     UnderrunSamples = source.UnderrunSamples,
                     SendErrors = sendErrors,
                 };
-                await Task.Delay(1, cancellationToken);
+                Thread.Sleep(1);
             }
         }
         catch (OperationCanceledException)
