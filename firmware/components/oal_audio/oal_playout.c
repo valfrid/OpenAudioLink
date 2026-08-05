@@ -96,6 +96,13 @@ static oal_playout_state_t s_state;
 static size_t s_target_samples;
 
 /*
+ * Above this the playout trims. Far enough above the target that ordinary
+ * jitter never reaches it, far enough below the capacity to leave a burst
+ * somewhere to go.
+ */
+static size_t s_trim_above;
+
+/*
  * Only the consumer task calls oal_playout_submit, so one scratch buffer
  * serves it. Converting straight into the ring would mean doing the wrap
  * arithmetic twice — once for the copy and once for the conversion — and
@@ -265,6 +272,29 @@ static size_t take_chunk(int32_t *chunk)
 
     if (s_available < s_fill_min) {
         s_fill_min = s_available;
+    }
+
+    /*
+     * Walk the fill back down towards the target, one frame at a time.
+     *
+     * Nothing else does. Sender and DAC run at the same average rate, so
+     * wherever a burst leaves the ring is where it stays — measured on
+     * hardware creeping from 105 ms to 190 ms of a 200 ms ring over a few
+     * minutes and staying there. That is not extra safety: with 10 ms left
+     * above it the next burst overflows, while the deep gaps empty it
+     * anyway, so the ring manages to drop *and* starve at once. At its
+     * target it did neither for minutes together.
+     *
+     * One frame per 5 ms chunk is about 4000 ppm — 100 ms of excess gone
+     * in half a minute, and a single frame dropped at 48 kHz is not
+     * audible. This is the crudest form of decision 12's rate matching,
+     * doing one job only: keeping the headroom on both sides of the fill
+     * instead of all on one.
+     */
+    if (s_available > s_trim_above) {
+        s_read = (s_read + OAL_RTP_CHANNELS) % CAPACITY_SAMPLES;
+        s_available -= OAL_RTP_CHANNELS;
+        s_state.trimmed_frames++;
     }
 
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
@@ -470,6 +500,8 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
 
     s_state.running = true;
     s_state.channel = config->channel;
+    s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;
+
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
     s_state.capacity_frames = CAPACITY_SAMPLES / OAL_RTP_CHANNELS;
 
