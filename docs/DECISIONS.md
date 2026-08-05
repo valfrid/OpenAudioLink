@@ -938,6 +938,37 @@ to a Vorbis stream), or permitting a non-48 rate **only on a cast point
 with exactly one consumer** — which is precisely the case where a second
 clock domain synchronises with nothing and costs nothing.
 
+### If a node ever does have to resample
+
+Espressif ship one, so this would not start from nothing:
+
+**`espressif/esp_audio_effects`** — component registry, v1.2.1 as read;
+source under `espressif/esp-adf-libs`. Its **rate conversion** module covers
+4–192 kHz plus integer multiples of 4000 and 11025 Hz, in s16, s24 and s32,
+interleaved or planar, on ESP32 through S3, C2/C3/C5/C6 and P4. So
+44 100 → 48 000 is in range, and s24 matches our wire format without an
+intermediate conversion.
+
+Two things to check before leaning on it, because both decide the question
+rather than colour it:
+
+- **No published CPU figures**, which is the only number that matters here.
+  Decision 3's internet-radio node is CPU-bound before the resampler
+  exists; "Espressif ship a resampler" is not evidence it fits alongside a
+  Vorbis decode and an I²S deadline. Measure on hardware, against a real
+  decode, before designing around it.
+- **The licence is not open source.** It is an "Espressif Modified MIT":
+  the software *must be used in conjunction with Espressif products*, and
+  redistribution for use with non-Espressif products is prohibited. Shipped
+  as a prebuilt library, so there is nothing to read and nothing to
+  host-test — where our own `RationalResampler` was validated on a PC
+  before any hardware saw it.
+
+That makes it the same shape as decision 11's librespot question: fine to
+depend on for firmware that by definition only runs on an ESP32, but it is
+a non-free dependency and should arrive as an opt-in component behind a
+Kconfig flag, not quietly in the default build of an MIT-licensed project.
+
 ### Consequences
 
 - Decision 3's open question is closed: an internet-radio node resamples,
