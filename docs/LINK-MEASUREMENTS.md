@@ -73,6 +73,43 @@ added for about seventy seconds and then removed, which the producer's
 counters show as 104,006 packets against 117,954 datagrams. The consumer
 noticed nothing.
 
+## Run 16: the Hub to a node, which is the hop that matters
+
+Decision 11 named this the most important gap in this document, because
+once the Hub became a Producer in ordinary use it carries almost all the
+audio — and every run above measures node to node instead.
+
+Hardware: Windows Hub on a **wired** server, one XIAO ESP32-S3 with a
+PCM5102A, two hops (server → switch → access point → node). Firmware
+0.9.5, channel 7, 20 MHz, RSSI about −50.
+
+| # | Path | Consumer loss | Loss shape | Jitter | Dup / reorder |
+|---|---|---|---|---|---|
+| 16 | wired Hub, 2 hops | **0% of 71,901** | no gaps | **2.33 ms** | 0 / 0 |
+
+Six minutes, not one packet lost and not one gap. Jitter is higher than
+the best node-to-node runs (1.0–1.5 ms) and that is expected rather than
+disappointing: a general-purpose operating system schedules the sender,
+where an ESP32 does nothing else. It is also **less than half** what the
+same Hub produced before its send loop was taken off the .NET thread pool
+and given its own — 5.5 ms then, 2.33 ms now.
+
+Two cautions about reading this run:
+
+- **`payloadErrors` is meaningless here.** It compares every sample
+  against the pattern source and the producer was sending a tone, so it
+  counts nearly all of them. Only a `pattern` producer makes that column
+  mean anything.
+- **Zero loss does not mean the audio was clean.** Runs 1–15 could treat
+  loss as the whole story because nothing was playing them. This run had a
+  DAC on the end, and the same link that lost nothing still produced
+  audible dropouts until the playout buffer was resized and the sender's
+  scheduling fixed. Late is not lost, and only the receiver's playout
+  counters show the difference (`HARDWARE.md`).
+
+The second point is the general lesson of this document's next chapter: a
+loss figure of zero was necessary and nowhere near sufficient.
+
 ## What the series established
 
 **Wi-Fi power save costs packets.** Run 1 → 2: loss halved and jitter fell
