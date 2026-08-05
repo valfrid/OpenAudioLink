@@ -134,8 +134,14 @@ Goals:
   own desktop app — capturing that app's output is the only route to
   lossless from Spotify (`LIBRESPOT.md`), and it arrives at 44.1 kHz.
 - **Drift correction.** The playout ring absorbs it and counts both ends
-  but does not trim the clock. Belongs with decision 2's multi-speaker
+  but does not trim the clock. Belongs with decision 12's multi-speaker
   synchronisation rather than on its own.
+- **The audio sink drops the frame index.** `oal_stream_sink_t` is
+  `(payload, frames)`, so playout knows what the samples are but not which
+  frames they are. Decision 12's playout contract is "play frame N at time
+  T", which needs N: the signature has to grow the packet's RTP timestamp.
+  One parameter, one call site, both ends in this repo — worth doing the
+  next time that file is open, well before anything depends on it.
 - **Concealment.** A lost packet is 5 ms of silence, not an
   interpolation. Worth measuring before deciding it needs fixing.
 
