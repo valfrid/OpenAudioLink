@@ -55,6 +55,35 @@ has no Hub at all — a turntable claims the Controller role and speakers
 join it. A panel that finds *whoever* is Controller works in the house and
 at the party, using the peer table and the election that already exist.
 
+## The panel could be the head of a headless system
+
+Decision 9 says the Controller is a small role and the Hub is merely a
+device that hosts it — verified on hardware in both the house case and the
+party case, where a turntable claimed the role and speakers joined it.
+
+So a panel holding the Controller role is not a new architecture. It is a
+third host for a role that already moves, and it makes a house with **no
+PC at all** coherent: speakers, a source, and a screen by the door.
+
+**What a panel can host:** discovery, the peer table, the election, the
+cast points, and telling a Producer where to send. All of it is small.
+Cast points are a name and a handful of device ids, which fits NVS
+comfortably.
+
+**What it cannot host: a streaming service receiver.** librespot needs a
+real operating system — a filesystem, TLS, an OGG decoder, hundreds of
+megabytes of dependencies. No ESP32 is going to run it.
+
+That boundary is exactly decision 8's and 9's separation doing its job:
+**Controller is not Provider.** A panel-headed house plays a turntable, a
+line input, or anything the ADC can reach. It does not play Spotify.
+Adding Spotify means adding a machine, and that machine may as well be the
+Hub.
+
+Worth being blunt about, because "just put the Controller on the wall
+panel" sounds like it removes the PC entirely, and it only removes the PC
+from the deployments that never needed streaming.
+
 ## What either one actually does
 
 Very little, which is the point. Both are clients of endpoints the Hub
@@ -72,8 +101,9 @@ pressing buttons that exist.
 
 ## Order, if this is ever built
 
-1. **The room URL.** A page that accepts a room and starts scoped to it.
-   That alone makes tags useful, and it is an afternoon of UI work.
+1. **A web app served by the Hub**, with a room URL so a page can start
+   scoped to one room. That alone makes tags useful, and it needs no
+   hardware.
 2. **Tags.** Print or stick. No code.
 3. **The panel**, if the tags prove the idea and the screen still appeals.
    By then the API it needs will have been exercised by a real user rather
@@ -81,3 +111,16 @@ pressing buttons that exist.
 
 Doing it in that order means the expensive half is only built if the cheap
 half turns out to be used.
+
+### One constraint on how the web app is written
+
+**Talk only to the documented endpoints, and render entirely in the
+browser.** No server-side templating, no Hub-specific glue.
+
+That is not architectural purity for its own sake. It is what lets the
+same page be served later by something that is not the Hub — a wall panel
+hosting the Controller role, serving the same endpoints from
+`oal_control`, which already runs an HTTP server on every node.
+
+Written that way, "break it out onto the wall" is a matter of hosting the
+files somewhere else. Written the other way, it is a rewrite.
