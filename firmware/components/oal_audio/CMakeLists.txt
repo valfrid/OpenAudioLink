@@ -3,4 +3,4 @@ idf_component_register(
          "oal_playout.c"
     INCLUDE_DIRS "include"
     REQUIRES oal_rtp
-    PRIV_REQUIRES driver)
+    PRIV_REQUIRES driver esp_timer)

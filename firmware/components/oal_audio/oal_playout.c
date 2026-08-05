@@ -5,6 +5,7 @@
 
 #include "driver/i2s_std.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -62,6 +63,27 @@ static size_t s_available;
 static bool s_primed;
 static uint32_t s_starved_chunks;
 static uint32_t s_reported_drop_seconds;
+
+/*
+ * A periodic trace, because the counters alone cannot tell a buffer that
+ * swings from one that drifts. Both show as silence and drops; only their
+ * shape over time separates them, and only the two rates side by side say
+ * which end is wrong.
+ *
+ * The two rates are the point. Frames arriving per second is the sender's
+ * idea of 48 kHz; frames written to the DAC per second is this board's.
+ * Everything about a playout buffer follows from their difference, and
+ * until they are both measured every explanation for a dropout is a
+ * guess.
+ */
+#define TRACE_INTERVAL_US 5000000
+
+static uint64_t s_trace_at_us;
+static uint64_t s_trace_played;
+static uint64_t s_submitted_frames;
+static uint64_t s_trace_submitted;
+static size_t s_fill_min;
+static size_t s_fill_max;
 
 static oal_playout_state_t s_state;
 static size_t s_target_samples;
@@ -151,6 +173,11 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
     }
     s_write = (s_write + samples) % CAPACITY_SAMPLES;
     s_available += samples;
+    s_submitted_frames += frames;
+
+    if (s_available > s_fill_max) {
+        s_fill_max = s_available;
+    }
 
     xSemaphoreGive(s_lock);
 }
@@ -229,6 +256,10 @@ static size_t take_chunk(int32_t *chunk)
 
     s_starved_chunks = 0;
 
+    if (s_available < s_fill_min) {
+        s_fill_min = s_available;
+    }
+
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
 
     size_t first = CAPACITY_SAMPLES - s_read;
@@ -251,6 +282,65 @@ static size_t take_chunk(int32_t *chunk)
     return copied;
 }
 
+/**
+ * Reports the buffer's shape and both clocks, every TRACE_INTERVAL_US.
+ *
+ * Read `in` against `out`: equal means the buffer is only absorbing
+ * jitter, and any silence or drops came from bursts. Different means one
+ * clock is wrong relative to the other, the difference in ppm says by how
+ * much, and the sign says which way the ring will eventually fail — up
+ * into drops, down into silence.
+ *
+ * `min` and `max` are the swing across the interval. A ring that lives
+ * near its target with a wide swing has a bursty sender; one that walks
+ * steadily from target to an edge has a rate mismatch. The counters alone
+ * cannot tell those apart, which is what made the first hardware test
+ * slow to diagnose.
+ */
+static void trace(void)
+{
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    if (now - s_trace_at_us < TRACE_INTERVAL_US) {
+        return;
+    }
+
+    size_t fill_min, fill_max, fill_now;
+    uint64_t submitted;
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
+        return;
+    }
+    fill_min = s_fill_min > CAPACITY_SAMPLES ? s_available : s_fill_min;
+    fill_max = s_fill_max;
+    fill_now = s_available;
+    submitted = s_submitted_frames;
+    s_fill_min = CAPACITY_SAMPLES + 1; /* re-armed above any real fill */
+    s_fill_max = 0;
+    xSemaphoreGive(s_lock);
+
+    uint64_t elapsed_us = now - s_trace_at_us;
+    uint64_t played = s_state.frames_played - s_trace_played;
+    uint64_t arrived = submitted - s_trace_submitted;
+
+    s_trace_at_us = now;
+    s_trace_played = s_state.frames_played;
+    s_trace_submitted = submitted;
+
+    uint32_t in_hz = (uint32_t)(arrived * 1000000ULL / elapsed_us);
+    uint32_t out_hz = (uint32_t)(played * 1000000ULL / elapsed_us);
+    int32_t ppm = out_hz ? (int32_t)(((int64_t)in_hz - out_hz) * 1000000 / out_hz) : 0;
+
+    ESP_LOGI(TAG,
+             "buffer %u/%u/%u ms (min/now/max), in %" PRIu32 " Hz, out %" PRIu32
+             " Hz, %+" PRId32 " ppm, underruns %" PRIu32 ", dropped %" PRIu32
+             " ms, silence %" PRIu32 " ms",
+             (unsigned)(fill_min / OAL_RTP_CHANNELS * 1000 / OAL_RTP_SAMPLE_RATE),
+             (unsigned)(fill_now / OAL_RTP_CHANNELS * 1000 / OAL_RTP_SAMPLE_RATE),
+             (unsigned)(fill_max / OAL_RTP_CHANNELS * 1000 / OAL_RTP_SAMPLE_RATE),
+             in_hz, out_hz, ppm, s_state.underruns,
+             s_state.dropped_frames / (OAL_RTP_SAMPLE_RATE / 1000),
+             s_state.silence_frames / (OAL_RTP_SAMPLE_RATE / 1000));
+}
+
 static void playout_task(void *arg)
 {
     (void)arg;
@@ -267,6 +357,8 @@ static void playout_task(void *arg)
             continue;
         }
         s_state.frames_played += written / (OAL_RTP_CHANNELS * sizeof(int32_t));
+
+        trace();
     }
 }
 
@@ -347,6 +439,9 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
         s_tx = NULL;
         return err;
     }
+
+    s_fill_min = CAPACITY_SAMPLES + 1;
+    s_trace_at_us = (uint64_t)esp_timer_get_time();
 
     s_state.running = true;
     s_state.channel = config->channel;
