@@ -354,8 +354,8 @@ table above.
 
 The first sound this project makes should be the Hub's test tone:
 
-1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.1.
-2. The log says `I2S out on BCLK=7 WS=9 DOUT=8, 48000 Hz, stereo, 60 ms
+1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.3.
+2. The log says `I2S out on BCLK=7 WS=9 DOUT=8, 48000 Hz, stereo, 100 ms
    buffer`. If it does not, audio never started and the reason is on the
    line after it — the node still receives and still counts, so this is
    survivable rather than fatal.
@@ -387,7 +387,7 @@ every sample against the pattern source, so a tone makes it count nearly
 every sample. Large numbers there mean nothing unless the producer was
 sending `pattern`.
 
-Expect about **80 ms** from the Hub to the speaker: 60 ms of playout
+Expect about **120 ms** from the Hub to the speaker: 100 ms of playout
 buffer and 20 ms of DMA. Both are visible in the log line and adjustable.
 
 ### What the first hardware test changed
@@ -478,8 +478,9 @@ rather than the cure.
 The buffer was resized as part of the same fix: **a playout buffer is
 sized by the largest gap a sender can leave, not by the network's jitter.**
 Wi-Fi jitter here is 1–2 ms; the sender's gap was 15.6 ms and its bursts
-were longer. 20 ms of ring never stood a chance. It is now 60 ms of target
-inside 160 ms of ring.
+were longer. 20 ms of ring never stood a chance. It became 60 ms of target inside 160 ms of
+ring, and then 100 ms inside 200 ms once the sender was fixed and the
+remaining gaps could be measured properly.
 
 ### What is deliberately not solved yet
 

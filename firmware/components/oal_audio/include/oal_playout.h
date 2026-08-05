@@ -48,7 +48,7 @@ typedef struct {
      *
      * Set against the longest gap a sender leaves rather than the
      * network's jitter — a PC waking on a 15.6 ms timer leaves a bigger
-     * hole than Wi-Fi does. Zero takes the 60 ms default.
+     * hole than Wi-Fi does. Zero takes the 100 ms default.
      */
     uint32_t target_ms;
 

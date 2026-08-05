@@ -20,7 +20,7 @@ static const char *TAG = "oal_playout";
 #define CHUNK_SAMPLES  (CHUNK_FRAMES * OAL_RTP_CHANNELS)
 
 /*
- * 160 ms of ring, which is not sized by the network's jitter but by the
+ * 200 ms of ring, which is not sized by the network's jitter but by the
  * sender's cadence.
  *
  * The first hardware test made the distinction obvious. A Windows sender
@@ -32,10 +32,17 @@ static const char *TAG = "oal_playout";
  * time it did the playout re-primed — which is what a listener hears.
  *
  * So the ring has to cover the largest gap a sender can leave, not the
- * jitter a good network adds. 160 ms holds a 60 ms default target with
- * 100 ms above it for bursts.
+ * jitter a good network adds.
+ *
+ * 200 ms, holding a 100 ms default target with 100 ms above it. The
+ * second figure came from the same hardware once the sender was fixed:
+ * with delivery smooth the ring settled around its target and swung about
+ * 35 ms either way, but occasional gaps of 60 to 70 ms still emptied a
+ * 60 ms target completely. A target has to be larger than the worst gap,
+ * not the average one, and 15 KB of RAM is a cheap way to stop caring
+ * about the difference.
  */
-#define CAPACITY_PACKETS 32
+#define CAPACITY_PACKETS 40
 #define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
 
 /*
@@ -47,8 +54,8 @@ static const char *TAG = "oal_playout";
 
 /*
  * DMA holds 20 ms on top of the ring. It is part of the latency and worth
- * stating rather than discovering: with the default 60 ms target, a sample
- * spends about 80 ms between arriving and being heard.
+ * stating rather than discovering: with the default 100 ms target, a sample
+ * spends about 120 ms between arriving and being heard.
  */
 #define DMA_DESCRIPTORS 4
 
@@ -390,7 +397,7 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     }
 
     uint32_t rate = config->sample_rate ? config->sample_rate : OAL_RTP_SAMPLE_RATE;
-    uint32_t target_ms = config->target_ms ? config->target_ms : 60;
+    uint32_t target_ms = config->target_ms ? config->target_ms : 100;
 
     s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
     if (s_target_samples > CAPACITY_SAMPLES / 2) {
