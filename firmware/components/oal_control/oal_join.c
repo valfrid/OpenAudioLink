@@ -111,6 +111,17 @@ static bool ask(const oal_peer_t *controller)
             }
         }
         esp_http_client_close(client);
+    } else {
+        /*
+         * Worth a line. A Controller that answers badly already logs, but
+         * one that does not answer at all said nothing — and that is the
+         * case that repeats every five seconds forever, which is exactly
+         * what a stale peer looks like after a Hub moves to another
+         * machine. Silence here made a node retrying a dead address
+         * indistinguishable from a node with nothing to do.
+         */
+        ESP_LOGW(TAG, "join to %s at %s did not connect",
+                 controller->name, controller->address);
     }
 
     esp_http_client_cleanup(client);

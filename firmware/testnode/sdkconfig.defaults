@@ -42,3 +42,10 @@ CONFIG_FREERTOS_HZ=1000
 # refused by the driver before it left. Doubling the pool costs a little
 # heap on a board with 8 MB of PSRAM available.
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
+
+# lwIP's default of ten sockets is thin for a device that runs an HTTP
+# server, an HTTP client, an RTP socket and discovery at once. Seven were
+# left for the control server, and losing them took the whole control
+# plane down while audio carried on playing: no status, no portal, no OTA,
+# and a log full of accept errors. Sixteen costs a few hundred bytes.
+CONFIG_LWIP_MAX_SOCKETS=16
