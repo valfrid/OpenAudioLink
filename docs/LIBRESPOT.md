@@ -204,6 +204,23 @@ A browser opens on that machine, you approve, and a credential blob lands
 in the cache directory. The Hub already passes exactly that `--cache`
 path, so from then on its own instance starts signed in.
 
+**Stop that process afterwards.** It is easy to leave it running, and the
+result is genuinely confusing rather than merely untidy: the terminal
+instance keeps the cast point's name, so Spotify offers it rather than the
+Hub's, and playing to it produces
+
+```
+ERROR librespot_playback::player] Audio Sink Error On Write: <StdoutSink>
+Windows stdio in console mode does not support writing non-UTF-8 byte
+sequences
+```
+
+which reads like a failed sign-in and is not. `--backend pipe` writes raw
+PCM to standard output; the Hub redirects that to a pipe it reads, while a
+terminal has a console there and Windows refuses to put arbitrary bytes on
+one. The message means the audio had nowhere to go. Ctrl+C, and let the Hub
+start its own.
+
 Verified on both a desktop client and a phone: signing in once registers
 the device against the account, and it then appears everywhere that
 account is used. The machine that did the authorising is not special.

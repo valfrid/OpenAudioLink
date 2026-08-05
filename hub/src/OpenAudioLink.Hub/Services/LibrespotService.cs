@@ -313,7 +313,11 @@ public sealed class LibrespotService : BackgroundService
 
         _logger.LogWarning(
             "{Name} has never signed in to Spotify, so it will not appear in any device " +
-            "picker. Sign it in once, at this machine, with a browser available:\n  {Command}",
+            "picker. Sign it in once, at this machine, with a browser available:\n  {Command}\n" +
+            "Then stop it with Ctrl+C. Leaving it running is the confusing case: it keeps the " +
+            "name, so Spotify plays into the terminal instead of the Hub, and it complains that " +
+            "Windows stdio in console mode does not support writing non-UTF-8 byte sequences. " +
+            "That message means the audio had nowhere to go, not that the sign-in failed.",
             name, command);
     }
 
