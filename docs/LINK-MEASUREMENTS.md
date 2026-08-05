@@ -110,6 +110,34 @@ Two cautions about reading this run:
 The second point is the general lesson of this document's next chapter: a
 loss figure of zero was necessary and nowhere near sufficient.
 
+## Run 17: real music, end to end, for an hour
+
+The same path carrying what it was built for — Spotify Connect into
+librespot, resampled 44.1 to 48 kHz at the Hub, out as RTP, through the
+node's DAC into powered speakers. Firmware 0.9.5, wired Hub.
+
+| # | Path | Consumer loss | Loss shape | Jitter | Dup / reorder |
+|---|---|---|---|---|---|
+| 17 | wired Hub, 2 hops, 46 min | **0.001%** of 504,886 | 3 gaps, longest 2 | **1.33 ms** | 0 / 0 |
+
+Six packets in half a million, in three gaps of two. Jitter *lower* than
+run 16's tone at 2.33 ms, which is the opposite of what might be expected
+from a heavier source and is worth not over-reading: both runs are well
+inside what the playout buffer absorbs, and the difference is more likely
+the machine's mood than anything structural.
+
+Two numbers from the Hub's side belong with it, because neither is
+visible from the node:
+
+- **`underrunSamples: 66160`** — the *source* ran dry, not the network.
+  librespot's pipe had nothing when the streamer asked, about 0.7 seconds
+  across 46 minutes, most plausibly at track boundaries. The Hub inserts
+  silence and carries on. Worth watching rather than fixing.
+- **`worstStallMs: 85` over 16,309 late wakes** — the sender was still
+  descheduled for up to 85 ms at a time. Inaudible only because the node's
+  playout target is 100 ms, which leaves 15 ms of margin. This run predates
+  the Hub's GC change; the same field is how to tell whether that helped.
+
 ## What the series established
 
 **Wi-Fi power save costs packets.** Run 1 → 2: loss halved and jitter fell

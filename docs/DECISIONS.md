@@ -689,9 +689,12 @@ clipping is not recoverable.
 
 ## 11. Spotify Connect is the first provider source, and the Hub resamples
 
-**Status:** implemented 2026-08-02, not yet verified end to end on
-hardware. See `CAST-POINTS.md` for the model and `LIBRESPOT.md` for how it
-is run.
+**Status:** implemented 2026-08-02, **verified end to end on hardware
+2026-08-05** — Spotify Connect through librespot, resampled at the Hub,
+out as RTP to a XIAO ESP32-S3 driving a PCM5102A into powered speakers,
+for 46 minutes with six packets lost in half a million
+(`LINK-MEASUREMENTS.md` run 17). See `CAST-POINTS.md` for the model and
+`LIBRESPOT.md` for how it is run.
 
 ### The decision
 
