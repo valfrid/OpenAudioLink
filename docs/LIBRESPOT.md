@@ -221,6 +221,26 @@ terminal has a console there and Windows refuses to put arbitrary bytes on
 one. The message means the audio had nowhere to go. Ctrl+C, and let the Hub
 start its own.
 
+### One sign-in covers every cast point
+
+**The credential authenticates the account, not the device.** A second cast
+point given a copy of the first's `credentials.json` appeared in the picker
+and played with no browser round trip of its own — tested on hardware with
+two cast points on one Hub.
+
+So the Hub seeds a new cast point from any existing signed-in one, and
+"sign in to each room" is not a setup step. It matters more than it sounds:
+a house gains rooms one at a time, and a party gains them all at once with
+someone waiting.
+
+Each instance still generates its own device id and appears as its own
+entry in the picker, so the rooms remain separate devices — they simply
+share the account they were always going to share.
+
+The file is copied rather than shared. librespot writes that path, and
+several processes writing one file is a way to lose every room's login at
+once instead of one room's.
+
 Verified on both a desktop client and a phone: signing in once registers
 the device against the account, and it then appears everywhere that
 account is used. The machine that did the authorising is not special.

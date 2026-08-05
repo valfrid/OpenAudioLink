@@ -224,14 +224,20 @@ public sealed class LibrespotService : BackgroundService
                     _playingSince.Remove(point.Id);
                 }
 
-                // Credentials are per cast point because each is a separate
-                // Spotify device, and the phone logs into them separately.
+                // Each cast point is a separate Spotify device with its own
+                // cache, but the credential in it authenticates the account
+                // rather than the device — verified on hardware by giving a
+                // second cast point a copy of the first's and watching it
+                // appear in the picker and play, with no sign-in of its own.
                 var root = string.IsNullOrWhiteSpace(_options.CacheDirectory)
                     ? Path.Combine(_paths.DataDirectory, "librespot")
                     : _options.CacheDirectory;
                 var cache = Path.Combine(root, point.Id);
                 Directory.CreateDirectory(cache);
-                WarnIfNotSignedIn(point.Name, cache);
+                if (!SeedCredentials(root, cache, point.Name))
+                {
+                    WarnIfNotSignedIn(point.Name, cache);
+                }
 
                 _instances[point.Id] = new LibrespotInstance(
                     point.Id, point.Name, executable, cache, zeroconf, _options, StreamFormat,
@@ -296,6 +302,65 @@ public sealed class LibrespotService : BackgroundService
     /// is invisible — which took this project two evenings to establish
     /// and should take the next person one log line.
     /// </summary>
+    /// <summary>
+    /// Gives a new cast point a copy of a signed-in one's credentials.
+    /// </summary>
+    /// <remarks>
+    /// Sign in once, and every room works. Without this each new cast point
+    /// needs its own browser round trip, which is a poor way to add the
+    /// fourth speaker to a house and an actively bad one at a party.
+    ///
+    /// Safe because the file authenticates the *account*, not the device:
+    /// each librespot still generates its own device id and appears as its
+    /// own entry in the picker. Only ever copied between cast points of this
+    /// Hub, which are the operator's own rooms on the operator's own
+    /// account.
+    ///
+    /// Copying rather than sharing one file deliberately. librespot writes
+    /// this path, and several processes writing one file is a way to lose
+    /// every room's login at once rather than one of them.
+    /// </remarks>
+    /// <returns>True when the cast point has credentials, seeded or already there.</returns>
+    private bool SeedCredentials(string root, string cache, string name)
+    {
+        const string fileName = "credentials.json";
+
+        var destination = Path.Combine(cache, fileName);
+        if (File.Exists(destination))
+        {
+            return true;
+        }
+
+        try
+        {
+            var source = Directory.EnumerateDirectories(root)
+                .Select(directory => Path.Combine(directory, fileName))
+                .FirstOrDefault(File.Exists);
+            if (source is null)
+            {
+                return false;
+            }
+
+            File.Copy(source, destination);
+            _logger.LogInformation(
+                "{Name} signed in from an existing cast point's credentials; no browser needed",
+                name);
+            return true;
+        }
+        catch (IOException ex)
+        {
+            // Not fatal: the operator can still sign this one in by hand,
+            // and WarnIfNotSignedIn is about to tell them how.
+            _logger.LogWarning(ex, "Could not seed credentials for {Name}", name);
+            return false;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Could not seed credentials for {Name}", name);
+            return false;
+        }
+    }
+
     private void WarnIfNotSignedIn(string name, string cache)
     {
         if (File.Exists(Path.Combine(cache, "credentials.json")))
