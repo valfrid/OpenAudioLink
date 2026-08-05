@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using OpenAudioLink.Core.Audio;
+using OpenAudioLink.Core.Net;
 
 namespace OpenAudioLink.Hub.Services;
 
@@ -244,7 +245,43 @@ public sealed class RtpStreamer : IAsyncDisposable
         Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
 
         using var owned = source;
-        using var socket = new UdpClient(AddressFamily.InterNetwork);
+
+        /*
+         * Send from the interface that shares a subnet with the receiver,
+         * rather than whichever one the routing table prefers.
+         *
+         * This is the same trap `LocalAddressSelector` was written for, on
+         * a different socket. A laptop with one network interface hides it
+         * completely; a server with Tailscale, a Hyper-V switch and a LAN
+         * has several, and audio that left by the wrong one simply never
+         * arrived — the Hub counting packets sent while the node reported
+         * nothing received at all. Nothing in either end's status could
+         * show it, because both were telling the truth.
+         */
+        var first = _endpoints.FirstOrDefault()?.Address;
+        var local = first is null
+            ? null
+            : LocalAddressSelector.SelectSameSubnet(
+                first, LocalAddressSelector.EnumerateLocalAddresses());
+
+        using var socket = local is null
+            ? new UdpClient(AddressFamily.InterNetwork)
+            : new UdpClient(new IPEndPoint(local, 0));
+
+        if (local is not null)
+        {
+            _logger.LogInformation("Streaming from {Local}, chosen for {Destination}'s subnet",
+                local, first);
+        }
+        else
+        {
+            // Worth saying: it means no local subnet contains the receiver,
+            // so the routing table is deciding and may decide badly.
+            _logger.LogWarning(
+                "No local address shares a subnet with {Destination}; letting the routing table choose",
+                first);
+        }
+
         // Set unconditionally: the destination list can change while the
         // stream runs, so whether a multicast address is in it is not
         // something this line can know once and for all. It costs nothing
