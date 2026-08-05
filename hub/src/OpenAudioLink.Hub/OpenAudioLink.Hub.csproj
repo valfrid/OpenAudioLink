@@ -3,6 +3,23 @@
   <PropertyGroup>
     <RootNamespace>OpenAudioLink.Hub</RootNamespace>
     <Description>OpenAudioLink Hub: Controller, Windows Producer and Provisioner.</Description>
+
+    <!--
+      Latency over throughput. The Web SDK turns on Server GC by default,
+      which is right for a machine serving many requests and wrong for this
+      one: it collects less often but pauses longer, and a pause here is a
+      hole in the audio. Workstation GC with a concurrent background
+      collector pauses less, and this Hub has no throughput problem to
+      trade against — it sends 200 small packets a second and serves a page
+      nobody looks at.
+
+      Measured on the machine that prompted this: the send loop's worst
+      stall was 80 ms with more than a thousand late wakes in three
+      minutes, against 25 ms and fourteen on an idle laptop. Only the
+      receiver's 100 ms playout buffer kept that inaudible.
+    -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
