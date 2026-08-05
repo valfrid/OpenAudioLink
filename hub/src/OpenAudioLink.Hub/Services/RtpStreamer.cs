@@ -16,7 +16,11 @@ public sealed record StreamStatus(
     long PacketsSent,
     long UnderrunSamples,
     long SendErrors = 0,
-    string? Error = null);
+    string? Error = null,
+    /// <summary>Iterations that woke to find more than one packet already due.</summary>
+    long LateWakes = 0,
+    /// <summary>The longest the loop was ever away, in milliseconds.</summary>
+    long WorstStallMs = 0);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -272,6 +276,8 @@ public sealed class RtpStreamer : IAsyncDisposable
         var clock = Stopwatch.StartNew();
         long packetsSent = 0;
         long sendErrors = 0;
+        long lateWakes = 0;
+        long worstStallMs = 0;
         double packetMs = format.PacketMilliseconds;
 
         // Without this the loop below sends in clumps; see the type's remarks.
@@ -282,6 +288,34 @@ public sealed class RtpStreamer : IAsyncDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 long due = (long)(clock.Elapsed.TotalMilliseconds / packetMs);
+
+                /*
+                 * How late this iteration is, measured at the only place
+                 * that can know: the sender's own clock. The node's trace
+                 * shows audio arriving in bunches, but arrival time is
+                 * when the *node* read the socket, so it cannot say
+                 * whether the Hub was late sending or the node was late
+                 * reading. This can, and the two need different fixes.
+                 */
+                long behind = due - packetsSent;
+                if (behind > 1)
+                {
+                    lateWakes++;
+                    long stallMs = (long)(behind * packetMs);
+                    if (stallMs > worstStallMs)
+                    {
+                        worstStallMs = stallMs;
+                    }
+
+                    // Only the ones big enough to be heard, so a log line
+                    // means something rather than scrolling past.
+                    if (stallMs >= 20)
+                    {
+                        _logger.LogWarning(
+                            "Send loop was away {StallMs} ms ({Packets} packets due); worst so far {WorstMs} ms",
+                            stallMs, behind, worstStallMs);
+                    }
+                }
 
                 // Cap catch-up so a long stall cannot produce an unbounded
                 // burst.
@@ -329,6 +363,8 @@ public sealed class RtpStreamer : IAsyncDisposable
                     PacketsSent = packetsSent,
                     UnderrunSamples = source.UnderrunSamples,
                     SendErrors = sendErrors,
+                    LateWakes = lateWakes,
+                    WorstStallMs = worstStallMs,
                 };
                 Thread.Sleep(1);
             }
