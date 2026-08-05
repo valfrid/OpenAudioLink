@@ -178,6 +178,9 @@ per stream. The protocol already carries the rate, so both are legal;
 the choice is about where the cost lands. This is worth settling before
 implementation rather than during it.
 
+*Settled by decision 13: the source resamples. 48 kHz is the only rate on
+the wire.*
+
 ---
 
 ## 4. Two deployment modes: infrastructure and standalone
@@ -755,3 +758,197 @@ anyone can hear, and at that margin it is not.
 - A running stream's destination list had to become mutable, so a speaker
   that reboots mid-song rejoins without the rest of the room skipping —
   the same shape the firmware producer already carries.
+
+---
+
+## 12. NTP is not the tool for playout coordination
+
+**Date:** 2026-08-05
+**Status:** decided; nothing implemented, and nothing needs to be until two
+separate nodes are asked to play one stereo image.
+
+### Decision
+
+No NTP client, on the Hub or on a node. When playout across several nodes
+has to be coordinated, it is done with three mechanisms of our own, and
+they are three separate problems that get confused because they all sound
+like "time".
+
+### Why not NTP
+
+**The resolution is an order of magnitude short.** NTP on a LAN settles
+within 1–10 ms. Two speakers making one stereo image need well under 1
+ms — Snapcast and AirPlay 2 both target sub-millisecond, and AES67 reaches
+for PTP because it wants sub-microsecond. A millisecond of error is a foot
+of path difference, which moves the image across the room.
+
+**It answers the wrong question.** NTP tells a device what time it is.
+Nothing here cares what time it is. What matters is *how far your clock is
+from mine*, and being wrong together is harmless as long as everyone is
+wrong by the same amount. We need a **common** clock, not a **correct**
+one, and a common clock is much cheaper — it needs no reference, no
+internet, and no server that is right about anything.
+
+That also means a house with no internet, or a party deployment with no
+router at all (decision 4), synchronises exactly as well as a connected
+one. Depending on NTP would have quietly made that untrue.
+
+### What gets built instead
+
+1. **Offset measurement over our own channel.** NTP's four-timestamp
+   arithmetic is sound; it is the daemon, the hierarchy and the discipline
+   loop that are the wrong size. Send a request, note four timestamps, keep
+   the sample with the shortest round trip, repeat often. On a quiet LAN
+   this lands well inside the budget, and it rides the control channel that
+   already exists.
+2. **A playout contract.** The Producer says *frame N is played at epoch +
+   N/48000 + delay*, and every Consumer holds frame N until its own
+   estimate of that instant. RTP timestamps are already the frame index, so
+   half of this is on the wire today. The missing standard piece is RTCP
+   sender reports, which map an RTP timestamp to a wall clock — not
+   implemented, and the natural place to put the epoch.
+3. **Rate matching, separately.** Offset is a one-time alignment; drift is
+   the two crystals diverging afterwards, and no amount of offset
+   measurement fixes it. That is trimmed at the node by pulling the I²S
+   clock a few parts per million through the APLL, steered by the ring's
+   own fill level.
+
+Keeping (1) and (3) apart matters. A servo that tries to correct both with
+one control ends up chasing measurement noise with the sample clock, which
+is audible.
+
+### What exists today, honestly
+
+Nothing that synchronises. What exists is the instrumentation for it:
+
+- `oal_playout`'s ring **absorbs** drift and **counts** it in both
+  directions — `silence_frames` when it starves, `dropped_frames` when it
+  overflows — and its own header says it does not correct it. Those two
+  counters are the error signal a servo would use.
+- RTP timestamps carry the absolute frame index, so packets are already
+  labelled with what they mean rather than when they arrived.
+- `esp_timer_get_time()` gives a microsecond monotonic clock on every node.
+- The peer table and the Controller election give a place to put the epoch
+  and something to agree with.
+
+Right seams, no machinery. And this is better designed against a real pair
+of speakers audibly wandering than in the abstract, so it stays unbuilt
+until there is a pair to listen to.
+
+### Consequences
+
+- **The common case needs none of it.** Decision 10 already says a single
+  node's two channels leave one DAC on one clock and cannot drift. One
+  stereo node, or two MAX98357A on one node's I²S bus, is synchronised by
+  construction. The demanding case is two nodes heard as one image, which
+  decision 10 recommends against for exactly this reason.
+- Several nodes playing the *same* mono content in different rooms are a
+  much easier case: a few milliseconds apart in different rooms is
+  inaudible, and only becomes audible where the rooms open into each other.
+- Until this is built, a `left`/`right` pair is a thing the firmware will
+  do and the system does not promise to keep in step.
+
+---
+
+## 13. One wire rate: 48 kHz, with the rate still carried
+
+**Date:** 2026-08-05
+**Status:** decided. Settles the open question left in decision 3.
+
+### Decision
+
+**48 kHz is the only rate on the wire.** Anything that is not 48 kHz is
+resampled before it becomes RTP, at whichever end has the CPU — today
+always the Hub (decision 11).
+
+**The rate stays a field, not a constant, in the protocol.** SDP already
+says `L24/48000/2`, and `AudioStreamFormat` already takes the rate as a
+parameter. Nothing is hard-coded away; a second rate would be a capability
+negotiation, not a wire-format break. What is being decided is that no
+receiver is required to accept a second rate, and none will be offered one.
+
+### What supporting 44.1 kHz would actually buy
+
+Less than it first appears, because the obvious argument — *avoid
+resampling, keep the path pure* — does not survive measurement. The Hub's
+converter is an exact 147:160 polyphase FIR: worst-case error about
+-110 dB, flat to 20 kHz. That is 30 dB below the noise floor of the 16-bit
+master the music came from. **The resampler is not audible, so removing it
+is not a fidelity gain.**
+
+What is real:
+
+- **Sources that cannot afford to resample.** Decision 3's internet-radio
+  node is the case: an ESP32 already doing HTTP receive, Vorbis or AAC
+  decode, packetisation and unicast replication, on one chip sharing one
+  radio. 64 taps × 44 100 × 2 channels is around six million multiplies a
+  second on top of that, with an I²S deadline to miss. A future S/PDIF or
+  TOSLINK input from a CD player is the same shape and worse — the source
+  is locked at 44.1 kHz and there is no PC anywhere in the path.
+- **About 8 % less airtime.** 2.12 Mbit/s against 2.30. Marginal, and it
+  is not why anyone would do it.
+
+### What it would cost
+
+**The packet arithmetic stops being round, and not by choice.** An
+Ethernet frame leaves 1460 bytes for audio after IP, UDP and RTP headers,
+which is 243 frames of L24 stereo. At 44.1 kHz a whole number of frames
+needs a packet time that is a multiple of 10 ms, and 10 ms is 441 frames —
+2646 bytes, which fragments. So **there is no integer-millisecond packet
+time at 44.1 kHz that fits in an Ethernet frame.** The choices are a
+fractional packet time (220 frames is 4.9887 ms — legal RTP, since the
+timestamp counts frames, but every "5 ms", "200 packets per second" and
+"60 ms of ring" in the code and the measurements becomes an
+approximation), or fragmenting every audio packet. This is why AES67
+mandates 48 kHz and does not require 44.1 at all; it is not an oversight in
+the standard.
+
+**Two clock domains in one house.** Decision 12 has one synchronisation
+problem to solve. Two rates means solving it twice, with a separate APLL
+trim state and a separate set of constants per rate, and a node that
+switches rate mid-session throws away its ring and re-locks its I²S clock —
+a click, and a fresh drift transient, every time the source changes.
+
+**A failure mode the user can build.** Two speakers in one room, one of
+which only does 48 kHz, is a room that cannot play a 44.1 source together.
+Either discovery grows a per-node rate capability and cast points learn to
+refuse mixed sets, or someone hears it and has no idea why.
+
+**The clock is not free on the ESP32 either.** 48 kHz divides exactly from
+the chip's audio PLL; 44.1 kHz generally does not, which is why ESP-IDF's
+I²S documentation points at the APLL for it. A 44.1 stream therefore lands
+the node on the same clock resource decision 12 wants for drift trimming.
+The residual error is worth measuring before anyone assumes it is small.
+
+**The test matrix doubles.** Link measurements, loss shape, the pattern
+source and its host tests, playout ring sizing, probation windows — all of
+it keys off 240 frames and 48 000 today.
+
+### The judgement
+
+One rate, resample at the edge. The cost of the second rate is paid by
+every node, in the part of the system that is hardest to get right, to save
+CPU on one class of source that does not exist yet — and to remove a
+conversion nobody can hear.
+
+If a fixed-44.1 source with nowhere to resample does eventually appear, the
+cheap way in is not a second house-wide rate. It is either that node
+resampling with a shorter filter (a worse converter is still inaudible next
+to a Vorbis stream), or permitting a non-48 rate **only on a cast point
+with exactly one consumer** — which is precisely the case where a second
+clock domain synchronises with nothing and costs nothing.
+
+### Consequences
+
+- Decision 3's open question is closed: an internet-radio node resamples,
+  or hands its stream to something that can. It does not advertise 44.1.
+- `AudioStreamFormat.Validate()` already rejects 44.1 kHz at 5 ms, for the
+  whole-frames reason above. That is the decision enforced by accident, and
+  it can stay.
+- The firmware's compile-time `OAL_RTP_SAMPLE_RATE` and
+  `OAL_RTP_FRAMES_PER_PACKET` are correct as constants and should stay
+  constants. `oal_playout` already takes its rate from configuration, which
+  is enough seam for a future experiment.
+- Spotify lossless, if it ever arrives, is 44.1 kHz and gets the same
+  treatment as Spotify lossy: converted at the Hub, still bit-transparent
+  to well below audibility.
