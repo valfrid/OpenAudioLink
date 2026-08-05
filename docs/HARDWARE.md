@@ -452,13 +452,27 @@ continuation queued behind everything else in the process. Given its own
 same trace settled to within ±2000 ppm, the ring stopped reaching either
 end, and the tone became listenable.
 
-What remains at the time of writing is rare and much larger: roughly once
-a minute the trace shows a single window at −73000 ppm, which is 365 ms of
-audio simply absent, followed by an underrun. Nothing that fits in an
-ESP32's RAM buffers a third of a second, so that one has to be found and
-removed rather than absorbed. It is not yet known whether the Hub, the
-network or the node stalls — which is why both ends now report their own
-lateness.
+What remains at the time of writing is rare and much larger: every minute
+or so the trace shows a single window missing 60 to 105 ms of audio,
+followed by the catch-up lump and an underrun. Nothing that fits in an
+ESP32's RAM comfortably buffers that, so it wants finding rather than
+absorbing.
+
+**It is not the Hub, and its own counter says so.** Over 10 348 packets
+the send loop's worst lateness was 25 ms with fourteen late wakes, while
+the node was seeing 105 ms holes in the same period. That is the whole
+value of having both ends report against their own clock: the theory that
+had just been proved right for the large stalls was wrong for these, and
+one field settled it instead of another evening of argument.
+
+So the delay happens after the packet leaves the Hub, with **no packet
+lost at all** — something buffers them and releases them together. The
+open suspect is the mesh: this network runs an ASUS ZenWiFi with roaming
+between nodes (the node has been seen to change BSSID), and an access
+point that periodically leaves the channel to scan stops serving its
+clients for exactly this sort of interval, delivering the backlog
+afterwards. The test is a plain SSID with roaming assistance and band
+steering off, or any single access point, and it has not been run yet.
 
 One lesson worth keeping: the node's arrival figure is measured when the
 *node reads the socket*, so it cannot tell a late sender from a late
