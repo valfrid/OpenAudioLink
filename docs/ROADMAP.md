@@ -142,6 +142,18 @@ Goals:
   T", which needs N: the signature has to grow the packet's RTP timestamp.
   One parameter, one call site, both ends in this repo — worth doing the
   next time that file is open, well before anything depends on it.
+- **A per-node latency offset, beside the channel profile.** Drift and
+  latency are different faults and only one of them moves. Two powered PA
+  speakers each have their own DSP, so two different models are a *fixed*
+  few milliseconds apart forever — a permanently shifted stereo image that
+  no drift servo will ever correct, because nothing about it is drifting.
+  The fix is a signed millisecond trim per node, added to its playout
+  target, set once when the speaker is installed. It belongs in NVS next
+  to decision 10's channel profile and in the same part of the
+  provisioning portal: both answer "what is this particular box", not
+  "what is playing". Cheap to design in with decision 12's work,
+  irritating to discover afterwards from a stereo image that sits left of
+  centre for no visible reason.
 - **Concealment.** A lost packet is 5 ms of silence, not an
   interpolation. Worth measuring before deciding it needs fixing.
 
