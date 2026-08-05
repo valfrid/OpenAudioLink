@@ -45,6 +45,10 @@ typedef struct {
      * How much audio to gather before playing any of it. The whole
      * latency argument in one number: too little and ordinary jitter
      * empties the ring, too much and the speaker lags the room.
+     *
+     * Set against the longest gap a sender leaves rather than the
+     * network's jitter — a PC waking on a 15.6 ms timer leaves a bigger
+     * hole than Wi-Fi does. Zero takes the 60 ms default.
      */
     uint32_t target_ms;
 
@@ -61,6 +65,7 @@ typedef struct {
     uint64_t frames_played;
     uint32_t silence_frames;  /* inserted because the ring ran dry */
     uint32_t dropped_frames;  /* discarded because the ring was full */
+    uint32_t underruns;       /* times it ran dry, however long each lasted */
     uint32_t write_errors;    /* the I²S driver refused a write */
     oal_channel_t channel;
 } oal_playout_state_t;

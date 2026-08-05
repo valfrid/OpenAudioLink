@@ -302,6 +302,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"playout\":{\"running\":%s,\"playing\":%s,\"channel\":\"%s\","
                        "\"bufferedFrames\":%u,\"targetFrames\":%u,"
                        "\"silenceFrames\":%u,\"droppedFrames\":%u,"
+                       "\"underruns\":%u,"
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
@@ -312,6 +313,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        oal_channel_name(audio.channel),
                        (unsigned)audio.buffered_frames, (unsigned)audio.target_frames,
                        (unsigned)audio.silence_frames, (unsigned)audio.dropped_frames,
+                       (unsigned)audio.underruns,
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        stats);

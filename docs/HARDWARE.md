@@ -347,41 +347,95 @@ sharing a board with a radio:
 
 ## Bringing up the DAC
 
-Firmware 0.9.0 adds the playout path: a Consumer starts an I²S output at
+Firmware 0.9.0 added the playout path: a Consumer starts an I²S output at
 boot, buffers what arrives and feeds the DAC from it. Pins come from
 `idf.py menuconfig` under **OpenAudioLink Test Node**, defaulting to the
 table above.
 
 The first sound this project makes should be the Hub's test tone:
 
-1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.0.
-2. The log says `I2S out on BCLK=7 WS=9 DOUT=8, 48000 Hz, stereo, 20 ms
+1. Wire the DAC, headphones or an amplifier on its output, and flash 0.9.1.
+2. The log says `I2S out on BCLK=7 WS=9 DOUT=8, 48000 Hz, stereo, 60 ms
    buffer`. If it does not, audio never started and the reason is on the
    line after it — the node still receives and still counts, so this is
    survivable rather than fatal.
 3. From the Hub, send a test tone to the node: **Stream → test tone**, or
    `POST /api/stream/test-tone` with the node as the destination.
-4. `GET /stream` on the node now carries a `playout` object beside the
-   reception statistics.
+4. `GET /stream` on the node — **port 41001**, not 80 — now carries a
+   `playout` object beside the reception statistics.
 
 Read those two together, because they answer the same question from
 different sides:
 
 | What you see | What it means |
 | --- | --- |
-| `playing: true`, `silenceFrames` steady | Working. A click would be loss on the air, and `stats` says so |
-| `silenceFrames` climbing steadily | The ring is running dry — raise `OAL_PLAYOUT_MS`, or the network is losing packets |
-| `droppedFrames` climbing steadily | The ring is overfilling, which means the sender's clock is faster than this DAC's |
+| `playing: true`, `underruns` and `droppedFrames` steady | Working. A click would be loss on the air, and `stats` says so |
+| `underruns` climbing | The ring runs dry. Each one is an audible gap; the log names them too |
+| `silenceFrames` climbing but `underruns` not | One long silence — the stream stopped rather than stumbling |
+| `droppedFrames` climbing | The ring overfills. Bursts from the sender, or its clock is faster than this DAC's |
+| **both** climbing | A bursty sender: clumps overflow the ring, the gaps between them empty it |
 | `running: false` | I²S never started; the pins are wrong or in use |
 | Silence, everything else healthy | XSMT, or `SCK` not grounded. See the wiring notes above |
 
 **A click and a dropout are different faults**, and this is the pairing
 that tells them apart: loss on the air shows in `stats`, a ring that ran
-dry shows in `silenceFrames`, and drift shows as one of them climbing
-slowly while the other stays at zero.
+dry shows in `underruns`, and drift shows as one of them climbing slowly
+while the other stays at zero.
 
-Expect about **40 ms** from the Hub to the speaker: 20 ms of playout
+`payloadErrors` is meaningless while a **tone** is playing. It compares
+every sample against the pattern source, so a tone makes it count nearly
+every sample. Large numbers there mean nothing unless the producer was
+sending `pattern`.
+
+Expect about **80 ms** from the Hub to the speaker: 60 ms of playout
 buffer and 20 ms of DMA. Both are visible in the log line and adjustable.
+
+### What the first hardware test changed
+
+The tone came out of the DAC and interrupted constantly — irregularly,
+sometimes seconds apart, sometimes several times a second. Three separate
+faults, and the first one is why it took a while:
+
+**`silenceFrames` could never move.** It was only incremented on a
+*partial* chunk, but the ring is filled and drained in whole 240-frame
+packets, so the count was either a whole chunk or nothing. The one counter
+meant to reveal starvation was structurally stuck at zero while the ring
+was starving several times a second. `underruns` now counts occurrences,
+`silenceFrames` counts the silence actually inserted, and a re-prime is
+logged as a warning rather than an info line.
+
+**The playout re-primed on the first empty chunk.** Its comment reasoned
+that an empty ring means the stream stopped — but for the first 5 ms a
+stopped stream, a Wi-Fi retry and a sender that simply left a gap all look
+identical. So a 5 ms gap in arrival became a whole buffer's worth of
+silence while the ring refilled. It now waits 200 ms before concluding the
+music ended.
+
+**The sender was sending in clumps.** Windows' default timer resolution is
+15.6 ms, so the Hub's `Task.Delay(1)` between packets really waited that
+long and the catch-up loop then released three packets back to back — and
+after a stall, up to the catch-up cap of twenty. The node's counters showed
+both symptoms at once: `droppedFrames` in the millions from clumps
+overflowing a 60 ms ring, and constant re-priming from the gaps emptying
+it. The average rate was correct the whole time, which is why nothing on
+the Hub looked wrong. The Hub now asks Windows for a 1 ms timer while a
+stream runs, which is what `winmm`'s timer API exists for.
+
+Simulating the ring against that sender settled one thing that intuition
+got backwards. Tightening the Hub's catch-up cap — so a stall releases
+fewer packets — sounds like the gentler choice and is the opposite: what
+the cap discards is gone for good, so a cap shorter than a stall turns a
+burst the ring could have swallowed into a gap no buffer can cover. The
+cap belongs just under the receiver's headroom above its target, and stayed
+at 100 ms. The same simulation says the node's changes alone fix the
+dropouts even with the old 15.6 ms sender; the Hub's timer is margin
+rather than the cure.
+
+The buffer was resized as part of the same fix: **a playout buffer is
+sized by the largest gap a sender can leave, not by the network's jitter.**
+Wi-Fi jitter here is 1–2 ms; the sender's gap was 15.6 ms and its bursts
+were longer. 20 ms of ring never stood a chance. It is now 60 ms of target
+inside 160 ms of ring.
 
 ### What is deliberately not solved yet
 

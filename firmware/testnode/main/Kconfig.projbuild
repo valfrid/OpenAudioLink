@@ -51,11 +51,18 @@ menu "OpenAudioLink Test Node"
     config OAL_PLAYOUT_MS
         int "Playout buffer (ms)"
         depends on OAL_I2S_ENABLED
-        default 20
-        range 5 100
+        default 60
+        range 5 80
         help
             How much audio to gather before playing any of it, which is
-            also how far the speaker lags the source. Measured jitter is
-            1-2 ms, so 20 ms is generous; the DMA adds another 20 on top.
+            also how far the speaker lags the source. The DMA adds another
+            20 ms on top.
+
+            Size this against the sender's cadence, not the network's
+            jitter. Wi-Fi jitter is 1-2 ms, but a Windows sender wakes on a
+            15.6 ms system timer and emits packets in clumps, so a 20 ms
+            buffer spent most of itself waiting out one gap and ran dry
+            several times a second on the first hardware test. 60 ms
+            absorbs that with room to spare.
 
 endmenu

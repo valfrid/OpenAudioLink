@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using OpenAudioLink.Core.Audio;
 
 namespace OpenAudioLink.Hub.Services;
@@ -27,6 +28,21 @@ public sealed record StreamStatus(
 /// </summary>
 public sealed class RtpStreamer : IAsyncDisposable
 {
+    /// <summary>
+    /// Most packets a stall may release at once: 100 ms of audio.
+    ///
+    /// The rule is that this belongs just under the receiver's headroom
+    /// above its playout target — a burst that fits in the ring costs
+    /// nothing, and one that does not is trimmed at the far end anyway. It
+    /// is tempting to make it smaller to be gentle, and that is a mistake:
+    /// anything the cap discards is gone for good, so a cap below the
+    /// length of a stall converts a burst the receiver could have absorbed
+    /// into a gap that no buffer can. Simulated against the observed
+    /// sender, a 40 ms cap produced an underrun on every stall while a
+    /// 100 ms cap produced almost none.
+    /// </summary>
+    private const int MaxCatchUpPackets = 20;
+
     private readonly ILogger<RtpStreamer> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -237,16 +253,20 @@ public sealed class RtpStreamer : IAsyncDisposable
         long sendErrors = 0;
         double packetMs = format.PacketMilliseconds;
 
+        // Without this the loop below sends in clumps; see the type's remarks.
+        using var timerResolution = new HighResolutionTimer();
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 long due = (long)(clock.Elapsed.TotalMilliseconds / packetMs);
 
-                // Cap catch-up so a long stall cannot produce an unbounded burst.
-                if (due - packetsSent > 20)
+                // Cap catch-up so a long stall cannot produce an unbounded
+                // burst.
+                if (due - packetsSent > MaxCatchUpPackets)
                 {
-                    packetsSent = due - 20;
+                    packetsSent = due - MaxCatchUpPackets;
                     packetizer.MarkDiscontinuity();
                 }
 
@@ -308,5 +328,75 @@ public sealed class RtpStreamer : IAsyncDisposable
     {
         await StopAsync();
         _gate.Dispose();
+    }
+
+    /// <summary>
+    /// Asks Windows for a 1 ms timer while a stream is running, and gives
+    /// it back afterwards.
+    ///
+    /// The send loop waits with <c>Task.Delay(1)</c>, but Windows' default
+    /// timer resolution is 15.6 ms, so each wait is really about that long
+    /// and the catch-up loop then releases three packets back to back. The
+    /// first hardware test showed what that costs at the far end: the
+    /// node's ring overflowed on the clumps and ran dry in the gaps, and
+    /// the listener heard the re-buffering several times a second. The
+    /// average rate was right the whole time, which is why only the
+    /// receiver's counters showed it.
+    ///
+    /// This is what <c>winmm</c>'s timer API is for and what media
+    /// applications have always done. Modern Windows scopes the request to
+    /// the process, so it does not slow the rest of the machine down.
+    ///
+    /// A no-op everywhere else: on Linux and macOS <c>Task.Delay(1)</c>
+    /// already resolves near a millisecond.
+    /// </summary>
+    private sealed class HighResolutionTimer : IDisposable
+    {
+        private const uint PeriodMs = 1;
+
+        private readonly bool _raised;
+
+        [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+        private static extern uint TimeBeginPeriod(uint period);
+
+        [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+        private static extern uint TimeEndPeriod(uint period);
+
+        public HighResolutionTimer()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            try
+            {
+                _raised = TimeBeginPeriod(PeriodMs) == 0;
+            }
+            catch (DllNotFoundException)
+            {
+                // Windows without winmm is not a case worth failing a
+                // stream over; the pacing is merely coarser.
+            }
+            catch (EntryPointNotFoundException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_raised)
+            {
+                return;
+            }
+
+            try
+            {
+                TimeEndPeriod(PeriodMs);
+            }
+            catch (DllNotFoundException)
+            {
+            }
+        }
     }
 }

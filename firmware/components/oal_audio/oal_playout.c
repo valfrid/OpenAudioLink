@@ -19,17 +19,35 @@ static const char *TAG = "oal_playout";
 #define CHUNK_SAMPLES  (CHUNK_FRAMES * OAL_RTP_CHANNELS)
 
 /*
- * 60 ms of ring. Three times the default playout delay, which leaves room
- * for a burst to be absorbed rather than trimmed — the measured loss shape
- * is a few packets at a time, not a steady trickle.
+ * 160 ms of ring, which is not sized by the network's jitter but by the
+ * sender's cadence.
+ *
+ * The first hardware test made the distinction obvious. A Windows sender
+ * cannot wake every 5 ms: the system timer runs at 15.6 ms unless a
+ * process asks for better, so packets leave in clumps of three with a
+ * ~15.6 ms gap between clumps. Measured Wi-Fi jitter of 1-2 ms sits on top
+ * of that. Against the original 20 ms of ring the gap alone consumed most
+ * of the buffer, the ring reached zero several times a second, and every
+ * time it did the playout re-primed — which is what a listener hears.
+ *
+ * So the ring has to cover the largest gap a sender can leave, not the
+ * jitter a good network adds. 160 ms holds a 60 ms default target with
+ * 100 ms above it for bursts.
  */
-#define CAPACITY_PACKETS 12
+#define CAPACITY_PACKETS 32
 #define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
 
 /*
+ * How long the ring may stay empty before playout treats the stream as
+ * finished rather than stumbling. 200 ms: far longer than any gap a
+ * working sender leaves, far shorter than a listener would call a pause.
+ */
+#define STARVED_CHUNKS (200 / OAL_RTP_PTIME_MS)
+
+/*
  * DMA holds 20 ms on top of the ring. It is part of the latency and worth
- * stating rather than discovering: with the default 20 ms target, a sample
- * spends about 40 ms between arriving and being heard.
+ * stating rather than discovering: with the default 60 ms target, a sample
+ * spends about 80 ms between arriving and being heard.
  */
 #define DMA_DESCRIPTORS 4
 
@@ -42,6 +60,8 @@ static size_t s_read;
 static size_t s_write;
 static size_t s_available;
 static bool s_primed;
+static uint32_t s_starved_chunks;
+static uint32_t s_reported_drop_seconds;
 
 static oal_playout_state_t s_state;
 static size_t s_target_samples;
@@ -103,6 +123,22 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
         s_read = (s_read + overflow) % CAPACITY_SAMPLES;
         s_available -= overflow;
         s_state.dropped_frames += (uint32_t)(overflow / OAL_RTP_CHANNELS);
+
+        /*
+         * One line per second of audio lost. Overflow is the quiet
+         * failure of the pair — starving announces itself by re-priming,
+         * while a ring trimmed on every burst just sounds slightly wrong
+         * — and on the first hardware test it was only visible by asking
+         * the node for its counters. Rate-limited by the amount lost
+         * rather than by time, so a steady trickle stays legible and a
+         * flood does not fill the log.
+         */
+        uint32_t lost_seconds = s_state.dropped_frames / OAL_RTP_SAMPLE_RATE;
+        if (lost_seconds != s_reported_drop_seconds) {
+            s_reported_drop_seconds = lost_seconds;
+            ESP_LOGW(TAG, "ring full, oldest frames dropped; %" PRIu32
+                          " s of audio lost so far", lost_seconds);
+        }
     }
 
     size_t first = CAPACITY_SAMPLES - s_write;
@@ -140,8 +176,21 @@ static size_t take_chunk(int32_t *chunk)
          */
         if (s_available >= s_target_samples) {
             s_primed = true;
-            ESP_LOGI(TAG, "primed with %u frames; playing",
-                     (unsigned)(s_available / OAL_RTP_CHANNELS));
+            s_starved_chunks = 0;
+            /*
+             * Warn rather than inform once this has happened before. A
+             * first prime is the stream starting; a later one means the
+             * ring ran dry, and the count is the number the listener
+             * heard. Logging both the same way hid exactly that.
+             */
+            if (s_state.underruns == 0) {
+                ESP_LOGI(TAG, "primed with %u frames; playing",
+                         (unsigned)(s_available / OAL_RTP_CHANNELS));
+            } else {
+                ESP_LOGW(TAG, "re-primed with %u frames after underrun %u",
+                         (unsigned)(s_available / OAL_RTP_CHANNELS),
+                         (unsigned)s_state.underruns);
+            }
         } else {
             xSemaphoreGive(s_lock);
             memset(chunk, 0, CHUNK_SAMPLES * sizeof(int32_t));
@@ -151,16 +200,34 @@ static size_t take_chunk(int32_t *chunk)
 
     if (s_available == 0) {
         /*
-         * Nothing at all, which means the stream stopped rather than
-         * stumbled. Going back to unprimed avoids counting a silent
-         * evening as millions of underruns, and re-fills properly when the
-         * music comes back.
+         * The ring ran dry. One empty chunk does not say why: a sender
+         * that leaves a gap, a Wi-Fi retry and a stream that ended all
+         * look identical for the first 5 ms.
+         *
+         * So play silence and wait. Only sustained emptiness means the
+         * music stopped, and going unprimed on the first empty chunk was
+         * the bug behind the very first hardware test's dropouts — a 5 ms
+         * gap in arrival became a whole target's worth of silence while
+         * the ring refilled, several times a second.
+         *
+         * Re-priming is still the right recovery when the stream really
+         * has stopped, because sender and DAC run at the same average
+         * rate: once the margin is spent, only not playing rebuilds it.
          */
-        s_primed = false;
+        s_state.silence_frames += CHUNK_FRAMES;
+        if (s_starved_chunks++ == 0) {
+            s_state.underruns++;
+        }
+        if (s_starved_chunks >= STARVED_CHUNKS) {
+            s_primed = false;
+            s_starved_chunks = 0;
+        }
         xSemaphoreGive(s_lock);
         memset(chunk, 0, CHUNK_SAMPLES * sizeof(int32_t));
         return 0;
     }
+
+    s_starved_chunks = 0;
 
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
 
@@ -213,7 +280,7 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     }
 
     uint32_t rate = config->sample_rate ? config->sample_rate : OAL_RTP_SAMPLE_RATE;
-    uint32_t target_ms = config->target_ms ? config->target_ms : 20;
+    uint32_t target_ms = config->target_ms ? config->target_ms : 60;
 
     s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
     if (s_target_samples > CAPACITY_SAMPLES / 2) {
