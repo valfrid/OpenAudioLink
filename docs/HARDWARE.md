@@ -466,13 +466,28 @@ had just been proved right for the large stalls was wrong for these, and
 one field settled it instead of another evening of argument.
 
 So the delay happens after the packet leaves the Hub, with **no packet
-lost at all** — something buffers them and releases them together. The
-open suspect is the mesh: this network runs an ASUS ZenWiFi with roaming
-between nodes (the node has been seen to change BSSID), and an access
-point that periodically leaves the channel to scan stops serving its
-clients for exactly this sort of interval, delivering the backlog
-afterwards. The test is a plain SSID with roaming assistance and band
-steering off, or any single access point, and it has not been run yet.
+lost at all** — something buffers them and releases them together.
+
+The first suspect is the one that was easy to overlook: these
+measurements were taken with the Hub on a **laptop, over Wi-Fi**. That
+puts every packet across the air twice — laptop to access point, access
+point to node, plus the mesh backhaul when the two ends are on different
+nodes — and the Hub's lateness counter cannot see any of it. It times the
+send call, which happens before the packet reaches the network adapter,
+so the laptop's own radio and its power management sit entirely outside
+the number that exonerated the Hub. Windows adapters buffer hard with
+power saving on, which is precisely this signature.
+
+The second suspect is the mesh itself: this network runs an ASUS ZenWiFi
+with roaming between nodes (the node has been seen to change BSSID), and
+an access point that periodically leaves the channel to scan stops
+serving its clients for about this long and delivers the backlog
+afterwards.
+
+The cheap test settles both in the right order — move the Hub to the
+wired server, which removes the first hop entirely; if the holes survive
+that, try a plain SSID with roaming assistance and band steering off.
+Neither has been run yet.
 
 One lesson worth keeping: the node's arrival figure is measured when the
 *node reads the socket*, so it cannot tell a late sender from a late
