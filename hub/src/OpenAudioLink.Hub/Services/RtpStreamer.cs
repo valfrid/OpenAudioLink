@@ -315,6 +315,8 @@ public sealed class RtpStreamer : IAsyncDisposable
         long sendErrors = 0;
         long lateWakes = 0;
         long worstStallMs = 0;
+        long reportedUnderrun = 0;
+        long lastUnderrunReportMs = 0;
         double packetMs = format.PacketMilliseconds;
 
         // Without this the loop below sends in clumps; see the type's remarks.
@@ -395,10 +397,39 @@ public sealed class RtpStreamer : IAsyncDisposable
                     packetsSent++;
                 }
 
+                /*
+                 * Say when the *source* ran dry, not merely how much it has
+                 * ever run dry by.
+                 *
+                 * A cumulative total cannot be correlated with anything: a
+                 * second of underrun across an hour is one bad moment or a
+                 * hundred small ones, and those want different fixes. This
+                 * failure is also invisible from the receiver — the node's
+                 * buffer is full and its counters are clean, because the
+                 * silence was packetised and sent like any other audio.
+                 *
+                 * Rate-limited to one line a second so a starving pipe
+                 * cannot bury the log it is trying to explain.
+                 */
+                long underrun = source.UnderrunSamples;
+                if (underrun > reportedUnderrun
+                    && clock.ElapsedMilliseconds - lastUnderrunReportMs >= 1000)
+                {
+                    var samples = underrun - reportedUnderrun;
+                    var milliseconds = samples * 1000
+                        / Math.Max(1, format.SampleRate * format.Channels);
+                    _logger.LogWarning(
+                        "Source ran dry: {Milliseconds} ms of silence sent ({Samples} samples); " +
+                        "{Total} samples in total this stream",
+                        milliseconds, samples, underrun);
+                    reportedUnderrun = underrun;
+                    lastUnderrunReportMs = clock.ElapsedMilliseconds;
+                }
+
                 _status = _status with
                 {
                     PacketsSent = packetsSent,
-                    UnderrunSamples = source.UnderrunSamples,
+                    UnderrunSamples = underrun,
                     SendErrors = sendErrors,
                     LateWakes = lateWakes,
                     WorstStallMs = worstStallMs,
