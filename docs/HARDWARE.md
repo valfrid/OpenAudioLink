@@ -421,6 +421,50 @@ it. The average rate was correct the whole time, which is why nothing on
 the Hub looked wrong. The Hub now asks Windows for a 1 ms timer while a
 stream runs, which is what `winmm`'s timer API exists for.
 
+That was not the end of it. The dropouts got much better and did not
+stop, and the next three faults were only findable by making the node
+report both clocks every five seconds — frames arriving per second
+against frames written to the DAC per second, with the buffer's minimum
+and maximum fill across the interval. Everything below came from reading
+those lines; none of it was visible in the counters.
+
+**The DAC's clock was never wrong.** Two counter samples had implied a
+consistent −890 ppm, which looked exactly like the drift decision 12
+describes and would have justified building rate matching. It was an
+accounting error instead: `i2s_channel_write` can accept less than it was
+given and still return `ESP_OK`, and the tail was being discarded —
+samples already removed from the ring, counted by nothing. A ring drained
+by an invisible leak is indistinguishable from a fast playback clock. With
+the write completed properly, `out` reads 48000 Hz on every line and has
+never since read anything else.
+
+**It was not the radio either.** The node had roamed to the far mesh
+node at −80 dBm, which was an obvious suspect and wrong: moving it back
+to −47 dBm changed nothing, and not one packet was lost at either signal
+level. Late is not lost, and Wi-Fi is very good at being late.
+
+**It was the Hub's send loop being descheduled.** The node's trace showed
+arrival at 46801 Hz for one five-second window and 49055 Hz for the next —
+120 ms of audio missing, then handed over in a lump. The loop ran on the
+.NET thread pool and awaited inside itself, so every iteration's
+continuation queued behind everything else in the process. Given its own
+`LongRunning` thread at `AboveNormal` priority and synchronous sends, the
+same trace settled to within ±2000 ppm, the ring stopped reaching either
+end, and the tone became listenable.
+
+What remains at the time of writing is rare and much larger: roughly once
+a minute the trace shows a single window at −73000 ppm, which is 365 ms of
+audio simply absent, followed by an underrun. Nothing that fits in an
+ESP32's RAM buffers a third of a second, so that one has to be found and
+removed rather than absorbed. It is not yet known whether the Hub, the
+network or the node stalls — which is why both ends now report their own
+lateness.
+
+One lesson worth keeping: the node's arrival figure is measured when the
+*node reads the socket*, so it cannot tell a late sender from a late
+reader. Both ends now report their own lateness against their own clock,
+which is the only way that question gets answered rather than argued.
+
 Simulating the ring against that sender settled one thing that intuition
 got backwards. Tightening the Hub's catch-up cap — so a stall releases
 fewer packets — sounds like the gentler choice and is the opposite: what

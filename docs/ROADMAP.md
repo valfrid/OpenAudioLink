@@ -156,6 +156,21 @@ Goals:
   centre for no visible reason.
 - **Concealment.** A lost packet is 5 ms of silence, not an
   interpolation. Worth measuring before deciding it needs fixing.
+- **The ring rides above its target and never comes back down.** Nothing
+  pulls the fill toward the target, so wherever a burst leaves it is where
+  it stays — measured at 100 ms of a 160 ms ring against a 60 ms target,
+  which is protection against gaps and almost none against bursts. It
+  works, so this is not urgent, and the obvious fix is worse than it
+  looks: trimming the fill back to target buys burst headroom by giving
+  away exactly the depth the gaps need. Doing it properly means deciding
+  which fault to prefer, and that wants a real listening test rather than
+  an argument.
+- **The playout state machine has no host test.** Both of the bugs behind
+  the first hardware dropouts were in it — a counter that could never
+  increment and a re-prime on the first empty chunk — and both would have
+  been caught by one. It needs the ring and its state machine separated
+  from the I²S calls first, which is why it did not happen during the
+  debugging.
 
 ## Later candidates
 
