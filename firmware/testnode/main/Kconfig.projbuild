@@ -89,6 +89,11 @@ menu "OpenAudioLink Test Node"
             four adjacent pins on the side opposite the DAC's D8/D9/D10,
             so a node can carry both boards without either reaching across.
 
+            The order matches the module's header, DATA BCLK LRCK MCLK
+            reading down, so the four leads run parallel and nothing
+            crosses. That is why DATA is the first pin rather than the
+            last.
+
             Separate pins from the DAC's on purpose. A node may hold both
             roles — capture a turntable and play a stream — and the
             ESP32-S3 has two I2S peripherals, so sharing pins would rule
@@ -104,9 +109,9 @@ menu "OpenAudioLink Test Node"
         default 5
 
     config OAL_ADC_DIN_GPIO
-        int "ADC data in (DOUT on the module) GPIO"
+        int "ADC data in (DATA on the module) GPIO"
         depends on OAL_ADC_ENABLED
-        default 6
+        default 3
 
     config OAL_ADC_SLAVE
         bool "The ADC generates the clocks and the ESP32 follows"
@@ -131,7 +136,7 @@ menu "OpenAudioLink Test Node"
     config OAL_ADC_MCLK_GPIO
         int "ADC master clock (SCKI) GPIO"
         depends on OAL_ADC_ENABLED
-        default 3
+        default 6
         help
             Used only when this end is master, and harmless otherwise: the
             firmware leaves the pin unassigned in slave mode. Kept visible

@@ -227,7 +227,7 @@ jumper next to a Wi-Fi antenna is asking for trouble.
 
 ### PCM1808 — wiring
 
-Firmware 0.10.1 adds the capture path: a Producer brings up an I²S input at
+Firmware 0.10.2 adds the capture path: a Producer brings up an I²S input at
 boot and sends what it captures. Enable it under **OpenAudioLink Test Node**
 in `idf.py menuconfig`; it is off by default, because a Producer with no ADC
 still streams the synthetic sources every link measurement was made with.
@@ -255,22 +255,52 @@ captures from a self-clocked ADC *and* plays a stream has two clock domains
 inside it — the ADC's crystal and the DAC's. That is a real cost, and the
 board imposes it.
 
-**Wiring a self-clocked module** (header order on the board is `DATA BCLK
-LRCK MCLK GND`):
+**Set the module's options first — the back of the board carries the
+tables, and the default is wrong for us.**
+
+| `M/S OPTION` | OP2 | OP3 |
+| --- | --- | --- |
+| M-96K | open | open |
+| **M-48K** | **short** | open |
+| SLAVE | short | short |
+
+| `FORMAT OPTION` | OP1 |
+| --- | --- |
+| **I2S-24** | **open** |
+| LJ-24 | short |
+
+**An untouched board is `M-96K`: master at 96 kHz.** That is twice the
+profile's rate, and 96 000 frames a second sent down a 48 kHz stream plays
+back at half speed. **Short OP2** and it becomes master at 48 kHz, which is
+exactly the wire format. Leave OP1 open for I²S-24, which is what the
+firmware expects — `LJ-24` is left-justified and would sound like quiet
+distortion rather than like a mistake.
+
+`SLAVE` is the third row, and it is tempting because it would put capture
+and playback on one clock. Resist it for now: the module's oscillator still
+feeds the PCM1808's system clock, so BCK and LRCK arriving from an unrelated
+ESP32 clock is not an arrangement the part is specified for. `M-48K` is the
+supported answer and needs one solder bridge.
+
+**Wiring** — the header reads `DATA BCLK LRCK MCLK GND` down the board, and
+the pins are ordered to match, so the leads run parallel and nothing
+crosses:
 
 | Module | XIAO ESP32S3 | |
 | --- | --- | --- |
-| DATA | D5 (GPIO6) | audio into the ESP |
+| DATA | D2 (GPIO3) | audio into the ESP |
 | BCLK | D3 (GPIO4) | bit clock, **an input to the ESP** |
 | LRCK | D4 (GPIO5) | word select, **an input to the ESP** |
 | MCLK | **leave unconnected** | an *output* on this board; two drivers on one line is how boards get damaged |
-| GND | GND | |
+| GND | GND | on the XIAO's other side, with VDD |
 | VDD / GND on `POWER` | see below | |
 
-GPIO 3–6 are D2–D5, four adjacent pins on the side **opposite** the DAC's
+D2–D5 are four adjacent pins on the side **opposite** the DAC's
 `D8`/`D9`/`D10`, so a node can carry both boards without either reaching
 across. The ESP32-S3 has two I²S peripherals, so one node really can capture
-a turntable and play a stream at once.
+a turntable and play a stream at once. `D5` stays free here and carries MCLK
+only when driving a bare PCM1808, where the same four pins still map in
+header order.
 
 **Check the supply voltage before connecting it.** These boards carry an
 onboard regulator, and 5 V input is common — but the marking is not
@@ -278,14 +308,8 @@ conclusive from a photograph and the wrong choice destroys the board. Check
 the seller's description. If it cannot be established, **try 3.3 V first**:
 too little means it does not run, too much means it does not survive.
 
-**The rate is the board's to choose, and 24.576 MHz gives two answers.**
-512fs is 48 kHz and 256fs is 96 kHz, selected by the module's strapping —
-the `OP1`/`OP2`/`OP3` pads on this one are the likely selects, and `96K` on
-the silkscreen is a hint rather than a statement about how it left the
-factory. **This matters:** 96 kHz frames sent down a 48 kHz profile play
-back at half speed.
-
-The firmware measures it rather than assuming. The capture trace reports
+The firmware measures the rate rather than assuming it, which is what
+catches an `M-96K` board that nobody remembered to strap. The capture trace reports
 what actually arrives, and warns when it is not what the wire expects:
 
 ```
