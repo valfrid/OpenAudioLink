@@ -21,11 +21,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 // when installed; UseWindowsService is a no-op on other platforms.
 builder.Host.UseWindowsService(options => options.ServiceName = "OpenAudioLink Hub");
 
-var dataDirectory = builder.Configuration["Hub:DataDirectory"];
-if (string.IsNullOrEmpty(dataDirectory))
-{
-    dataDirectory = Path.Combine(AppContext.BaseDirectory, "data");
-}
+var dataDirectory = DataDirectory.Resolve(
+    builder.Configuration["Hub:DataDirectory"], out var dataDirectoryNote);
 var configStore = new HubConfigStore(dataDirectory);
 
 var librespot = new LibrespotOptions();
@@ -63,6 +60,13 @@ builder.Services.AddSingleton<LibrespotService>();
 builder.Services.AddHostedService(services => services.GetRequiredService<LibrespotService>());
 
 var app = builder.Build();
+
+// After the host, because this is decided before logging exists.
+app.Logger.LogInformation("Data directory: {Directory}", dataDirectory);
+if (dataDirectoryNote is not null)
+{
+    app.Logger.LogWarning("{Note}", dataDirectoryNote);
+}
 
 // Device liveness and stream counters are worthless if a browser serves a
 // cached copy, and a stale reading is indistinguishable from a dead device.
