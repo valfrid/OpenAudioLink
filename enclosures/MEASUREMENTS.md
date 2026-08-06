@@ -79,23 +79,24 @@ drawing numbers for this build.
 | -- | ----------- | -------------- | ----- |
 | 1  | Board length (X) | Cavity size | 21.5 mm |
 | 2  | Board width (Y) | Cavity size | 18 mm |
-| 3  | PCB thickness | Edge slot width | *needed* |
+| 3  | PCB thickness | Edge slot width | 1.2 mm |
 | 4  | USB-C body width | Panel cutout | 9 mm |
 | 5  | USB-C body height above PCB top | Panel cutout | 3.2 mm |
 | 6  | USB-C centre position along the board edge | Panel cutout | assumed centred — confirm |
 | 7  | USB-C protrusion past the board edge | Whether the shell must be relieved | 1.5 mm |
-| 8  | Tallest top-side component height | Internal clearance | *needed* |
-| 9  | Tallest bottom-side component height | Standoff height | *needed* |
+| 8  | Tallest top-side component height | Internal clearance | 3.2 mm (the USB-C shell itself — total stack height incl. PCB measured at 4.5 mm, consistent with 1.2 + 3.2) |
+| 9  | Tallest bottom-side component height | Standoff height | 0 mm — confirmed nothing on the back |
 | 10 | Antenna keep-out | RF range | not applicable in the usual sense — antenna is off-board, see below |
 | 11 | Spacing between the two pad rows | Header clearance | *needed* (may be moot — see assembly note below) |
-| 12 | Mounting holes | Retention method | none seen — confirm |
+| 12 | Mounting holes | Retention method | **none — confirmed. Retention will be glue, not screws or clips.** |
 
 **Antenna.** External FPC sheet, adhesive-backed (3M), **18 × 38 mm**,
-connected to the board's U.FL-style pad by a short coax pigtail. Not a
-keep-out zone in the PCB sense — it needs a flat glue surface inside the
-shell (lid or a side wall) away from metal, plus enough slack in the
-pigtail to reach it. Still needed: pigtail length from the board pad to
-where the sheet will sit, and which board edge the pad is on.
+connected to the board's U.FL-style pad by a **55 mm** coax pigtail,
+landing at the **middle of the sheet's long edge**, not at a corner.
+That length is the budget for routing from the XIAO's antenna pad to
+wherever inside the shell the sheet gets glued — plenty of slack for
+most placements. Not a keep-out zone in the PCB sense — it needs a flat
+glue surface (lid or a side wall) away from metal.
 
 ---
 
@@ -130,18 +131,21 @@ the photo.
 | -- | ----------- | -------------- | ----- |
 | 1  | Board length (Y, long edge) | Cavity size | 32 mm |
 | 2  | Board width (X, short edge) | Cavity size | 17.25 mm |
-| 3  | PCB thickness | Edge slot width | *needed* |
-| 4  | Jack **body** height above PCB top | Internal clearance | *needed* |
-| 5  | Jack **barrel centre** height above PCB top | Panel hole centre | *needed* |
-| 6  | Jack centre position along X, and protrusion past the edge | Panel hole position | protrusion 1.5 mm; X position given as "5 mm from shortside" — **which reference edge?** confirm |
-| 7  | Tallest top-side component excluding the jack | Lid clearance | *needed* |
-| 8  | Tallest bottom-side component (0 if flat) | Standoff height | *needed* |
-| 9  | Spacing between the two header rows (centre to centre) | Edge support width | *needed* |
-| 10 | Distance from board edge to the nearest header hole centre | How much edge is free to clamp | *needed* |
-| 11 | Confirm: any mounting holes? | Retention method | none seen — confirm |
-| 12 | Height of soldered headers above PCB top, with sockets fitted | Stack height | not applicable — headers are bridged directly to the XIAO with short jumpers, no sockets. Board-to-board gap and any Z-offset still *needed* |
+| 3  | PCB thickness | Edge slot width | 1.6 mm |
+| 4  | Jack **body** height above PCB top | Internal clearance | 4.9 mm (total stack height incl. PCB measured at 6.5 mm, minus 1.6 mm PCB) |
+| 5  | Jack **barrel centre** height above PCB top | Panel hole centre | not measured directly — estimated ~2.5 mm (half the body height, per the rule of thumb above); confirm before cutting a final shell |
+| 6  | Jack centre position along X, and protrusion past the edge | Panel hole position | protrusion 1.5 mm; along **Y** (length, top edge to barrel centre) = 5 mm. X position (across the 17.25 mm width) assumed centred — confirm |
+| 7  | Tallest top-side component excluding the jack | Lid clearance | 0 mm beyond the jack itself — confirmed nothing else on top |
+| 8  | Tallest bottom-side component (0 if flat) | Standoff height | 0 mm — confirmed nothing on the back |
+| 9  | Spacing between the two header rows (centre to centre) | Edge support width | *needed* — only one header row is populated (see photo), likely not applicable |
+| 10 | Distance from board edge to the nearest header hole centre | How much edge is free to clamp | *needed* — moot now that retention is glue, not a clamp |
+| 11 | Confirm: any mounting holes? | Retention method | **none — confirmed. Retention will be glue, not screws or clips.** |
+| 12 | Height of soldered headers above PCB top, with sockets fitted | Stack height | not applicable — headers are bridged directly to the XIAO with short jumpers, no sockets |
 
 Barrel hole diameter (panel cutout, not in the table above): **5.1 mm**.
+
+**Board-to-board gap**, side by side: **2–5 mm**, no fixed value given —
+3 mm used as the nominal starting point in `boards.scad`, easy to change.
 
 ---
 
@@ -154,10 +158,16 @@ Not measurements, but they affect the geometry as much as any number:
    make a much smaller box. Which are you planning?
 2. **Boards stacked or side by side?** Stacking is compact; side by side
    is thinner and keeps the analog board further from the ESP32.
-   **Resolved for the speaker-dongle receiver: side by side**, with the
-   USB-C edge and the line-out jack edge flush at one end — the real
-   install has both cables leaving through one tight gap behind a
-   speaker, so that end becomes the single connector panel.
+   **Resolved for the speaker-dongle receiver: side by side.** Still
+   open, and it changes the footprint shape: whether the XIAO's USB-C
+   edge and the DAC's line-out jack edge sit **flush at one end** (both
+   boards' connector edges aligned, header rows facing outward past each
+   other), or the boards sit with their **header rows facing each other**
+   across the gap per `docs/HARDWARE.md`'s standard wiring diagram — in
+   which case USB-C and the jack end up at **opposite ends** of the
+   combined footprint rather than side by side. The soldered-assembly
+   photo with measurements will settle this; either way the XIAO's
+   USB-C is not panel-accessible (decision 5).
 3. **Mounting.** Free-standing on a shelf, wall-mounted, or screwed
    behind a speaker? This decides whether the shell needs keyholes or
    feet.
@@ -169,10 +179,13 @@ Not measurements, but they affect the geometry as much as any number:
    fits need the most iteration.
 5. **Power.** USB-C into the ESP32 only, or a separate supply into the
    audio board? This decides how many openings the shell needs.
-   For the speaker-dongle: leaning towards a **2-wire feed** into a
-   panel-mount DC barrel jack rather than the XIAO's onboard USB-C —
-   more flexible to place on the shell given the tight install location.
-   A candidate jack was measured at **5.5 × 14 mm**, but it is not yet
-   clear which two features that spans (barrel bore vs. bushing length,
-   thread diameter, panel hole size) — confirm before it goes in
-   `boards.scad`.
+   **Resolved for the speaker-dongle: a panel-mount USB-C power jack on
+   a 2-wire feed** (not the XIAO's onboard USB-C), rectangular cutout
+   **5.5 × 14 mm**. Because it is a flying-lead part rather than fixed to
+   a board edge, its panel position is free — and it must be placed
+   **opposite the audio jack, or at minimum 90° from it**, to keep the
+   power entry away from the analog output (same reasoning as the
+   "Analog separation" constraint in `README.md`). Consequence: the
+   XIAO's onboard USB-C does **not** need to be panel-accessible at all
+   — it stays inside the shell unused, only its physical size still
+   counts towards internal clearance.
