@@ -16,6 +16,7 @@ static const char *TAG = "oal_producer";
 static oal_stream_request_t s_request;
 static oal_stream_producer_state_t s_state;
 static TaskHandle_t s_task;
+static oal_stream_source_t s_source;
 static volatile bool s_stop;
 
 /*
@@ -199,8 +200,22 @@ static void producer_task(void *arg)
         }
 
         oal_rtp_header_write(&header, packet, sizeof(packet));
-        oal_rtp_fill_payload(packet + OAL_RTP_HEADER_BYTES, s_request.source,
-                             header.timestamp, s_request.tone_hz);
+
+        if (s_request.source == OAL_RTP_SOURCE_CAPTURE) {
+            oal_stream_source_t source = s_source;
+            if (source != NULL) {
+                source(packet + OAL_RTP_HEADER_BYTES, OAL_RTP_FRAMES_PER_PACKET);
+            } else {
+                /* Configured for capture with nothing attached. Silence is
+                 * the honest output: the stream stays timed and a receiver
+                 * keeps its buffer primed, so attaching a source later
+                 * starts the audio rather than restarting the stream. */
+                memset(packet + OAL_RTP_HEADER_BYTES, 0, OAL_RTP_PAYLOAD_BYTES);
+            }
+        } else {
+            oal_rtp_fill_payload(packet + OAL_RTP_HEADER_BYTES, s_request.source,
+                                 header.timestamp, s_request.tone_hz);
+        }
 
         /* One packet, replicated byte-identically. Every consumer must see
          * the same sequence numbers and timestamps, or their measurements
@@ -313,6 +328,11 @@ void oal_stream_producer_stop(void)
     for (int i = 0; i < 100 && s_task != NULL; i++) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+void oal_stream_producer_set_source(oal_stream_source_t source)
+{
+    s_source = source;
 }
 
 void oal_stream_producer_get(oal_stream_producer_state_t *out)

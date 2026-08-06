@@ -274,7 +274,8 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"latePackets\":%u}",
                        p.running ? "true" : "false", p.port,
                        (unsigned)p.destination_count,
-                       p.source == OAL_RTP_SOURCE_TONE ? "tone" : "pattern",
+                       p.source == OAL_RTP_SOURCE_TONE ? "tone"
+                           : p.source == OAL_RTP_SOURCE_CAPTURE ? "capture" : "pattern",
                        (unsigned)p.packets_sent, (unsigned)p.datagrams_sent,
                        (unsigned)p.send_errors, (unsigned)p.send_retries,
                        p.last_send_errno, (unsigned)p.late_packets);
@@ -377,8 +378,20 @@ static esp_err_t stream_start_handler(httpd_req_t *req)
     const cJSON *source = cJSON_GetObjectItemCaseSensitive(root, "source");
     const cJSON *tone = cJSON_GetObjectItemCaseSensitive(root, "toneHz");
     request.port = cJSON_IsNumber(port) ? (uint16_t)port->valueint : OAL_RTP_DEFAULT_PORT;
-    request.source = (cJSON_IsString(source) && strcmp(source->valuestring, "tone") == 0)
-        ? OAL_RTP_SOURCE_TONE : OAL_RTP_SOURCE_PATTERN;
+    /*
+     * "capture" is accepted whether or not an ADC is attached. A producer
+     * asked for real audio with nothing wired sends timed silence, which
+     * keeps receivers primed and makes attaching the input a matter of
+     * plugging it in rather than of restarting the stream.
+     */
+    request.source = OAL_RTP_SOURCE_PATTERN;
+    if (cJSON_IsString(source)) {
+        if (strcmp(source->valuestring, "tone") == 0) {
+            request.source = OAL_RTP_SOURCE_TONE;
+        } else if (strcmp(source->valuestring, "capture") == 0) {
+            request.source = OAL_RTP_SOURCE_CAPTURE;
+        }
+    }
     request.tone_hz = cJSON_IsNumber(tone) ? (uint32_t)tone->valueint : 1000;
     cJSON_Delete(root);
 

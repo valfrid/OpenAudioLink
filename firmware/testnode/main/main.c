@@ -26,6 +26,7 @@
 #include "oal_control.h"
 #include "oal_join.h"
 #include "oal_discovery.h"
+#include "oal_capture.h"
 #include "oal_playout.h"
 #include "oal_stream.h"
 #include "oal_wifi.h"
@@ -178,6 +179,31 @@ void app_main(void)
      * receiver that must be armed before it can be sent to turns every
      * producer start into a race. A producer waits to be told where to
      * send, which it cannot know by itself. */
+#if CONFIG_OAL_ADC_ENABLED
+    /* The Analog Source. Started for a Producer whether or not a stream is
+     * running: an ADC brought up with the stream would deliver its first
+     * packets from a peripheral that has not settled, and that is audible.
+     * A failure is survivable — the synthetic sources still work, which is
+     * what the link measurements use. */
+    if ((roles & OAL_ROLE_PRODUCER) != 0) {
+        static const oal_capture_config_t capture = {
+            .bclk_gpio   = CONFIG_OAL_ADC_BCLK_GPIO,
+            .ws_gpio     = CONFIG_OAL_ADC_WS_GPIO,
+            .din_gpio    = CONFIG_OAL_ADC_DIN_GPIO,
+            .mclk_gpio   = CONFIG_OAL_ADC_MCLK_GPIO,
+            .sample_rate = OAL_RTP_SAMPLE_RATE,
+        };
+
+        esp_err_t input = oal_capture_start(&capture);
+        if (input == ESP_OK) {
+            oal_stream_producer_set_source(oal_capture_read);
+        } else {
+            ESP_LOGW(TAG, "no audio input: %s (synthetic sources still work)",
+                     esp_err_to_name(input));
+        }
+    }
+#endif
+
     if ((roles & OAL_ROLE_CONSUMER) != 0) {
         ESP_ERROR_CHECK(oal_stream_consumer_start(OAL_RTP_DEFAULT_PORT));
 

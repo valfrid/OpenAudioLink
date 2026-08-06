@@ -77,6 +77,13 @@ uint32_t oal_rtp_frames_in(size_t length);
 typedef enum {
     OAL_RTP_SOURCE_PATTERN = 0,
     OAL_RTP_SOURCE_TONE,
+    /**
+     * Real audio from an ADC. Nothing in this component can produce it —
+     * the producer asks a registered callback instead — but the kind
+     * belongs here beside the others because it is what a stream *is*,
+     * and the API reports it by name.
+     */
+    OAL_RTP_SOURCE_CAPTURE,
 } oal_rtp_source_t;
 
 /**

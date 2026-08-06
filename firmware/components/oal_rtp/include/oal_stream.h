@@ -68,6 +68,30 @@ bool oal_stream_producer_remove_destination(const char *address);
 /** Copies the current destination set. */
 void oal_stream_producer_destinations(oal_destinations_t *out);
 
+/**
+ * Where a packet's audio comes from when the source is
+ * OAL_RTP_SOURCE_CAPTURE.
+ *
+ * @param payload to be filled with L24 big-endian stereo
+ * @param frames  frames, not bytes
+ * @return        frames of real audio; the rest must already be silence
+ *
+ * Called from the send task on its packet deadline, so it must not block:
+ * this task is what keeps the stream paced, and a slow source shows up at
+ * every receiver as jitter the network did not cause.
+ */
+typedef size_t (*oal_stream_source_t)(uint8_t *payload, size_t frames);
+
+/**
+ * Attaches an audio source, or NULL to detach.
+ *
+ * The mirror of oal_stream_consumer_set_sink, and for the same reason:
+ * this component generates and measures a stream, and knows nothing about
+ * converters at either end. A node with no ADC still builds and still
+ * sends its synthetic sources.
+ */
+void oal_stream_producer_set_source(oal_stream_source_t source);
+
 void oal_stream_producer_get(oal_stream_producer_state_t *out);
 
 typedef struct {

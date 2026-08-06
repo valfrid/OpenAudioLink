@@ -46,6 +46,27 @@ int32_t oal_pcm_read_l24(const uint8_t *bytes);
  */
 void oal_pcm_l24_to_i2s(const uint8_t *payload, int32_t *out, size_t samples);
 
+/**
+ * Writes one signed sample as three big-endian L24 bytes.
+ *
+ * Values outside [-8388608, 8388607] are clamped rather than wrapped. A
+ * clamp is a flat top on a loud passage; a wrap turns the loudest sample
+ * into the quietest one of the opposite sign, which is a click on every
+ * peak and sounds like a broken cable rather than like clipping.
+ */
+void oal_pcm_write_l24(int32_t value, uint8_t *bytes);
+
+/**
+ * The inverse of oal_pcm_l24_to_i2s: 32-bit words as the I²S peripheral
+ * delivers them, left-justified with the sample in the top 24 bits, into
+ * interleaved big-endian L24 for the wire.
+ *
+ * @param in      one word per sample, as read from the I²S peripheral
+ * @param payload big-endian L24, three bytes per sample
+ * @param samples samples, not frames and not bytes
+ */
+void oal_pcm_i2s_to_l24(const int32_t *in, uint8_t *payload, size_t samples);
+
 #ifdef __cplusplus
 }
 #endif

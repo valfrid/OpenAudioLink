@@ -225,28 +225,68 @@ Keep the BCK wire short. At 48 kHz, stereo, 32-bit slots it runs at
 3.072 MHz, which is not fast but is fast enough that a long unshielded
 jumper next to a Wi-Fi antenna is asking for trouble.
 
-### PCM1808 — wiring, and why it can wait
+### PCM1808 — wiring
 
-The ADC is the **Producer** side, and nothing is waiting on it: the Hub
-already produces, from system audio and now from Spotify. The DAC is the
-blocked path — it is what makes this project audible for the first time —
-so wire that first and get one thing working before adding a second.
+Firmware 0.10.0 adds the capture path: a Producer brings up an I²S input at
+boot and sends what it captures. Enable it under **OpenAudioLink Test Node**
+in `idf.py menuconfig`; it is off by default, because a Producer with no ADC
+still streams the synthetic sources every link measurement was made with.
 
-When it is time, the decision to make first is which end owns the clock:
+**The ESP32 is the clock master.** Both arrangements were available and this
+one was chosen:
 
-- **PCM1808 as master.** The module's onboard oscillator drives its SCK,
-  and the PCM1808 generates BCK and LRCK. The ESP32's I²S then runs as a
-  slave. Fewer wires from the ESP, but ESP-IDF's I²S slave mode is the
-  fussier of the two.
-- **ESP32 as master.** The ESP supplies MCLK, BCK and LRCK; the PCM1808
-  follows. The ESP32-S3 can route MCLK to any pin through its GPIO matrix,
-  and it keeps both audio directions on the same clock — which is what
-  decision 2's synchronisation goals want.
+- **PCM1808 as master** — the module's oscillator drives its own SCK and it
+  generates BCK and LRCK, with the ESP32 as slave. Fewer wires, but
+  ESP-IDF's I²S slave mode is the fussier of the two.
+- **ESP32 as master** — it supplies MCLK, BCK and LRCK and the PCM1808
+  follows. One more wire, and it puts capture and playback on **one clock**,
+  which is what decision 12's synchronisation wants and what makes a node
+  that both records and plays one device rather than two sharing a box.
 
-The `MD0`/`MD1` pins select the mode and the SCK-to-sample-rate ratio, and
-the mapping differs between modules. Read the silkscreen and the module's
-own datasheet before wiring those two; the rest (VCC 5V, GND, OUT, BCK,
-LRC) is straightforward.
+After an evening spent proving the playback clock was innocent, owning both
+clocks is worth a wire.
+
+| Module | XIAO ESP32S3 | |
+| --- | --- | --- |
+| VCC | VUSB (5 V) | the module regulates it down itself |
+| GND | GND | |
+| SCKI | D2 (GPIO3) | **system clock — not optional, see below** |
+| BCK | D3 (GPIO4) | bit clock |
+| LRC | D4 (GPIO5) | word select |
+| OUT | D5 (GPIO6) | data, into the ESP |
+
+Four adjacent pins on the side **opposite** the DAC's `D8`/`D9`/`D10`, so a
+node can carry both boards without either reaching across. The ESP32-S3 has
+two I²S peripherals, so one node really can capture a turntable and play a
+stream at the same time.
+
+**SCKI is not optional and it is the trap here.** The PCM1808 in slave mode
+has no oscillator: without a system clock it produces nothing at all, which
+looks exactly like every other wiring fault. This is the ADC's equivalent of
+the DAC's `SCK`-to-ground — one pin that turns the board from silent to
+working, and the first thing to check.
+
+**`MD0`/`MD1` select master or slave and the SCK-to-rate ratio, and the
+mapping differs between modules.** We need **slave** mode. Read the
+silkscreen and the module's own datasheet before wiring those two rather
+than trusting a recipe written for a different board — the same caution that
+applies to the PCM5102A's configuration pads, for the same reason.
+
+Expect on the serial log:
+
+```
+I (…) oal_capture: I2S in on BCLK=4 WS=5 DIN=6 MCLK=3, 48000 Hz, stereo
+I (…) oal_capture: input 5/10/15 ms (min/now/max), 48000 Hz, dropped 0 ms, …
+```
+
+That second line is the capture trace, on the same five-second cadence as
+the playout one and for the same reason: a rate and a fill together say
+which end is wrong, where either alone only says that something is. The
+input ring is deliberately small — 40 ms against the playout's 200 — because
+they are sized against opposite things. A playout buffer covers the largest
+gap a distant sender can leave; this one covers the jitter of a task on the
+same chip, and every frame it holds is delay between the needle and the
+speaker that nothing downstream will absorb.
 
 ### CX31993 USB dongle
 

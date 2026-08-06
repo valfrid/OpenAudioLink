@@ -31,3 +31,46 @@ void oal_pcm_l24_to_i2s(const uint8_t *payload, int32_t *out, size_t samples)
         out[i] = oal_pcm_read_l24(payload + i * 3) * 256;
     }
 }
+
+void oal_pcm_write_l24(int32_t value, uint8_t *bytes)
+{
+    if (bytes == NULL) {
+        return;
+    }
+
+    if (value > 8388607) {
+        value = 8388607;
+    } else if (value < -8388608) {
+        value = -8388608;
+    }
+
+    /*
+     * Through unsigned before shifting, because shifting a negative value
+     * right is implementation-defined. Two's complement makes the low 24
+     * bits of the unsigned conversion exactly the bits the wire wants.
+     */
+    uint32_t bits = (uint32_t)value;
+    bytes[0] = (uint8_t)((bits >> 16) & 0xFFu);
+    bytes[1] = (uint8_t)((bits >> 8) & 0xFFu);
+    bytes[2] = (uint8_t)(bits & 0xFFu);
+}
+
+void oal_pcm_i2s_to_l24(const int32_t *in, uint8_t *payload, size_t samples)
+{
+    if (in == NULL || payload == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < samples; i++) {
+        /*
+         * Divided by 256 rather than shifted right by 8. For a 24-bit ADC
+         * in 32-bit slots the low byte is zero and the two agree exactly;
+         * where it is not, division truncates towards zero and a shift
+         * towards negative infinity, so they differ by one part in
+         * sixteen million on negative samples. Division is chosen because
+         * it is defined, and because it is the exact inverse of the
+         * multiply on the playback side.
+         */
+        oal_pcm_write_l24(in[i] / 256, payload + i * 3);
+    }
+}

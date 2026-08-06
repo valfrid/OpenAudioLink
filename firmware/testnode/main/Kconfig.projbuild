@@ -68,4 +68,55 @@ menu "OpenAudioLink Test Node"
             one: with the sender fixed the ring still met occasional
             60-70 ms holes, which a 60 ms target could not survive.
 
+    config OAL_ADC_ENABLED
+        bool "Capture line input through an I2S ADC"
+        default n
+        help
+            Producers bring up an I2S input and send what they capture.
+            Off by default: a Producer with no ADC still streams its
+            synthetic sources, which is how every link measurement so far
+            was made.
+
+            The ESP32 is the clock master, so it drives MCLK, BCK and LRCK
+            and the PCM1808 follows. Wire the module for slave mode and
+            give it a system clock — it has no oscillator of its own and
+            stays silent without one. See docs/HARDWARE.md.
+
+    config OAL_ADC_BCLK_GPIO
+        int "ADC bit clock (BCK) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 4
+        help
+            GPIO 3, 4, 5 and 6 are D2, D3, D4 and D5 on a XIAO ESP32S3 —
+            four adjacent pins on the side opposite the DAC's D8/D9/D10,
+            so a node can carry both boards without either reaching across.
+
+            Separate pins from the DAC's on purpose. A node may hold both
+            roles — capture a turntable and play a stream — and the
+            ESP32-S3 has two I2S peripherals, so sharing pins would rule
+            that out for no gain.
+
+            Note these are GPIO numbers, not the D labels: the pins to
+            avoid are D6 and D7, which are GPIO43 and GPIO44 and carry the
+            serial log.
+
+    config OAL_ADC_WS_GPIO
+        int "ADC word select (LRCK) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 5
+
+    config OAL_ADC_DIN_GPIO
+        int "ADC data in (DOUT on the module) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 6
+
+    config OAL_ADC_MCLK_GPIO
+        int "ADC master clock (SCKI) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 3
+        help
+            Not optional. The PCM1808 in slave mode needs a system clock
+            and produces nothing at all without it — a silence that looks
+            exactly like bad wiring everywhere else.
+
 endmenu

@@ -10,6 +10,7 @@
 
 #include "oal_pcm.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -177,6 +178,125 @@ static void null_arguments_are_survivable(void)
     CHECK_EQ(out[0], 5);
 }
 
+/*
+ * The capture direction. Everything above tests the wire becoming audio;
+ * these test audio becoming the wire, which the Analog Source needs and
+ * which fails in exactly the same silent ways.
+ */
+static void a_sample_survives_the_round_trip(void)
+{
+    TEST("a sample survives the round trip");
+
+    /* Both extremes, zero, and values that exercise every byte. */
+    const int32_t values[] = {
+        0, 1, -1, 127, -128, 32767, -32768, 8388607, -8388608, 4660, -4660,
+    };
+
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+        uint8_t bytes[3];
+        oal_pcm_write_l24(values[i], bytes);
+        CHECK_EQ(oal_pcm_read_l24(bytes), values[i]);
+    }
+}
+
+static void writing_is_big_endian_too(void)
+{
+    TEST("writing is big endian too");
+
+    uint8_t bytes[3];
+    oal_pcm_write_l24(0x123456, bytes);
+    CHECK_EQ(bytes[0], 0x12);
+    CHECK_EQ(bytes[1], 0x34);
+    CHECK_EQ(bytes[2], 0x56);
+
+    /* -1 is all ones in two's complement, so every byte is 0xFF. */
+    oal_pcm_write_l24(-1, bytes);
+    CHECK_EQ(bytes[0], 0xFF);
+    CHECK_EQ(bytes[1], 0xFF);
+    CHECK_EQ(bytes[2], 0xFF);
+}
+
+static void loud_samples_clamp_rather_than_wrap(void)
+{
+    TEST("loud samples clamp rather than wrap");
+
+    uint8_t bytes[3];
+
+    oal_pcm_write_l24(8388608, bytes);
+    CHECK_EQ(oal_pcm_read_l24(bytes), 8388607);
+
+    oal_pcm_write_l24(-8388609, bytes);
+    CHECK_EQ(oal_pcm_read_l24(bytes), -8388608);
+
+    /* The failure this guards against: a wrap would turn full scale into
+     * full scale of the opposite sign, which clicks on every peak. */
+    oal_pcm_write_l24(INT32_MAX, bytes);
+    CHECK(oal_pcm_read_l24(bytes) > 0);
+    oal_pcm_write_l24(INT32_MIN, bytes);
+    CHECK(oal_pcm_read_l24(bytes) < 0);
+}
+
+static void capture_undoes_playback(void)
+{
+    TEST("capture undoes playback");
+
+    /* One frame of each extreme plus something asymmetric, through the
+     * playback conversion and back, which is what a loopback test on real
+     * hardware would prove and this proves without one. */
+    const uint8_t original[12] = {
+        0x7F, 0xFF, 0xFF,   /* +full scale */
+        0x80, 0x00, 0x00,   /* -full scale */
+        0x00, 0x00, 0x00,   /* silence */
+        0x12, 0x34, 0x56,   /* arbitrary */
+    };
+
+    int32_t words[4];
+    oal_pcm_l24_to_i2s(original, words, 4);
+
+    uint8_t back[12];
+    oal_pcm_i2s_to_l24(words, back, 4);
+
+    for (size_t i = 0; i < sizeof(original); i++) {
+        CHECK_EQ(back[i], original[i]);
+    }
+}
+
+static void a_low_byte_from_the_adc_is_discarded_not_wrapped(void)
+{
+    TEST("a low byte from the ADC is discarded, not wrapped");
+
+    /* Real converters do not always leave the low byte clear. Whatever is
+     * there must fall off the bottom, never carry into the sample. */
+    int32_t words[2] = {
+        (8388607 * 256) | 0xFF,
+        (-8388608 * 256) | 0xFF,
+    };
+
+    uint8_t payload[6];
+    oal_pcm_i2s_to_l24(words, payload, 2);
+
+    CHECK_EQ(oal_pcm_read_l24(payload), 8388607);
+    CHECK_EQ(oal_pcm_read_l24(payload + 3), -8388607);
+}
+
+static void capture_null_arguments_are_survivable(void)
+{
+    TEST("capture null arguments are survivable");
+
+    uint8_t payload[6] = { 9, 9, 9, 9, 9, 9 };
+    const int32_t words[2] = { 0, 0 };
+
+    oal_pcm_i2s_to_l24(NULL, payload, 2);
+    CHECK_EQ(payload[0], 9);
+
+    oal_pcm_i2s_to_l24(words, NULL, 2);
+
+    oal_pcm_i2s_to_l24(words, payload, 0);
+    CHECK_EQ(payload[0], 9);
+
+    oal_pcm_write_l24(0, NULL);
+}
+
 int main(void)
 {
     reads_the_extremes();
@@ -186,6 +306,12 @@ int main(void)
     interleaving_is_preserved();
     a_whole_packet_converts();
     null_arguments_are_survivable();
+    a_sample_survives_the_round_trip();
+    writing_is_big_endian_too();
+    loud_samples_clamp_rather_than_wrap();
+    capture_undoes_playback();
+    a_low_byte_from_the_adc_is_discarded_not_wrapped();
+    capture_null_arguments_are_survivable();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);
