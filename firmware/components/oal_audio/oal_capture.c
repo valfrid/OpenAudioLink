@@ -159,6 +159,21 @@ static void trace(void)
 
     uint32_t in_hz = (uint32_t)(captured * 1000000ULL / elapsed_us);
 
+    /*
+     * With a self-clocked ADC the rate is the board's to choose, and the
+     * same 24.576 MHz oscillator gives 48 kHz or 96 kHz depending on how
+     * the module is strapped. Sending 96 kHz frames down a 48 kHz profile
+     * plays back at half speed, which is obvious once heard and baffling
+     * until the number is in front of you. Five per cent of tolerance,
+     * because the two clocks are unrelated and a short window is coarse.
+     */
+    if (in_hz > OAL_RTP_SAMPLE_RATE + OAL_RTP_SAMPLE_RATE / 20
+        || in_hz < OAL_RTP_SAMPLE_RATE - OAL_RTP_SAMPLE_RATE / 20) {
+        ESP_LOGW(TAG, "ADC is running at about %" PRIu32 " Hz, not %d — check the module's "
+                      "rate strapping, or this stream plays at the wrong speed",
+                 in_hz, OAL_RTP_SAMPLE_RATE);
+    }
+
     ESP_LOGI(TAG,
              "input %u/%u/%u ms (min/now/max), %" PRIu32 " Hz, dropped %" PRIu32
              " ms, silence %" PRIu32 " ms, underruns %" PRIu32 ", read errors %" PRIu32,
@@ -242,7 +257,8 @@ esp_err_t oal_capture_start(const oal_capture_config_t *config)
         return ESP_ERR_NO_MEM;
     }
 
-    i2s_chan_config_t channel_config = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    i2s_chan_config_t channel_config = I2S_CHANNEL_DEFAULT_CONFIG(
+        I2S_NUM_AUTO, config->slave ? I2S_ROLE_SLAVE : I2S_ROLE_MASTER);
     channel_config.dma_desc_num = DMA_DESCRIPTORS;
     channel_config.dma_frame_num = CHUNK_FRAMES;
 
@@ -260,10 +276,10 @@ esp_err_t oal_capture_start(const oal_capture_config_t *config)
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
             I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
-            /* Unlike the DAC, this one needs a master clock: the PCM1808
-             * in slave mode has no oscillator of its own and stays silent
-             * without SCKI. */
-            .mclk = config->mclk_gpio,
+            /* Only when this end is master. A module with its own
+             * oscillator drives MCLK as an output, and connecting two
+             * drivers to one line is how boards get damaged. */
+            .mclk = config->slave ? I2S_GPIO_UNUSED : config->mclk_gpio,
             .bclk = config->bclk_gpio,
             .ws   = config->ws_gpio,
             .dout = I2S_GPIO_UNUSED,
@@ -310,7 +326,13 @@ esp_err_t oal_capture_start(const oal_capture_config_t *config)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "I2S in on BCLK=%d WS=%d DIN=%d MCLK=%d, %" PRIu32 " Hz, stereo",
-             config->bclk_gpio, config->ws_gpio, config->din_gpio, config->mclk_gpio, rate);
+    if (config->slave) {
+        ESP_LOGI(TAG, "I2S in on BCLK=%d WS=%d DIN=%d, slave — the ADC sets the rate",
+                 config->bclk_gpio, config->ws_gpio, config->din_gpio);
+    } else {
+        ESP_LOGI(TAG, "I2S in on BCLK=%d WS=%d DIN=%d MCLK=%d, master at %" PRIu32 " Hz",
+                 config->bclk_gpio, config->ws_gpio, config->din_gpio,
+                 config->mclk_gpio, rate);
+    }
     return ESP_OK;
 }

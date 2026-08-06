@@ -23,13 +23,21 @@ extern "C" {
  * counted rather than guessed at — which is the single most useful thing
  * the playout path taught this project.
  *
- * The ESP32 is the **clock master**. It supplies MCLK, BCK and LRCK, and
- * the PCM1808 follows. That costs one more wire than letting the module's
- * oscillator drive everything, and buys two things worth more: ESP-IDF's
- * I²S master mode is the better-trodden path, and capture and playback end
- * up on one clock — which is what decision 12's synchronisation wants, and
- * what makes a node that both records and plays coherent rather than two
- * devices sharing a box.
+ * Which end owns the clock is a property of the board, not a preference.
+ * A bare PCM1808 has no oscillator and must be given one, so the ESP32 is
+ * master. The common "ANA TO I2S" modules carry their own 24.576 MHz
+ * oscillator and generate BCK and LRCK themselves — their headers expose
+ * MCLK as an *output* — so the ESP32 has to follow.
+ *
+ * Both are supported and slave is the default, because that is the board
+ * this was first built against. Getting it wrong is not subtle: two
+ * masters driving one clock line produce nothing usable, and the symptom
+ * is silence.
+ *
+ * Being the slave costs the thing decision 12 wanted from being master —
+ * capture and playback on one clock — so a node doing both from a
+ * self-clocked ADC has two clock domains inside it. That is a real cost
+ * and it is the board's to impose, not ours to choose.
  */
 
 typedef struct {
@@ -38,11 +46,22 @@ typedef struct {
     int din_gpio;
 
     /**
-     * Master clock out to the ADC's SCKI. Required: the PCM1808 in slave
-     * mode does not generate its own system clock, and without one it
-     * produces nothing at all rather than producing something wrong.
+     * Master clock out to the ADC's SCKI, used only when this end is
+     * master: a bare PCM1808 has no oscillator and stays silent without
+     * one. Ignored, and best left unwired, when the module clocks itself.
      */
     int mclk_gpio;
+
+    /**
+     * True when the ADC generates BCK and LRCK and this end follows.
+     *
+     * The module's own oscillator then sets the sample rate, and it is
+     * whatever that crystal divides to rather than whatever was asked
+     * for — 24.576 MHz gives 48 kHz at 512fs and 96 kHz at 256fs, and the
+     * strapping decides which. The capture trace measures what actually
+     * arrives, which is the only trustworthy answer.
+     */
+    bool slave;
 
     /** Frames per second. The RTP profile's 48 000 unless testing. */
     uint32_t sample_rate;

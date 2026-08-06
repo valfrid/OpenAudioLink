@@ -191,6 +191,7 @@ void app_main(void)
             .ws_gpio     = CONFIG_OAL_ADC_WS_GPIO,
             .din_gpio    = CONFIG_OAL_ADC_DIN_GPIO,
             .mclk_gpio   = CONFIG_OAL_ADC_MCLK_GPIO,
+            .slave       = CONFIG_OAL_ADC_SLAVE,
             .sample_rate = OAL_RTP_SAMPLE_RATE,
         };
 

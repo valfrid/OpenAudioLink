@@ -227,55 +227,81 @@ jumper next to a Wi-Fi antenna is asking for trouble.
 
 ### PCM1808 — wiring
 
-Firmware 0.10.0 adds the capture path: a Producer brings up an I²S input at
+Firmware 0.10.1 adds the capture path: a Producer brings up an I²S input at
 boot and sends what it captures. Enable it under **OpenAudioLink Test Node**
 in `idf.py menuconfig`; it is off by default, because a Producer with no ADC
 still streams the synthetic sources every link measurement was made with.
 
-**The ESP32 is the clock master.** Both arrangements were available and this
-one was chosen:
+**Which end owns the clock is the board's decision, not a preference**, and
+the two kinds of board differ:
 
-- **PCM1808 as master** — the module's oscillator drives its own SCK and it
-  generates BCK and LRCK, with the ESP32 as slave. Fewer wires, but
-  ESP-IDF's I²S slave mode is the fussier of the two.
-- **ESP32 as master** — it supplies MCLK, BCK and LRCK and the PCM1808
-  follows. One more wire, and it puts capture and playback on **one clock**,
-  which is what decision 12's synchronisation wants and what makes a node
-  that both records and plays one device rather than two sharing a box.
+- **A bare PCM1808** has no oscillator. The ESP32 must supply MCLK, BCK and
+  LRCK and the module follows. This is the better arrangement where it is
+  available, because it puts capture and playback on **one clock** — what
+  decision 12's synchronisation wants, and what makes a node that both
+  records and plays one device rather than two sharing a box.
+- **A self-clocked module** — the common `ANA TO I2S 96K/24BIT` boards —
+  carries its own **24.576 MHz oscillator**. The PCM1808 runs from it and
+  generates BCK and LRCK, and the header exposes **MCLK as an output**. The
+  ESP32 has no choice but to follow.
 
-After an evening spent proving the playback clock was innocent, owning both
-clocks is worth a wire.
+The board this was first built against is the second kind, so
+`OAL_ADC_SLAVE` defaults to **on**. Getting it wrong is not subtle: two
+masters driving one clock line produce nothing usable, and the symptom is
+silence.
+
+Being the slave costs what being master would have bought. A node that
+captures from a self-clocked ADC *and* plays a stream has two clock domains
+inside it — the ADC's crystal and the DAC's. That is a real cost, and the
+board imposes it.
+
+**Wiring a self-clocked module** (header order on the board is `DATA BCLK
+LRCK MCLK GND`):
 
 | Module | XIAO ESP32S3 | |
 | --- | --- | --- |
-| VCC | VUSB (5 V) | the module regulates it down itself |
+| DATA | D5 (GPIO6) | audio into the ESP |
+| BCLK | D3 (GPIO4) | bit clock, **an input to the ESP** |
+| LRCK | D4 (GPIO5) | word select, **an input to the ESP** |
+| MCLK | **leave unconnected** | an *output* on this board; two drivers on one line is how boards get damaged |
 | GND | GND | |
-| SCKI | D2 (GPIO3) | **system clock — not optional, see below** |
-| BCK | D3 (GPIO4) | bit clock |
-| LRC | D4 (GPIO5) | word select |
-| OUT | D5 (GPIO6) | data, into the ESP |
+| VDD / GND on `POWER` | see below | |
 
-Four adjacent pins on the side **opposite** the DAC's `D8`/`D9`/`D10`, so a
-node can carry both boards without either reaching across. The ESP32-S3 has
-two I²S peripherals, so one node really can capture a turntable and play a
-stream at the same time.
+GPIO 3–6 are D2–D5, four adjacent pins on the side **opposite** the DAC's
+`D8`/`D9`/`D10`, so a node can carry both boards without either reaching
+across. The ESP32-S3 has two I²S peripherals, so one node really can capture
+a turntable and play a stream at once.
 
-**SCKI is not optional and it is the trap here.** The PCM1808 in slave mode
-has no oscillator: without a system clock it produces nothing at all, which
-looks exactly like every other wiring fault. This is the ADC's equivalent of
-the DAC's `SCK`-to-ground — one pin that turns the board from silent to
-working, and the first thing to check.
+**Check the supply voltage before connecting it.** These boards carry an
+onboard regulator, and 5 V input is common — but the marking is not
+conclusive from a photograph and the wrong choice destroys the board. Check
+the seller's description. If it cannot be established, **try 3.3 V first**:
+too little means it does not run, too much means it does not survive.
 
-**`MD0`/`MD1` select master or slave and the SCK-to-rate ratio, and the
-mapping differs between modules.** We need **slave** mode. Read the
-silkscreen and the module's own datasheet before wiring those two rather
-than trusting a recipe written for a different board — the same caution that
-applies to the PCM5102A's configuration pads, for the same reason.
+**The rate is the board's to choose, and 24.576 MHz gives two answers.**
+512fs is 48 kHz and 256fs is 96 kHz, selected by the module's strapping —
+the `OP1`/`OP2`/`OP3` pads on this one are the likely selects, and `96K` on
+the silkscreen is a hint rather than a statement about how it left the
+factory. **This matters:** 96 kHz frames sent down a 48 kHz profile play
+back at half speed.
+
+The firmware measures it rather than assuming. The capture trace reports
+what actually arrives, and warns when it is not what the wire expects:
+
+```
+W (…) oal_capture: ADC is running at about 96000 Hz, not 48000 — check the
+      module's rate strapping, or this stream plays at the wrong speed
+```
+
+Read that number before troubleshooting anything else about the sound.
+
+Audio in is either the 3.5 mm `JACK1` or the `R_IN GND L_IN` header — the
+same signal, so use whichever suits the enclosure.
 
 Expect on the serial log:
 
 ```
-I (…) oal_capture: I2S in on BCLK=4 WS=5 DIN=6 MCLK=3, 48000 Hz, stereo
+I (…) oal_capture: I2S in on BCLK=4 WS=5 DIN=6, slave — the ADC sets the rate
 I (…) oal_capture: input 5/10/15 ms (min/now/max), 48000 Hz, dropped 0 ms, …
 ```
 

@@ -77,10 +77,8 @@ menu "OpenAudioLink Test Node"
             synthetic sources, which is how every link measurement so far
             was made.
 
-            The ESP32 is the clock master, so it drives MCLK, BCK and LRCK
-            and the PCM1808 follows. Wire the module for slave mode and
-            give it a system clock — it has no oscillator of its own and
-            stays silent without one. See docs/HARDWARE.md.
+            Which end owns the clock is the board's decision, not a
+            preference — see OAL_ADC_SLAVE below and docs/HARDWARE.md.
 
     config OAL_ADC_BCLK_GPIO
         int "ADC bit clock (BCK) GPIO"
@@ -110,13 +108,39 @@ menu "OpenAudioLink Test Node"
         depends on OAL_ADC_ENABLED
         default 6
 
+    config OAL_ADC_SLAVE
+        bool "The ADC generates the clocks and the ESP32 follows"
+        depends on OAL_ADC_ENABLED
+        default y
+        help
+            On by default, because the common "ANA TO I2S" modules carry
+            their own 24.576 MHz oscillator: the PCM1808 runs from it and
+            generates BCK and LRCK, and the header exposes MCLK as an
+            output. Their sample rate is set by that crystal and the
+            module's strapping — 48 kHz at 512fs, 96 kHz at 256fs — and
+            the node's capture trace measures which you actually got.
+
+            Turn it off for a bare PCM1808, which has no oscillator: then
+            the ESP32 drives MCLK, BCK and LRCK and the module follows.
+            That is the better arrangement where the board allows it,
+            because it puts capture and playback on one clock.
+
+            Getting this wrong is not subtle. Two masters driving one
+            clock line produce nothing usable, and the symptom is silence.
+
     config OAL_ADC_MCLK_GPIO
         int "ADC master clock (SCKI) GPIO"
         depends on OAL_ADC_ENABLED
         default 3
         help
-            Not optional. The PCM1808 in slave mode needs a system clock
-            and produces nothing at all without it — a silence that looks
-            exactly like bad wiring everywhere else.
+            Used only when this end is master, and harmless otherwise: the
+            firmware leaves the pin unassigned in slave mode. Kept visible
+            rather than hidden behind !OAL_ADC_SLAVE so the symbol always
+            exists — a setting that disappears is a compile error waiting
+            for whoever changes the other one. A bare PCM1808 needs a system
+            clock and produces nothing at all without it — a silence that
+            looks exactly like bad wiring everywhere else. Leave the pin
+            unwired against a self-clocked module: its MCLK is an output,
+            and two drivers on one line is how boards get damaged.
 
 endmenu
