@@ -227,10 +227,11 @@ jumper next to a Wi-Fi antenna is asking for trouble.
 
 ### PCM1808 — wiring
 
-Firmware 0.10.2 adds the capture path: a Producer brings up an I²S input at
-boot and sends what it captures. Enable it under **OpenAudioLink Test Node**
-in `idf.py menuconfig`; it is off by default, because a Producer with no ADC
-still streams the synthetic sources every link measurement was made with.
+Firmware 0.10.3 adds the capture path: a Producer brings up an I²S input at
+boot and sends what it captures. It is on by default, so the published
+artifact is the image an Analog Source runs — decision 5 wants one binary
+for every role, and nothing starts unless the node actually holds the
+producer role.
 
 **Which end owns the clock is the board's decision, not a preference**, and
 the two kinds of board differ:

@@ -70,12 +70,21 @@ menu "OpenAudioLink Test Node"
 
     config OAL_ADC_ENABLED
         bool "Capture line input through an I2S ADC"
-        default n
+        default y
         help
             Producers bring up an I2S input and send what they capture.
-            Off by default: a Producer with no ADC still streams its
-            synthetic sources, which is how every link measurement so far
-            was made.
+
+            On by default, and the reason is decision 5: roles live in NVS
+            so that one binary serves every role. A build-time flag
+            deciding whether the Producer role works would put that back —
+            and in practice it means the published artifact cannot be the
+            image an Analog Source runs, which is worse than the 17 KB of
+            static ring it costs.
+
+            Nothing starts unless the node actually holds the producer
+            role, and a Producer whose ADC fails to initialise still
+            streams its synthetic sources, which is how every link
+            measurement so far was made.
 
             Which end owns the clock is the board's decision, not a
             preference — see OAL_ADC_SLAVE below and docs/HARDWARE.md.
