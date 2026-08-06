@@ -240,7 +240,9 @@ the two kinds of board differ:
   available, because it puts capture and playback on **one clock** — what
   decision 12's synchronisation wants, and what makes a node that both
   records and plays one device rather than two sharing a box.
-- **A self-clocked module** — the common `ANA TO I2S 96K/24BIT` boards —
+- **A self-clocked module** — the `GLA ANA TO I2S 96K/24BIT` board sold as
+  "PCM1808 3.5mm Stereo Analog Audio Signal to I2S output", and its
+  relatives —
   carries its own **24.576 MHz oscillator**. The PCM1808 runs from it and
   generates BCK and LRCK, and the header exposes **MCLK as an output**. The
   ESP32 has no choice but to follow.
@@ -302,11 +304,19 @@ a turntable and play a stream at once. `D5` stays free here and carries MCLK
 only when driving a bare PCM1808, where the same four pins still map in
 header order.
 
-**Check the supply voltage before connecting it.** These boards carry an
-onboard regulator, and 5 V input is common — but the marking is not
-conclusive from a photograph and the wrong choice destroys the board. Check
-the seller's description. If it cannot be established, **try 3.3 V first**:
-too little means it does not run, too much means it does not survive.
+**Power is 5–12 V on the `VDD`/`GND` header**, not 3.3 V. The board
+regulates it down itself, so `VUSB` on the XIAO is the straightforward
+choice and an external supply works for a permanent install.
+
+That has a consequence worth stating rather than assuming: because the
+PCM1808 runs from the board's own 3.3 V rail, **the I²S outputs are 3.3 V
+logic whatever you feed `VDD`**. A 12 V supply does not put 12 V anywhere
+near the ESP32. If a future board of this kind regulates differently, that
+is the thing to check before wiring the clocks in — the ESP32-S3's inputs
+are not 5 V tolerant.
+
+Powering it from `VUSB` means the ADC only lives while the XIAO has USB
+power, which is the same caveat the DAC has and fine on a bench.
 
 The firmware measures the rate rather than assuming it, which is what
 catches an `M-96K` board that nobody remembered to strap. The capture trace reports
