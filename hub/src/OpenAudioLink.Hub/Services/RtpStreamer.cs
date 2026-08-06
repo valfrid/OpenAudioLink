@@ -415,13 +415,13 @@ public sealed class RtpStreamer : IAsyncDisposable
                 if (underrun > reportedUnderrun
                     && clock.ElapsedMilliseconds - lastUnderrunReportMs >= 1000)
                 {
-                    var samples = underrun - reportedUnderrun;
-                    var milliseconds = samples * 1000
+                    var missing = underrun - reportedUnderrun;
+                    var milliseconds = missing * 1000
                         / Math.Max(1, format.SampleRate * format.Channels);
                     _logger.LogWarning(
                         "Source ran dry: {Milliseconds} ms of silence sent ({Samples} samples); " +
                         "{Total} samples in total this stream",
-                        milliseconds, samples, underrun);
+                        milliseconds, missing, underrun);
                     reportedUnderrun = underrun;
                     lastUnderrunReportMs = clock.ElapsedMilliseconds;
                 }

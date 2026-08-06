@@ -64,15 +64,53 @@ public class CastPointStoreTests : IDisposable
         Assert.Equal(["a", "b"], created.Destinations);
     }
 
+    /// <summary>
+    /// This asserted the opposite until a real cast point was set up and the
+    /// consequence turned up in Spotify: two entries called "Party", no way
+    /// to tell which was which, and separate credentials so one was signed
+    /// in and the other was not. Unique ids do not help — the name is the
+    /// only thing anyone sees in a device picker.
+    /// </summary>
     [Fact]
-    public void TwoRoomsMayShareAName()
+    public void TwoRoomsMayNotShareAName()
     {
         var store = NewStore();
-        store.Create("Bedroom", [], out var first);
-        store.Create("Bedroom", [], out var second);
+        Assert.Equal(CastPointError.None, store.Create("Bedroom", [], out _));
+        Assert.Equal(CastPointError.NameTaken, store.Create("Bedroom", [], out _));
 
-        Assert.Equal("bedroom", first.Id);
-        Assert.Equal("bedroom-2", second.Id);
+        // Case and surrounding space do not make it a different room, because
+        // they do not make it look like one.
+        Assert.Equal(CastPointError.NameTaken, store.Create(" bedroom ", [], out _));
+    }
+
+    /// <summary>
+    /// Ids still have to be disambiguated, which is easy to assume this
+    /// change made unnecessary. Distinct names can share a slug: punctuation
+    /// and accents are folded away, so "Kök" and "Kok" are two rooms a person
+    /// can tell apart and one id cannot hold both.
+    /// </summary>
+    [Fact]
+    public void DifferentNamesThatSlugTheSameGetDistinctIds()
+    {
+        var store = NewStore();
+        Assert.Equal(CastPointError.None, store.Create("Kök", [], out var first));
+        Assert.Equal(CastPointError.None, store.Create("Kok", [], out var second));
+
+        Assert.Equal("kok", first.Id);
+        Assert.Equal("kok-2", second.Id);
+    }
+
+    [Fact]
+    public void RenamingOntoAnotherRoomsNameIsRefused()
+    {
+        var store = NewStore();
+        store.Create("Kitchen", [], out var kitchen);
+        store.Create("Bedroom", [], out var bedroom);
+
+        Assert.Equal(CastPointError.NameTaken, store.Update(bedroom.Id, "Kitchen", []));
+
+        // Renaming a room to what it is already called is not a clash.
+        Assert.Equal(CastPointError.None, store.Update(kitchen.Id, "Kitchen", ["a"]));
     }
 
     [Fact]
