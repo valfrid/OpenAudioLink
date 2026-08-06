@@ -318,6 +318,15 @@ are not 5 V tolerant.
 Powering it from `VUSB` means the ADC only lives while the XIAO has USB
 power, which is the same caveat the DAC has and fine on a bench.
 
+One difference from the DAC is worth remembering before blaming the
+firmware for a noise: **supply noise matters more to a converter that is
+recording than to one that is playing**, because it lands in the captured
+signal and nothing downstream can take it out again. `VUSB` also feeds a
+Wi-Fi radio in transmit bursts. The module's own regulator gives some
+rejection and this may never be audible — but if the capture has a hiss or
+a whine that tracks Wi-Fi activity, an independent supply on the `VDD`
+header is the first thing to try, and is what the 5–12 V range is for.
+
 The firmware measures the rate rather than assuming it, which is what
 catches an `M-96K` board that nobody remembered to strap. The capture trace reports
 what actually arrives, and warns when it is not what the wire expects:
