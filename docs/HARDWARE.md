@@ -288,6 +288,27 @@ gap a distant sender can leave; this one covers the jitter of a task on the
 same chip, and every frame it holds is delay between the needle and the
 speaker that nothing downstream will absorb.
 
+### ESP32-C3 — considered again, still no
+
+Status: rejected. Raised as a stopgap while more S3 boards were on order.
+
+The C3 was scaffolding while the first S3s were in transit, and decision 5
+removed its target once they were verified. It came up again as a temporary
+third node and the answer is still no, for a reason the intervening work
+supplied rather than the original decision:
+
+**One core.** Decision 2 leans on the S3's second core so that I²S
+servicing runs apart from Wi-Fi transmit bursts. Every fault found while
+making the first speaker audible was a timing fault — a send loop
+descheduled, a ring emptied by a gap, a buffer sized against the wrong
+thing — so putting the playout deadline and the Wi-Fi stack on one core is
+the least attractive experiment this project has available.
+
+The rest is merely work: a new partition table for 4 MB flash (and one
+cannot be delivered over the air), a CI target to re-add, and 400 KB of
+SRAM to fit ~96 KB of static audio buffers into. One I²S peripheral also
+makes a C3 a Consumer or a Producer, never both.
+
 ### CX31993 USB dongle
 
 Status: recorded, blocked, nothing scheduled.
