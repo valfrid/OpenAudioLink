@@ -2,8 +2,11 @@
 
 3D-printable enclosures for the receiver and analog source nodes.
 
-Status: measuring the receiver boards (XIAO ESP32S3 + PCM5102A, the
-"speaker-dongle" build) in `MEASUREMENTS.md`. No geometry yet.
+Status: first-draft `boards.scad` and `coupon.scad` exist for the
+receiver (XIAO ESP32S3 + PCM5102A, the "speaker-dongle" build) — not
+printed or fit-checked yet. Several positions are still assumptions
+pending the final measured-assembly photo; see the comments in
+`boards.scad`.
 
 ## Approach
 
