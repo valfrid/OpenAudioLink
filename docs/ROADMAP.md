@@ -172,6 +172,81 @@ Goals:
   from the I²S calls first, which is why it did not happen during the
   debugging.
 
+## Internet radio, the next source
+
+Chosen because it is the cheapest strong source left and the only one that
+can be **lossless**. Radio Paradise, Linn and Naim serve FLAC over HTTP, so
+the ceiling belongs to the station rather than to the protocol — where
+Spotify Connect is capped at 320 kbps Vorbis by Spotify and no client-side
+work changes that (`LIBRESPOT.md`).
+
+Everything downstream exists and is proven on hardware: `IAudioSource`, the
+147:160 resampler for the 44.1 kHz most stations use, the packetiser, the
+streamer, cast points. This is fetch, decode, hand over PCM — no separate
+process, no account, no sign-in, no zeroconf. Far less than librespot cost.
+
+Decision 3 preferred the Hub as host and decision 13 settled the rate
+question: the source resamples, 48 kHz stays the only rate on the wire.
+
+### The decoder is the only real decision
+
+The same shape as decision 11's licensing question, and the same kind of
+answer:
+
+- **NAudio's Media Foundation reader.** Already a dependency, decodes MP3
+  and AAC natively on Windows, and asks the operator for nothing. FLAC
+  needs a separate library.
+- **ffmpeg.** Decodes everything including FLAC, but is another binary the
+  operator supplies — consistent with how librespot is handled, at the cost
+  of another install step.
+
+Start with Media Foundation, because a source that needs no extra download
+is a source that works the first time. FLAC follows once the path is proven.
+
+### Two things that will bite before any decoder does
+
+**Playlist indirection.** Many "stream URLs" are `.pls` or `.m3u` files
+naming the real stream. Trivial to resolve and mandatory to handle: without
+it the first URL anyone pastes fails in a way that looks like a decoder
+bug.
+
+**HLS and DASH stations are a different project.** The BBC and most
+commercial broadcasters left single endless streams for segment playlists
+that need continuous refetching and discontinuity handling. That is a
+client, not a fetch. Decide to skip it deliberately rather than discover it
+halfway through.
+
+Also: buffer against stalls. Decision 3 named this as what makes internet
+radio robust, and today's playout work is the same lesson from the other
+end — a source that runs dry is as audible as a network that does, and
+`RtpStreamer` now logs it.
+
+### Test stations, chosen for what each proves
+
+A station is a URL, so adding them is free and there is no library to
+maintain. These are test cases, not a collection:
+
+| Station | Proves |
+| --- | --- |
+| SomaFM | Plain Icecast, MP3 and AAC. If this fails nothing works |
+| Sveriges Radio | Local, has an open API for channel URLs, and P2 is a real quality test |
+| Radio Paradise | FLAC — the lossless path |
+| Linn Radio | FLAC again, different implementation, so the handling is not shaped around one station |
+
+Check current URLs at the source rather than hardcoding a list; they rotate
+often enough that a checked-in list ages badly. For the switchboard,
+`radio-browser.info` is a free community directory searchable by country,
+genre, codec and bitrate, which turns "which stations" into a query rather
+than a list somebody maintains.
+
+### It is also the case the control surface was written for
+
+A station has no phone app choosing the room, so something must say *which
+speakers* — exactly the single-source problem in `CONTROL-SURFACE.md`, and
+the same shape a turntable creates. Radio makes the switchboard worth
+opening, and the switchboard makes radio usable. They want doing near each
+other.
+
 ## Later candidates
 
 Priority is intentionally not fixed:
@@ -185,7 +260,7 @@ Priority is intentionally not fixed:
   keeping the Cast front end that already works and is account-free while
   OpenAudioLink distributes to speakers. Analog through the PCM1808 first,
   because it needs no new parts and no sample-rate conversion
-- internet radio
+- ~~internet radio~~ — **next**, see below
 - Home Assistant integration
 - Bluetooth input
 - DSP
