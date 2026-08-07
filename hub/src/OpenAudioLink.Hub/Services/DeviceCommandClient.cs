@@ -54,6 +54,28 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Adds and removes destinations in one request, without interrupting
+    /// the stream.
+    /// </summary>
+    /// <remarks>
+    /// One request rather than two because the node applies removals first
+    /// (protocol/CONTROL.md): a speaker that came back on a new address is
+    /// a remove and an add of the same box, and doing them separately can
+    /// fill the set with the entry that is on its way out.
+    /// </remarks>
+    public async Task<bool> SetStreamDestinationsAsync(
+        DeviceRecord producer, IReadOnlyList<string> add, IReadOnlyList<string> remove,
+        CancellationToken cancellationToken)
+    {
+        if (add.Count == 0 && remove.Count == 0)
+        {
+            return true;
+        }
+        var body = JsonSerializer.Serialize(new { add, remove });
+        return await PostAsync(producer, "/stream/destinations", body, cancellationToken);
+    }
+
+    /// <summary>
     /// Sets which of the stream's two channels the device plays (decision
     /// 10). Sent on its own rather than alongside roles, so changing a
     /// speaker from stereo to mono cannot disturb what it is.

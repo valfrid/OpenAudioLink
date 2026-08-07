@@ -64,6 +64,10 @@ builder.Services.AddHttpClient(nameof(RadioSource), client =>
 });
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
+// Puts a node-to-node stream back after a roam takes it away. Only node
+// producers: what the Hub sends itself is already supervised by whatever
+// is driving it.
+builder.Services.AddHostedService<StreamSupervisor>();
 // Registered twice on purpose: the host runs it, and the API reads what it
 // knows. Two registrations of the type would be two instances.
 builder.Services.AddSingleton<LibrespotService>();
@@ -696,7 +700,7 @@ app.MapPost("/api/castpoints/{id}/play",
         return Results.StatusCode(502);
     }
 
-    store.MarkPlaying(id, producer.Id);
+    store.MarkPlaying(id, producer.Id, request.Source ?? "pattern", request.ToneHz ?? 1000);
     return Results.Ok(new { status = "playing", castPoint = point.Name, destinations = addresses, stopped });
 });
 

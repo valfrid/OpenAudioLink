@@ -11,6 +11,7 @@
 #include "oal_join.h"
 #include "oal_playout.h"
 #include "oal_stream.h"
+#include "oal_wifi.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "esp_https_ota.h"
@@ -76,10 +77,10 @@ static int format_wifi(char *out, size_t out_size)
     return snprintf(out, out_size,
                     "{\"joined\":true,\"ssid\":\"%s\","
                     "\"bssid\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
-                    "\"channel\":%d,\"rssi\":%d}",
+                    "\"channel\":%d,\"rssi\":%d,\"roams\":%" PRIu32 "}",
                     ssid, ap.bssid[0], ap.bssid[1], ap.bssid[2],
                     ap.bssid[3], ap.bssid[4], ap.bssid[5],
-                    (int)ap.primary, ap.rssi);
+                    (int)ap.primary, ap.rssi, oal_wifi_roams());
 }
 
 /*
@@ -345,14 +346,37 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
     if ((s_config.roles & OAL_ROLE_PRODUCER) != 0) {
         oal_stream_producer_state_t p;
         oal_stream_producer_get(&p);
+        /*
+         * The addresses, not just how many. A Controller correcting a
+         * stream after a speaker rejoined on a different address has to be
+         * able to see that the stream is pointed at the old one — and a
+         * count is identical whether it is right or wrong, which makes the
+         * failure look like perfect health.
+         */
+        char destinations[OAL_STREAM_MAX_DESTINATIONS * (OAL_ADDRESS_MAX + 3) + 4] = "[]";
+        {
+            oal_destinations_t set;
+            oal_stream_producer_destinations(&set);
+            size_t w = 0;
+            destinations[w++] = '[';
+            for (size_t i = 0; i < set.count && w + 20 < sizeof(destinations); i++) {
+                w += (size_t)snprintf(destinations + w, sizeof(destinations) - w,
+                                      "%s\"%s\"", i ? "," : "", set.entries[i]);
+            }
+            if (w + 2 < sizeof(destinations)) {
+                destinations[w++] = ']';
+                destinations[w] = '\0';
+            }
+        }
+
         len = snprintf(body, sizeof(body),
                        "{\"role\":\"producer\",\"running\":%s,\"port\":%u,"
-                       "\"destinations\":%u,\"source\":\"%s\","
+                       "\"destinations\":%u,\"destinationList\":%s,\"source\":\"%s\","
                        "\"packetsSent\":%u,\"datagramsSent\":%u,"
                        "\"sendErrors\":%u,\"sendRetries\":%u,\"lastSendErrno\":%d,"
                        "\"latePackets\":%u}",
                        p.running ? "true" : "false", p.port,
-                       (unsigned)p.destination_count,
+                       (unsigned)p.destination_count, destinations,
                        p.source == OAL_RTP_SOURCE_TONE ? "tone"
                            : p.source == OAL_RTP_SOURCE_CAPTURE ? "capture" : "pattern",
                        (unsigned)p.packets_sent, (unsigned)p.datagrams_sent,

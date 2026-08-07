@@ -33,6 +33,19 @@ public sealed record CastPointPlayback
     public required string CastPointId { get; init; }
     public required string ProducerId { get; init; }
     public required DateTimeOffset StartedAt { get; init; }
+
+    /// <summary>
+    /// What the producer was asked for — "capture", "tone", "pattern" — so
+    /// a stream that stopped can be started again as the same thing.
+    /// </summary>
+    /// <remarks>
+    /// Without this a recovery is a guess. A node that fell off the network
+    /// mid-record comes back knowing nothing about what it was doing, and
+    /// the Hub is the only thing that remembers somebody put a record on.
+    /// </remarks>
+    public string? Source { get; init; }
+
+    public int? ToneHz { get; init; }
 }
 
 /// <summary>
@@ -236,7 +249,8 @@ public sealed class CastPointStore
         }
     }
 
-    public void MarkPlaying(string castPointId, string producerId)
+    public void MarkPlaying(
+        string castPointId, string producerId, string? source = null, int? toneHz = null)
     {
         lock (_gate)
         {
@@ -245,6 +259,8 @@ public sealed class CastPointStore
                 CastPointId = castPointId,
                 ProducerId = producerId,
                 StartedAt = _time.GetUtcNow(),
+                Source = source,
+                ToneHz = toneHz,
             };
         }
     }

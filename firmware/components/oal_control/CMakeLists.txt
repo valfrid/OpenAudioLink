@@ -2,5 +2,5 @@ idf_component_register(
     SRCS "oal_control.c"
          "oal_join.c"
     INCLUDE_DIRS "include"
-    REQUIRES oal_config oal_rtp oal_discovery oal_audio
+    REQUIRES oal_config oal_rtp oal_discovery oal_audio oal_wifi
     PRIV_REQUIRES esp_http_client esp_http_server esp_https_ota esp_partition esp_wifi esp_timer json)

@@ -11,6 +11,7 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -20,13 +21,74 @@
 static const char *TAG = "oal_wifi";
 
 #define NVS_NAMESPACE "oal"
+
+/*
+ * How many joins may fail before the *first* connection is called off and
+ * the provisioning portal opens. Only ever applies at boot: a node that has
+ * been on the network and fell off has demonstrably correct credentials, so
+ * giving up on it would be answering a radio problem with a password
+ * question.
+ */
 #define MAX_STA_RETRIES 10
 
 #define CONNECTED_BIT BIT0
 #define FAILED_BIT BIT1
 
+/*
+ * Staying put, and coming back.
+ *
+ * Two faults met on hardware, both of which stop the music after some
+ * minutes and neither of which looks like a radio problem from the outside.
+ *
+ * **The node used to give up.** After ten consecutive disconnects it set
+ * FAILED_BIT and stopped calling esp_wifi_connect entirely — nothing was
+ * waiting on that bit once boot was over, so the node simply left the
+ * network until somebody power-cycled it. Ten disconnects is a normal
+ * afternoon in a mesh. A node that has ever held an address now retries
+ * forever, slowing down rather than stopping.
+ *
+ * **And it re-chose its access point every time.** The join config asks for
+ * an all-channel scan sorted by signal, which is right for a first join and
+ * wrong for every one after it: with two mesh radios at similar strength
+ * the winner is a coin flip, so a node landed on a different access point
+ * every second reconnect. Measured as a producer and its consumer drifting
+ * apart onto different radios mid-record, which turns a two-hop path into a
+ * three-hop one across the backhaul.
+ *
+ * So: remember where we were and ask for exactly that BSSID first. This is
+ * the hysteresis, expressed as "do not even look elsewhere unless the
+ * access point we were on will not have us" rather than as an RSSI margin —
+ * a threshold has to be tuned against a house, and this does not. It is
+ * also much faster, because a directed join skips the scan that costs a
+ * second or more of silence.
+ *
+ * Only after several refusals does it fall back to scanning, which is the
+ * case that matters when an access point has genuinely gone away.
+ */
+#define STICKY_ATTEMPTS 4
+
+/* Backoff once a node has been trying for a while, so a radio that is
+ * really gone does not spin the transmitter flat out. */
+#define RECONNECT_DELAY_US 2000000
+#define BACKOFF_AFTER_RETRIES 6
+
 static EventGroupHandle_t s_events;
 static int s_retries;
+
+/** The access point this node last held an address on. */
+static uint8_t s_last_bssid[6];
+static bool s_have_last_bssid;
+
+/** Consecutive directed joins tried since the last success. */
+static int s_sticky_attempts;
+
+/** True once this node has ever been on the network. */
+static bool s_was_connected;
+
+/** Counted and reported, because a roam is invisible otherwise. */
+static uint32_t s_roams;
+
+static esp_timer_handle_t s_reconnect_timer;
 
 /* ---------- credentials ---------- */
 
@@ -87,21 +149,131 @@ esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password)
 
 /* ---------- station mode ---------- */
 
+/**
+ * Asks for the access point we were last on, or for the best one going.
+ *
+ * Directed joins skip the scan entirely, which is both faster and the
+ * whole point: a scan is what lets a node change its mind about where it
+ * lives.
+ */
+static void request_join(void)
+{
+    wifi_config_t config = { 0 };
+    if (esp_wifi_get_config(WIFI_IF_STA, &config) != ESP_OK) {
+        esp_wifi_connect();
+        return;
+    }
+
+    bool sticky = s_have_last_bssid && s_sticky_attempts < STICKY_ATTEMPTS;
+    if (sticky) {
+        memcpy(config.sta.bssid, s_last_bssid, sizeof(config.sta.bssid));
+        config.sta.bssid_set = true;
+        s_sticky_attempts++;
+    }
+    else {
+        /* Given up on where we were. Scan and take the strongest, which is
+         * the boot behaviour and the right answer when an access point has
+         * actually gone away. */
+        config.sta.bssid_set = false;
+        if (s_have_last_bssid) {
+            ESP_LOGW(TAG, "%d directed joins refused; scanning for any access point",
+                     STICKY_ATTEMPTS);
+            s_have_last_bssid = false;
+        }
+    }
+
+    esp_wifi_set_config(WIFI_IF_STA, &config);
+    esp_wifi_connect();
+}
+
+static void reconnect_timer_fired(void *arg)
+{
+    (void)arg;
+    request_join();
+}
+
+static void schedule_join(void)
+{
+    /*
+     * Never from inside the event handler when a delay is wanted: that
+     * runs on the event task, and blocking it stalls every other event in
+     * the system including the one that says the join succeeded.
+     */
+    if (s_retries < BACKOFF_AFTER_RETRIES) {
+        request_join();
+        return;
+    }
+
+    if (s_reconnect_timer == NULL) {
+        const esp_timer_create_args_t args = {
+            .callback = reconnect_timer_fired,
+            .name = "oal_reconnect",
+        };
+        if (esp_timer_create(&args, &s_reconnect_timer) != ESP_OK) {
+            request_join();
+            return;
+        }
+    }
+    esp_timer_stop(s_reconnect_timer);
+    esp_timer_start_once(s_reconnect_timer, RECONNECT_DELAY_US);
+}
+
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, void *data)
 {
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        request_join();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (++s_retries > MAX_STA_RETRIES) {
+        s_retries++;
+
+        /*
+         * Giving up is only ever an answer at boot, where a wrong password
+         * is the likely explanation and the portal is the cure. A node that
+         * has held an address has demonstrably correct credentials, so
+         * every later failure is a radio problem — and opening the portal
+         * would take a working speaker off the network to ask a question
+         * that has already been answered.
+         */
+        if (!s_was_connected && s_retries > MAX_STA_RETRIES) {
             xEventGroupSetBits(s_events, FAILED_BIT);
-        } else {
-            ESP_LOGW(TAG, "disconnected, retry %d/%d", s_retries, MAX_STA_RETRIES);
-            esp_wifi_connect();
+            return;
         }
+
+        wifi_event_sta_disconnected_t *lost = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG, "disconnected (reason %d), attempt %d%s",
+                 lost ? lost->reason : 0, s_retries,
+                 (s_have_last_bssid && s_sticky_attempts < STICKY_ATTEMPTS)
+                     ? ", asking for the same access point" : "");
+
+        xEventGroupClearBits(s_events, CONNECTED_BIT);
+        schedule_join();
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
+
+        /*
+         * Which radio we landed on, remembered for next time. Reported too:
+         * in a mesh every access point advertises the same SSID, so a roam
+         * is completely invisible without the BSSID — and a producer and
+         * its consumer drifting onto different radios is a three-hop path
+         * where there was a two-hop one, which is audible.
+         */
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            if (s_have_last_bssid && memcmp(s_last_bssid, ap.bssid, sizeof(ap.bssid)) != 0) {
+                s_roams++;
+                ESP_LOGW(TAG, "moved to a different access point: "
+                              "%02x:%02x:%02x:%02x:%02x:%02x, ch %d, %d dBm (roam %u)",
+                         ap.bssid[0], ap.bssid[1], ap.bssid[2],
+                         ap.bssid[3], ap.bssid[4], ap.bssid[5],
+                         (int)ap.primary, ap.rssi, (unsigned)s_roams);
+            }
+            memcpy(s_last_bssid, ap.bssid, sizeof(s_last_bssid));
+            s_have_last_bssid = true;
+        }
+
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&event->ip_info.ip));
         s_retries = 0;
+        s_sticky_attempts = 0;
+        s_was_connected = true;
         xEventGroupSetBits(s_events, CONNECTED_BIT);
     }
 }
@@ -165,6 +337,11 @@ static bool try_station(const char *ssid, const char *password)
     ESP_LOGE(TAG, "could not join \"%s\"", ssid);
     ESP_ERROR_CHECK(esp_wifi_stop());
     return false;
+}
+
+uint32_t oal_wifi_roams(void)
+{
+    return s_roams;
 }
 
 /* ---------- provisioning portal ---------- */
