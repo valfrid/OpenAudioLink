@@ -53,6 +53,7 @@ The ESP32-S3 is the platform. It is the only firmware target that builds.
 9. ADC source proof of concept
 10. Synchronization and clock correction
 
+Installing the Hub and keeping it up to date is `docs/INSTALLING-THE-HUB.md`.
 See `docs/ARCHITECTURE.md`, `docs/MASTER_PROMPT.md`, `docs/HARDWARE.md` and `docs/ROADMAP.md`.
 Measured network behaviour — loss, jitter and what causes them — is in
 `docs/LINK-MEASUREMENTS.md`. How rooms and groups are chosen from a phone

@@ -1,0 +1,86 @@
+# Publishes a downloadable Hub package and the node firmware.
+#
+# CI already builds both on every push, but its artifacts need a GitHub
+# login to fetch and expire after ninety days. A release asset is a plain
+# public URL that never expires, which is what lets the update script be a
+# single command with no token and no browser step:
+#
+#     & "$env:ProgramFiles\OpenAudioLink\scripts\update-hub.ps1"
+#
+# Triggered by a tag, so publishing is a deliberate act rather than
+# something every commit does:
+#
+#     git tag hub-v0.7.0 && git push origin hub-v0.7.0
+#
+# The version in the tag must match hub/Directory.Build.props, and this
+# refuses the build if it does not — an installer that reports a different
+# version from the one on the tin is worse than no installer.
+name: Release
+
+on:
+  push:
+    tags:
+      - "hub-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, e.g. hub-v0.7.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  hub:
+    name: Hub win-x64 package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Check the tag against the version in the tree
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_NAME -like 'hub-v*') { $env:GITHUB_REF_NAME } else { '${{ inputs.tag }}' }
+          $tagged = $tag -replace '^hub-v', ''
+          $props = Get-Content hub/Directory.Build.props -Raw
+          if ($props -notmatch '<Version>([^<]+)</Version>') { throw 'No <Version> in Directory.Build.props' }
+          $declared = $Matches[1]
+          Write-Host "tag $tagged, Directory.Build.props $declared"
+          if ($tagged -ne $declared) {
+            throw "Tag says $tagged and the tree says $declared. Bump one of them."
+          }
+          "version=$tagged" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: version
+
+      - name: Publish self-contained win-x64
+        run: >
+          dotnet publish src/OpenAudioLink.Hub --configuration Release
+          --runtime win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          --output publish
+        working-directory: hub
+
+      - name: Include the install and update scripts
+        run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
+        working-directory: hub
+
+      - name: Zip it
+        shell: pwsh
+        run: |
+          $name = "OpenAudioLink-Hub-win-x64-${{ steps.version.outputs.version }}.zip"
+          Compress-Archive -Path hub/publish/* -DestinationPath $name
+          "asset=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: package
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Hub ${{ steps.version.outputs.version }}
+          files: ${{ steps.package.outputs.asset }}
+          generate_release_notes: true
+          # The asset name is what update-hub.ps1 matches on, so it must
+          # keep the OpenAudioLink-Hub-win-x64 prefix.
+          fail_on_unmatched_files: true

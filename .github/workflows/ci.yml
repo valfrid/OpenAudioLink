@@ -47,7 +47,7 @@ jobs:
           -p:PublishSingleFile=true
           --output publish
         working-directory: hub
-      - name: Include service install scripts
+      - name: Include the install and update scripts
         run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
         working-directory: hub
       - uses: actions/upload-artifact@v5
