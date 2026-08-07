@@ -115,7 +115,7 @@ public sealed class FirmwareFetcher
 
             _logger.LogInformation(
                 "Fetched node firmware {File} ({Size} bytes, sha256 {Hash})",
-                saved.File, saved.Bytes, saved.Sha256);
+                saved.File, saved.Size, saved.Sha256);
             return new FirmwareFetchResult(saved.File, version, false, null);
         }
         catch (InvalidFirmwareImageException ex)

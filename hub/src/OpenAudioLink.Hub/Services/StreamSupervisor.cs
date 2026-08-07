@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Protocol;
+using OpenAudioLink.Hub.Configuration;
 
 namespace OpenAudioLink.Hub.Services;
 
