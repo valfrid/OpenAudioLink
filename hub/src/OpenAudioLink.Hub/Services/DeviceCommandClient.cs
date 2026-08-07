@@ -66,6 +66,26 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Sets the device's playback level, 0-100. Applies immediately on the
+    /// node and persists there.
+    /// </summary>
+    /// <remarks>
+    /// Its own endpoint rather than a field on <c>/config</c>, because
+    /// <c>/config</c> means "stored, applies at reboot" and this means "the
+    /// room is quieter now". Deliberately not logged at information level:
+    /// a slider produces a request per movement, and a log that fills with
+    /// them buries the events worth reading.
+    /// </remarks>
+    public async Task<bool> SetVolumeAsync(
+        DeviceRecord device, int percent, CancellationToken cancellationToken)
+    {
+        var clamped = Math.Clamp(percent, 0, 100);
+        _logger.LogDebug("Setting volume on {Device} to {Percent}%", device.Name, clamped);
+        return await PostAsync(
+            device, "/volume", JsonSerializer.Serialize(new { percent = clamped }), cancellationToken);
+    }
+
+    /// <summary>
     /// Tells the device to pull and install a firmware image from this Hub.
     /// The download URL uses the Hub address as seen from the device's
     /// subnet, so multi-homed hosts advertise a reachable address.

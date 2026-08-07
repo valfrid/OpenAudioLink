@@ -249,6 +249,39 @@ request with `400` rather than silently storing a subset. The roles take
 effect at the next boot, because they decide which tasks start; changing
 them under a running node would mean tearing down live audio.
 
+### POST /volume
+
+Sets the playback level, 0-100, on a Consumer.
+
+Request `{ "percent": 40 }` → response
+`{ "status": "set", "volume": 40, "stored": true }`.
+
+**Its own endpoint, not a field on `/config`**, and the difference is the
+whole point: `/config` means *stored, applies at reboot*, and this means
+*the room is quieter now*. It takes effect on the next 5 ms chunk. A reply
+saying `appliesAt: reboot` about one field and not the other would be a
+worse API than two routes.
+
+`stored` reports whether it also reached NVS. Setting the level and
+persisting it are separate outcomes and are reported separately: the sound
+changes first, because somebody is standing at a slider waiting for it, and
+a level forgotten by tomorrow is a smaller failure than one that never
+happened. `GET /status` reports `"volume"` as the level actually in effect
+rather than the level stored, for the same reason.
+
+Attenuation only — values above 100 are rejected. Amplifying digitally
+would clip the loud passages of an already full-scale stream, which is the
+one failure a volume control must not have.
+
+The taper is cubed rather than linear: half travel is about −18 dB, a tenth
+about −60 dB, which is where the detents on a real volume pot sit. A linear
+control spends three quarters of its travel in a range that all sounds
+equally loud.
+
+Absent from firmware older than 0.11.0, where `GET /status` has no
+`"volume"` field at all. A Controller must treat that as "this node cannot"
+rather than as zero.
+
 ### POST /rename
 
 Request `{ "name": "Kitchen" }` → response `{ "name": "Kitchen" }`.

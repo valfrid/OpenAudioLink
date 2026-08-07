@@ -1036,3 +1036,122 @@ Kconfig flag, not quietly in the default build of an MIT-licensed project.
 - Spotify lossless, if it ever arrives, is 44.1 kHz and gets the same
   treatment as Spotify lossy: converted at the Hub, still bit-transparent
   to well below audibility.
+
+## 14. Volume is digital gain at the Consumer, on a cubed taper
+
+**Status:** accepted, built 2026-08-07. Firmware 0.11.0, Hub 0.5.0.
+
+### The question
+
+Something has to turn the sound down, and until now nothing could.
+
+Spotify hid the gap for months. librespot applies the phone's volume to the
+samples before they reach the pipe (`LIBRESPOT.md`), so every Spotify test
+had a working volume control that belonged to somebody else's software. The
+analog path was the first source without one, and the honest answer to
+"can I turn down the vinyl" was: turn the amplifier down, or lift the
+needle.
+
+### Why the Consumer, and nowhere else
+
+Three places could hold it, and two are wrong.
+
+**The DAC cannot.** The PCM5102A has no volume register — no I²C, no
+control interface at all, just I²S in and two analog outputs. That is a
+consequence of the hardware chosen in `HARDWARE.md` and it removes the
+option that would otherwise be obviously best.
+
+**The Producer is wrong.** One stream feeds every room. Attenuating at the
+sender turns down the kitchen and the living room together, and no
+downstream node can undo it — the quiet samples are all that arrive. That
+is decision 10's argument in a different costume: what a node does with the
+audio it receives is the node's business, because the node is the thing
+standing in a particular room.
+
+**So: the Consumer**, a multiply per sample on the ESP32 between the ring
+and the I²S peripheral. 96 000 multiplies a second on a 240 MHz CPU, which
+is nothing, and it is the only place left that knows which room it is in.
+
+### Applied at playout, not on arrival
+
+The obvious implementation attenuates in `oal_playout_submit`, where the
+samples are already being converted. It is wrong twice over.
+
+The ring holds up to 200 ms, so a slider moved there is heard a fifth of a
+second later — long enough that a person moves it again, overshoots, and
+concludes the control is broken.
+
+And the ring would then hold attenuated audio. Turning down and back up
+returns samples that were quantised at whatever the level happened to be,
+so repeated use grinds the resolution away. Applying it in the playout task
+instead keeps the ring at full scale and makes the change audible on the
+next 5 ms chunk.
+
+### The taper is cubed
+
+A linear slider spends three quarters of its travel in a range that all
+sounds the same, because hearing is closer to logarithmic than linear —
+the classic control that does nothing until the last inch and then
+deafens. Cubing approximates the audio taper a real potentiometer has:
+
+| Slider | Gain     | dB   |
+| ------ | -------- | ---- |
+| 100    | 1.0      | 0    |
+| 80     | 0.512    | −5.8 |
+| 50     | 0.125    | −18  |
+| 10     | 0.000992 | −60  |
+
+Integer arithmetic throughout, so the node and a host test agree exactly
+and nothing needs an FPU. The intermediate needs 64 bits: `100³ × 65536`
+is 6.5 × 10¹⁰, and computing it in 32 bits overflows at about 39 % — a
+volume control that gets louder as it is turned down.
+
+The percentage is what is stored, not the computed gain, so the curve can
+be changed later without every speaker in the house shifting level on the
+next update.
+
+### Attenuation only
+
+Values above 100 are rejected rather than clamped upward into gain.
+Amplifying an already full-scale stream digitally clips its loud passages,
+which is the one failure mode a volume control must not have. If a room is
+too quiet at 100 the answer is a bigger amplifier, not arithmetic.
+
+### The quality cost, stated rather than assumed
+
+Multiplying and truncating loses the bottom bits of every sample. At 24
+bits that is around 20 dB below the quietest thing a domestic speaker
+reproduces, so there is no dither: it would cost a random-number call per
+sample to fix something nobody can hear. A vinyl capture is 16-bit-ish
+content carried in 24 bits, which leaves about 48 dB of headroom before
+attenuation reaches the record's own noise floor.
+
+### Consequences
+
+- The level lives on the node, in its own NVS, and survives the Hub being
+  reinstalled. How loud a speaker should be is a property of where it
+  stands, not of what is playing.
+- It is restored at boot before the playout task starts, so a node that
+  rebooted for an update does not come back at full scale at seven in the
+  morning.
+- Setting the level and persisting it are separate outcomes and are
+  reported separately. A node whose NVS write fails still turns down.
+- `GET /status` reports the level in effect, not the level stored. The
+  sound is the truth.
+- A cast point's volume, as the Hub reports it, is the **loudest** of its
+  speakers. They hold their levels individually and one that was offline
+  during a change still holds the old one; showing the lowest would put the
+  slider below what is audible in the room.
+- Spotify now has two volume controls in series — the phone's, applied by
+  librespot before the Hub sees the samples, and this one. They multiply,
+  which is unsurprising in use and worth knowing when a room seems
+  inexplicably quiet.
+
+### Still missing
+
+- **Mute that remembers.** Zero is silence, but coming back means finding
+  the old number again.
+- **Balance.** A stereo pair built from two nodes (decision 10) has no way
+  to trim one against the other beyond setting two volumes by hand. The
+  per-device endpoint exists for exactly this; nothing presents it as a
+  balance control.

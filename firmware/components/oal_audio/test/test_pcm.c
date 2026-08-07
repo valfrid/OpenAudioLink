@@ -10,6 +10,7 @@
 
 #include "oal_pcm.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -297,6 +298,88 @@ static void capture_null_arguments_are_survivable(void)
     oal_pcm_write_l24(0, NULL);
 }
 
+static void full_volume_is_exactly_untouched(void)
+{
+    TEST("full volume is exactly untouched");
+
+    /* Not "close enough": a node at 100 must be bit-identical to a node
+     * with no volume control at all, or every existing measurement of the
+     * audio path stops being comparable to the next one. */
+    CHECK_EQ(oal_pcm_gain_q16(100), OAL_GAIN_UNITY);
+    CHECK_EQ(oal_pcm_gain_q16(255), OAL_GAIN_UNITY);
+
+    int32_t samples[3] = { INT32_MAX, INT32_MIN, -12345678 };
+    oal_pcm_apply_gain(samples, 3, oal_pcm_gain_q16(100));
+    CHECK_EQ(samples[0], INT32_MAX);
+    CHECK_EQ(samples[1], INT32_MIN);
+    CHECK_EQ(samples[2], -12345678);
+}
+
+static void zero_is_silence_not_nearly_silence(void)
+{
+    TEST("zero is silence, not nearly silence");
+
+    CHECK_EQ(oal_pcm_gain_q16(0), 0);
+
+    int32_t samples[2] = { INT32_MAX, INT32_MIN };
+    oal_pcm_apply_gain(samples, 2, 0);
+    CHECK_EQ(samples[0], 0);
+    CHECK_EQ(samples[1], 0);
+}
+
+static void the_taper_is_cubed(void)
+{
+    TEST("the taper is cubed");
+
+    /* Half travel at about -18 dB, a tenth at -60: where the detents on a
+     * real volume pot are, and the whole reason this is not linear. */
+    CHECK_EQ(oal_pcm_gain_q16(50), 8192);   /* 0.125    = -18.1 dB */
+    CHECK_EQ(oal_pcm_gain_q16(10), 65);     /* 0.000992 = -60.1 dB */
+    CHECK_EQ(oal_pcm_gain_q16(80), 33554);  /* 0.512    =  -5.8 dB */
+
+    /* Monotonic the whole way up. The 32-bit overflow this arithmetic
+     * invites would show as a gain that falls somewhere in the middle,
+     * which through a speaker reads as a broken slider rather than as an
+     * arithmetic fault. */
+    int32_t previous = -1;
+    for (int p = 0; p <= 100; p++) {
+        int32_t gain = oal_pcm_gain_q16((uint8_t)p);
+        CHECK(gain > previous || (p < 4 && gain == previous));
+        CHECK(gain <= OAL_GAIN_UNITY);
+        previous = gain;
+    }
+}
+
+static void a_loud_sample_scales_without_overflowing(void)
+{
+    TEST("a loud sample scales without overflowing");
+
+    /*
+     * The case a 32-bit intermediate gets wrong. A full-scale sample times
+     * any gain at all exceeds INT32_MAX before the division brings it
+     * back, and the wrap turns the loudest sample into the quietest one of
+     * the opposite sign — a click on every peak.
+     */
+    int32_t samples[2] = { INT32_MAX, INT32_MIN };
+    oal_pcm_apply_gain(samples, 2, oal_pcm_gain_q16(50));
+
+    CHECK(samples[0] > 0);
+    CHECK(samples[1] < 0);
+    CHECK_EQ(samples[0], (int32_t)(((int64_t)INT32_MAX * 8192) / 65536));
+    CHECK_EQ(samples[1], (int32_t)(((int64_t)INT32_MIN * 8192) / 65536));
+}
+
+static void gain_null_arguments_are_survivable(void)
+{
+    TEST("gain null arguments are survivable");
+
+    oal_pcm_apply_gain(NULL, 4, 8192);
+
+    int32_t samples[1] = { 1000 };
+    oal_pcm_apply_gain(samples, 0, 8192);
+    CHECK_EQ(samples[0], 1000);
+}
+
 int main(void)
 {
     reads_the_extremes();
@@ -312,6 +395,11 @@ int main(void)
     capture_undoes_playback();
     a_low_byte_from_the_adc_is_discarded_not_wrapped();
     capture_null_arguments_are_survivable();
+    full_volume_is_exactly_untouched();
+    zero_is_silence_not_nearly_silence();
+    the_taper_is_cubed();
+    a_loud_sample_scales_without_overflowing();
+    gain_null_arguments_are_survivable();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);

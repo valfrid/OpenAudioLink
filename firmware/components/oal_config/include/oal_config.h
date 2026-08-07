@@ -79,6 +79,23 @@ oal_channel_t oal_config_get_channel(void);
 /** Persists the channel profile. Rejects values outside the enum. */
 esp_err_t oal_config_set_channel(oal_channel_t channel);
 
+/*
+ * Playback volume, 0-100, per node.
+ *
+ * Per node and not per stream, because the level a room wants is a
+ * property of the room — how far the speaker is from the sofa, how loud
+ * the kitchen extractor is — and it should not have to be set again every
+ * time the music comes from somewhere else. It survives a reboot for the
+ * same reason: a node that came back at full scale after a firmware update
+ * would be a genuinely unpleasant surprise at seven in the morning.
+ */
+
+/** Stored volume, or 100 when unset or unreadable. */
+uint8_t oal_config_get_volume(void);
+
+/** Persists the volume. Rejects anything above 100. */
+esp_err_t oal_config_set_volume(uint8_t percent);
+
 /** Longest node name, including the terminator. Matches the announce field. */
 #define OAL_NAME_MAX 32
 

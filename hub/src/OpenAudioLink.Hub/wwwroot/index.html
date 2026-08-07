@@ -290,7 +290,12 @@
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
           `<button data-cmd="channel" data-id="${esc(d.id)}" ` +
-          `data-channel="${esc(d.status?.audioChannel ?? 'stereo')}"${disabled}>Speaker…</button>`;
+          `data-channel="${esc(d.status?.audioChannel ?? 'stereo')}"${disabled}>Speaker…</button> ` +
+          // Per speaker rather than per room, which is what the switchboard
+          // does. This one is for balancing a pair, or for a kitchen speaker
+          // that is simply louder than the rest of its cast point.
+          `<button data-cmd="volume" data-id="${esc(d.id)}" ` +
+          `data-volume="${esc(d.status?.volume ?? '')}"${disabled}>Volume…</button>`;
         const s = d.status;
         return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
           `<td>${channelCell(d)}</td>` +
@@ -591,6 +596,34 @@
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the speaker profile: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'volume') {
+        // No slider here on purpose. This page is setup, and the place to
+        // ride a volume is the switchboard, per room; what this answers is
+        // "that one speaker is too loud", which is a number typed once.
+        const current = button.dataset.volume;
+        const answer = prompt(
+          'Playback level for this speaker, 0 to 100.\n\n' +
+          'Applies immediately and is remembered by the node itself, so it\n' +
+          'survives a reboot and a Hub reinstall. Half is about \u221218 dB.\n' +
+          'Blank on a speaker means its firmware predates volume.',
+          current);
+        if (answer === null) return;
+        const percent = Number(answer.trim());
+        if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+          say('Give a whole number from 0 to 100.');
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/volume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ percent }),
+        });
+        if (response.ok) {
+          say(`Speaker set to ${percent}%.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the volume: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');

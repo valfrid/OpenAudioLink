@@ -96,6 +96,18 @@ static oal_playout_state_t s_state;
 static size_t s_target_samples;
 
 /*
+ * The Q16 gain the playout task multiplies by, and the percentage it came
+ * from. Plain integers rather than anything guarded: the writer is a
+ * control-server task and the reader is the playout task, a 32-bit aligned
+ * store on this CPU is atomic, and the worst a race can do is apply the old
+ * gain to one more 5 ms chunk. Taking the ring's lock to change the volume
+ * would put an HTTP request in the path of the audio, which is a much worse
+ * trade than a chunk of latency nobody can hear.
+ */
+static volatile int32_t s_gain_q16 = OAL_GAIN_UNITY;
+static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
+
+/*
  * Above this the playout trims. Far enough above the target that ordinary
  * jitter never reaches it, far enough below the capacity to leave a burst
  * somewhere to go.
@@ -125,7 +137,27 @@ void oal_playout_get(oal_playout_state_t *out)
         s_state.playing = s_primed;
         xSemaphoreGive(s_lock);
     }
+    s_state.volume = s_volume;
     *out = s_state;
+}
+
+void oal_playout_set_volume(uint8_t percent)
+{
+    if (percent > 100) {
+        percent = 100;
+    }
+    /* Gain first, then the percentage. The other order leaves a window in
+     * which the reported volume is the new one and the sound is still the
+     * old one, which is exactly the report a person would use to decide
+     * the control is broken. */
+    s_gain_q16 = oal_pcm_gain_q16(percent);
+    s_volume = percent;
+    ESP_LOGI(TAG, "volume %u%%", (unsigned)percent);
+}
+
+uint8_t oal_playout_volume(void)
+{
+    return s_volume;
 }
 
 void oal_playout_submit(uint8_t *payload, size_t frames)
@@ -387,6 +419,22 @@ static void playout_task(void *arg)
         take_chunk(chunk);
 
         /*
+         * Volume goes here, not into the ring on the way in. Two reasons,
+         * and both are audible:
+         *
+         * The ring holds up to 200 ms, so attenuating on submit would mean
+         * a fifth of a second between moving the slider and hearing it —
+         * long enough that a person moves it again, overshoots, and
+         * decides the control is broken.
+         *
+         * And the ring then holds full-scale audio. Turning down and back
+         * up again returns the original samples rather than samples that
+         * were quantised at whatever the level happened to be, so a volume
+         * control cannot slowly grind the resolution away.
+         */
+        oal_pcm_apply_gain(chunk, CHUNK_SAMPLES, s_gain_q16);
+
+        /*
          * Write the whole chunk, not as much of it as the driver felt
          * like taking. A short write returns ESP_OK, and treating it as
          * done silently discarded the tail: samples that had already been
@@ -428,6 +476,12 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
 
     uint32_t rate = config->sample_rate ? config->sample_rate : OAL_RTP_SAMPLE_RATE;
     uint32_t target_ms = config->target_ms ? config->target_ms : 100;
+
+    /* Before the task exists, so the first chunk out of the DAC is already
+     * at the stored level. Coming up at full scale and correcting a moment
+     * later is a jump every time the node reboots, in a house where a node
+     * reboots for an update. */
+    oal_playout_set_volume(config->volume);
 
     s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
     if (s_target_samples > CAPACITY_SAMPLES / 2) {

@@ -224,6 +224,12 @@ void app_main(void)
          * that it applies at reboot, so this is where it takes effect. */
         playout.channel = oal_config_get_channel();
 
+        /* Volume is different: POST /volume applies it live and this only
+         * restores what the room was left at. A speaker that came back at
+         * full scale after an update would be a genuinely unpleasant
+         * surprise at seven in the morning. */
+        playout.volume = oal_config_get_volume();
+
         esp_err_t audio = oal_playout_start(&playout);
         if (audio == ESP_OK) {
             oal_stream_consumer_set_sink(oal_playout_submit);

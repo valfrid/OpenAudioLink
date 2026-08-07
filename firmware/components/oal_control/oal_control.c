@@ -136,12 +136,17 @@ static esp_err_t status_handler(httpd_req_t *req)
     char body[896];
     int len = snprintf(body, sizeof(body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
-                       "\"roles\":%s,\"channel\":\"%s\",\"hw\":\"%s\",\"fw\":\"%s\","
+                       "\"roles\":%s,\"channel\":\"%s\",\"volume\":%u,"
+                       "\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        oal_channel_name(oal_config_get_channel()),
+                       /* What the speaker is actually doing, not what is
+                        * stored: they differ for as long as it takes an
+                        * NVS write to fail, and the sound is the truth. */
+                       (unsigned)oal_playout_volume(),
                        s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
@@ -250,6 +255,59 @@ static esp_err_t config_handler(httpd_req_t *req)
     return httpd_resp_send(req, response, n);
 }
 
+/* ---------- POST /volume ---------- */
+
+/*
+ * {"percent":40}. Applies immediately and persists.
+ *
+ * A separate endpoint from /config, and not merged into it, because the
+ * two differ in the only way that matters to whoever calls them: /config
+ * stores a setting that arrives at the next reboot, and this one changes
+ * what the room sounds like before the response is written. Sharing a
+ * route would mean one reply saying "appliesAt: reboot" about one field
+ * and not the other.
+ *
+ * Storing it is the second-order concern, so a node whose NVS write fails
+ * still turns down. Somebody is standing at a slider; the sound is the
+ * answer they are waiting for, and it being forgotten by tomorrow is a
+ * smaller problem than it not happening now.
+ */
+static esp_err_t volume_handler(httpd_req_t *req)
+{
+    char body[96];
+    int len = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (len <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    body[len] = '\0';
+
+    cJSON *root = cJSON_ParseWithLength(body, len);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad json");
+        return ESP_FAIL;
+    }
+
+    const cJSON *percent = cJSON_GetObjectItemCaseSensitive(root, "percent");
+    if (!cJSON_IsNumber(percent) || percent->valuedouble < 0 || percent->valuedouble > 100) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "percent must be 0 to 100");
+        return ESP_FAIL;
+    }
+    uint8_t wanted = (uint8_t)percent->valueint;
+    cJSON_Delete(root);
+
+    oal_playout_set_volume(wanted);
+    bool stored = oal_config_set_volume(wanted) == ESP_OK;
+
+    char response[96];
+    int n = snprintf(response, sizeof(response),
+                     "{\"status\":\"set\",\"volume\":%u,\"stored\":%s}",
+                     (unsigned)oal_playout_volume(), stored ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, n);
+}
+
 /* ---------- stream: GET /stream, POST /stream/start, POST /stream/stop ---------- */
 
 /*
@@ -301,6 +359,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"payloadErrors\":%u,\"foreignPackets\":%u,"
                        "\"lastSsrc\":\"%08x\","
                        "\"playout\":{\"running\":%s,\"playing\":%s,\"channel\":\"%s\","
+                       "\"volume\":%u,"
                        "\"bufferedFrames\":%u,\"targetFrames\":%u,"
                        "\"silenceFrames\":%u,\"droppedFrames\":%u,"
                        "\"underruns\":%u,\"trimmedFrames\":%u,"
@@ -312,6 +371,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        audio.running ? "true" : "false",
                        audio.playing ? "true" : "false",
                        oal_channel_name(audio.channel),
+                       (unsigned)audio.volume,
                        (unsigned)audio.buffered_frames, (unsigned)audio.target_frames,
                        (unsigned)audio.silence_frames, (unsigned)audio.dropped_frames,
                        (unsigned)audio.underruns, (unsigned)audio.trimmed_frames,
@@ -767,6 +827,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t reboot = { .uri = "/reboot", .method = HTTP_POST, .handler = reboot_handler };
     httpd_uri_t ota = { .uri = "/ota", .method = HTTP_POST, .handler = ota_handler };
     httpd_uri_t set_config = { .uri = "/config", .method = HTTP_POST, .handler = config_handler };
+    httpd_uri_t volume = { .uri = "/volume", .method = HTTP_POST, .handler = volume_handler };
     httpd_uri_t stream = { .uri = "/stream", .method = HTTP_GET, .handler = stream_get_handler };
     httpd_uri_t stream_start =
         { .uri = "/stream/start", .method = HTTP_POST, .handler = stream_start_handler };
@@ -780,6 +841,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);
     httpd_register_uri_handler(server, &set_config);
+    httpd_register_uri_handler(server, &volume);
     httpd_register_uri_handler(server, &stream);
     httpd_register_uri_handler(server, &stream_start);
     httpd_register_uri_handler(server, &stream_stop);

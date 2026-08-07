@@ -181,6 +181,34 @@ cast points, seeded once with four stations so a fresh Hub has something
 on the page, and never re-seeded — a station somebody deleted stays
 deleted.
 
+### Volume was the one thing that had to be built from nothing
+
+Everything else on the page was a different way of pressing a button that
+already existed. Volume was not a button anywhere — decision 14 has the
+argument, but the short version is that Spotify had been hiding the gap:
+librespot applies the phone's volume before the Hub ever sees the samples,
+so every test so far had a working volume control belonging to somebody
+else's software.
+
+It lands on the switchboard as one slider per **room**, not per speaker. A
+person standing in the kitchen thinks the kitchen has a volume; that its
+two speakers each hold their own level is an implementation detail they
+should never have to hold in their head. The per-speaker control exists —
+it is what balancing a stereo pair needs — and it lives on the setup page,
+where implementation details belong.
+
+Two details that make it feel like a control rather than a form:
+
+- **It sends while dragging**, throttled to 250 ms, rather than only on
+  release. Dragging in silence and discovering the result afterwards is
+  how a slider feels broken. The node applies a change on its next 5 ms
+  chunk, so the room really does follow the thumb.
+- **The poll leaves it alone** while it is being touched, and for two and
+  a half seconds after. Speakers report their level on the Hub's own poll
+  cycle, so for a moment after a change the freshest reading is still the
+  old one; without the grace period the thumb springs back and then
+  forward again.
+
 ### The endpoints as they now stand
 
 | | |
@@ -189,8 +217,11 @@ deleted.
 | What can play | `GET /api/devices` filtered by the producer role, `GET /api/stations` |
 | Connect them | `POST /api/castpoints/{id}/play` — `{producer, source, stationId}` |
 | Stop | `POST /api/castpoints/{id}/stop` |
+| How loud | `POST /api/castpoints/{id}/volume` — `{percent}` |
+| How loud, one speaker | `POST /api/devices/{id}/volume` — the setup page's |
 | What is playing | `GET /api/stream` |
 | Remember a station | `POST /api/stations`, `DELETE /api/stations/{id}` |
 
-Still nothing new in the *protocol*. A control surface remains a different
-way of pressing buttons that exist.
+One new thing in the *protocol* — `POST /volume` on a node, which had to
+exist because nothing could change the level. Everything else is still a
+different way of pressing buttons that exist.

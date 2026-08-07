@@ -67,6 +67,58 @@ void oal_pcm_write_l24(int32_t value, uint8_t *bytes);
  */
 void oal_pcm_i2s_to_l24(const int32_t *in, uint8_t *payload, size_t samples);
 
+/*
+ * Volume.
+ *
+ * There is nowhere else for it to live. The PCM5102A has no volume
+ * register — no I²C, no control interface at all, just an I²S input and
+ * two analog outputs — so the only thing between the wire and the speaker
+ * that can change the level is this CPU. Attenuating in the sender was the
+ * alternative and is wrong for a house: one stream feeds every room, and
+ * turning down the kitchen would turn down the living room with it.
+ *
+ * So: a multiply per sample on the consumer, per node, which is what makes
+ * "quieter in the kitchen" mean what a person means by it.
+ */
+
+/** Full scale. The gain a fresh node has until told otherwise. */
+#define OAL_VOLUME_DEFAULT 100
+
+/** The Q16 multiplier that leaves a sample untouched. */
+#define OAL_GAIN_UNITY 65536
+
+/**
+ * Turns a 0-100 volume into a Q16 multiplier.
+ *
+ * Cubed, not linear. A linear slider spends three quarters of its travel
+ * in a range that all sounds equally loud, because hearing is closer to
+ * logarithmic than to linear — the classic "does nothing until the last
+ * inch, then deafening" control. Cubing approximates the audio taper a
+ * real volume pot has: half travel lands at about -18 dB, which is where
+ * a physical knob's midpoint sits, and a tenth of travel at -60 dB.
+ *
+ * Integer throughout, so the same input gives the same gain on the node
+ * and in a host test, and so nothing here needs an FPU.
+ *
+ * Values above 100 are clamped: this attenuates and never amplifies.
+ * Amplifying digitally would clip the loud passages of an already
+ * full-scale stream, which is the one failure mode a volume control must
+ * not have.
+ */
+int32_t oal_pcm_gain_q16(uint8_t percent);
+
+/**
+ * Scales left-justified I²S words in place.
+ *
+ * @param samples one word per sample, as oal_pcm_l24_to_i2s produced them
+ * @param count   samples, not frames and not bytes
+ * @param gain_q16 from oal_pcm_gain_q16
+ *
+ * Unity is skipped rather than multiplied by one, so a node at full volume
+ * — which is most of them, most of the time — pays nothing for this.
+ */
+void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16);
+
 #ifdef __cplusplus
 }
 #endif

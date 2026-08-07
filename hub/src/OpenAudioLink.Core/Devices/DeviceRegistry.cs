@@ -33,6 +33,18 @@ public sealed record DeviceStatus
     public string? AudioChannel { get; init; }
 
     /// <summary>
+    /// Playback level, 0-100, as the node reports it actually is — not as
+    /// the Hub last asked for. The two differ while a request is in flight
+    /// and after one that failed, and a slider that shows what was asked
+    /// rather than what happened is a slider that lies about an offline
+    /// speaker.
+    ///
+    /// Null from firmware that predates volume, which is a different thing
+    /// from a speaker turned all the way down.
+    /// </summary>
+    public int? Volume { get; init; }
+
+    /// <summary>
     /// Who this node believes holds the Controller role: "self", the name
     /// of a peer, or null when it has found nobody (decision 9).
     ///

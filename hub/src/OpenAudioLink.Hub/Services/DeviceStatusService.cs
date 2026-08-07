@@ -90,6 +90,7 @@ public sealed class DeviceStatusService : BackgroundService
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
                 AudioChannel = status.AudioChannel,
+                Volume = status.Volume,
                 // Null means the node did not say, which older firmware
                 // does not. That is a different thing from having looked
                 // and found nobody, and showing them alike would report a
@@ -127,6 +128,9 @@ public sealed class DeviceStatusService : BackgroundService
         /// <summary>Named to avoid colliding with the Wi-Fi channel below.</summary>
         [JsonPropertyName("channel")]
         public string? AudioChannel { get; init; }
+
+        [JsonPropertyName("volume")]
+        public int? Volume { get; init; }
 
         [JsonPropertyName("controller")]
         public ControllerStatus? Controller { get; init; }

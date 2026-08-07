@@ -156,21 +156,14 @@ Goals:
   centre for no visible reason.
 - **Concealment.** A lost packet is 5 ms of silence, not an
   interpolation. Worth measuring before deciding it needs fixing.
-- **No volume control anywhere.** Spotify hid this: librespot applies the
-  phone's volume before the pipe, so it reached the speakers for free. The
-  analog path is the first source without one, and there is nothing to turn
-  but the amplifier.
-
-  It belongs at the **Consumer**, for decision 10's reason — one cast point
-  can hold several speakers, and the kitchen wanting it quieter than the
-  living room is the ordinary case. Gain at the Producer would change every
-  room at once and could not be undone downstream.
-
-  Small: a per-node gain in NVS beside the channel profile, applied in the
-  playout path before the DAC, a control endpoint and a slider. Nearly free
-  in quality too — a 16-bit-ish vinyl capture carried in 24 bits leaves
-  about 48 dB of headroom, so useful attenuation stays well clear of the
-  record's own noise floor.
+- ~~**No volume control anywhere.**~~ **Built**, exactly where this said it
+  belonged: a per-node gain in NVS beside the channel profile, applied in
+  the playout path before the DAC, with `POST /volume` on the node,
+  `POST /api/castpoints/{id}/volume` on the Hub and a slider on the
+  switchboard. Decision 14 records what building it settled — the cube
+  taper, why it is applied at playout rather than on arrival, and the two
+  things still missing (no mute that remembers, and no balance between the
+  halves of a stereo pair).
 - **The ring rides above its target and never comes back down.** Nothing
   pulls the fill toward the target, so wherever a burst leaves it is where
   it stays — measured at 100 ms of a 160 ms ring against a 60 ms target,

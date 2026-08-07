@@ -74,3 +74,57 @@ void oal_pcm_i2s_to_l24(const int32_t *in, uint8_t *payload, size_t samples)
         oal_pcm_write_l24(in[i] / 256, payload + i * 3);
     }
 }
+
+int32_t oal_pcm_gain_q16(uint8_t percent)
+{
+    if (percent >= 100) {
+        return OAL_GAIN_UNITY;
+    }
+    if (percent == 0) {
+        return 0;
+    }
+
+    /*
+     * (percent / 100)^3 * 65536, without ever dividing before multiplying.
+     * The widest intermediate is 100^3 * 65536, which is 6.5e10 and needs
+     * the 64-bit type; doing it in 32 bits overflows at about 39 %, and
+     * the symptom would be a volume control that gets louder as it is
+     * turned down.
+     */
+    uint64_t cubed = (uint64_t)percent * percent * percent;
+    return (int32_t)(cubed * OAL_GAIN_UNITY / 1000000u);
+}
+
+void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16)
+{
+    if (samples == NULL || gain_q16 >= OAL_GAIN_UNITY) {
+        return;
+    }
+
+    if (gain_q16 <= 0) {
+        for (size_t i = 0; i < count; i++) {
+            samples[i] = 0;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        /*
+         * Divided by 65536 rather than shifted right by 16, for the reason
+         * every other conversion in this file avoids shifting: the value
+         * is signed and can be negative, where a right shift is
+         * implementation-defined. The compiler turns a division by a power
+         * of two into a shift and a correction anyway.
+         *
+         * The 64-bit intermediate is necessary and not cheap paranoia: a
+         * full-scale sample here is close to INT32_MAX, and multiplying it
+         * by anything at all overflows 32 bits.
+         *
+         * Truncation loses the bottom bits of every sample. At 24 bits
+         * that is 20 dB below the quietest thing a domestic speaker
+         * reproduces, so no dither: it would cost a random-number call per
+         * sample to fix something nobody can hear.
+         */
+        samples[i] = (int32_t)(((int64_t)samples[i] * gain_q16) / OAL_GAIN_UNITY);
+    }
+}

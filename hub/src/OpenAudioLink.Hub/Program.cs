@@ -370,6 +370,34 @@ app.MapPost("/join",
 // "Kitchen" has one consumer, "House" has twelve, and the Producer
 // replicates one packet to however many it is given either way.
 
+/// <summary>
+/// One number for a room's volume, or null when no speaker in it has said.
+/// </summary>
+/// <remarks>
+/// A room has one volume as far as anybody standing in it is concerned,
+/// but its speakers each hold their own — they can be set individually,
+/// and one that was offline when the room was turned down still holds the
+/// old level. The loudest is the honest answer: a room with one speaker at
+/// 40 and one at 100 is a room playing at 100, and showing 40 would put
+/// the slider below what is audible.
+///
+/// Null rather than 100 when nothing answered, because "no speaker has
+/// reported a level" and "every speaker is at full" are different, and
+/// only one of them is worth drawing a slider for.
+/// </remarks>
+static int? RoomVolume(IReadOnlyList<string> destinations, DeviceRegistry registry)
+{
+    int? loudest = null;
+    foreach (var id in destinations)
+    {
+        if (registry.TryGet(id, out var device) && device.Status?.Volume is int level)
+        {
+            loudest = loudest is null ? level : Math.Max(loudest.Value, level);
+        }
+    }
+    return loudest;
+}
+
 app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry, LibrespotService spotify) =>
 {
     var playing = store.Playing;
@@ -388,9 +416,14 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry, Li
         receiver = receivers.TryGetValue(point.Id, out var receiver)
             ? new { offered = receiver.Running, receiver.Playing, receiver.Error }
             : null,
+        volume = RoomVolume(point.Destinations, registry),
         members = point.Destinations.Select(id => registry.TryGet(id, out var device)
-            ? new { id, name = device.Name, online = device.Online, known = true }
-            : new { id, name = id, online = false, known = false }),
+            ? new
+            {
+                id, name = device.Name, online = device.Online, known = true,
+                volume = device.Status?.Volume,
+            }
+            : new { id, name = id, online = false, known = false, volume = (int?)null }),
     }));
 });
 
@@ -665,6 +698,84 @@ app.MapPost("/api/castpoints/{id}/play",
 
     store.MarkPlaying(id, producer.Id);
     return Results.Ok(new { status = "playing", castPoint = point.Name, destinations = addresses, stopped });
+});
+
+/*
+ * Volume for a room, which is the only place a person thinks about it.
+ *
+ * It reaches every speaker in the cast point, in parallel, and reports how
+ * many answered. Partial success is a real outcome and is reported as one:
+ * a room with three speakers where one is unplugged should get quieter by
+ * two speakers rather than refusing because of the third.
+ *
+ * Nothing here is stored on the Hub. The level lives on each node, in its
+ * own NVS, and survives the Hub being reinstalled — which is right, because
+ * how loud a speaker should be is a property of where it stands.
+ */
+app.MapPost("/api/castpoints/{id}/volume",
+    async (string id, VolumeRequest request, CastPointStore store, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!store.TryGet(id, out var point))
+    {
+        return Results.NotFound();
+    }
+    if (request.Percent is not int percent || percent is < 0 or > 100)
+    {
+        return Results.BadRequest(new { error = "percent must be 0 to 100" });
+    }
+
+    var targets = new List<DeviceRecord>();
+    foreach (var deviceId in point.Destinations)
+    {
+        if (registry.TryGet(deviceId, out var device) && device.Online)
+        {
+            targets.Add(device);
+        }
+    }
+
+    if (targets.Count == 0)
+    {
+        return Results.BadRequest(new { error = $"no speaker in {point.Name} is online" });
+    }
+
+    var results = await Task.WhenAll(
+        targets.Select(d => commands.SetVolumeAsync(d, percent, cancellationToken)));
+
+    var reached = results.Count(ok => ok);
+    return reached == 0
+        ? Results.StatusCode(502)
+        : Results.Ok(new
+        {
+            status = "set",
+            volume = percent,
+            castPoint = point.Name,
+            speakers = reached,
+            // Named rather than counted: "1 unreachable" makes somebody
+            // count the room's speakers to work out which.
+            unreachable = targets.Where((_, i) => !results[i]).Select(d => d.Name),
+        });
+});
+
+// The same for one speaker, which is what balancing a stereo pair or a
+// too-loud kitchen speaker needs. The setup page's control; the switchboard
+// only ever moves a whole room.
+app.MapPost("/api/devices/{id}/volume",
+    async (string id, VolumeRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+    if (request.Percent is not int percent || percent is < 0 or > 100)
+    {
+        return Results.BadRequest(new { error = "percent must be 0 to 100" });
+    }
+
+    return await commands.SetVolumeAsync(device, percent, cancellationToken)
+        ? Results.Ok(new { status = "set", volume = percent })
+        : Results.StatusCode(502);
 });
 
 app.MapPost("/api/castpoints/{id}/stop",
@@ -956,6 +1067,13 @@ internal sealed record CastPointPlayRequest(
     string? StationId = null);
 
 internal sealed record StationRequest(string? Name, string? Url);
+
+/// <summary>
+/// Nullable rather than a plain int so a body with no percent at all is a
+/// clear 400 instead of silently muting the room, which is what binding a
+/// missing value to the default 0 would do.
+/// </summary>
+internal sealed record VolumeRequest(int? Percent);
 
 internal static class StreamLimits
 {

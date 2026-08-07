@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "oal_pcm.h"
 
 static const char *TAG = "oal_config";
 
@@ -16,6 +17,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_ROLES "roles"
 #define NVS_KEY_NAME  "name"
 #define NVS_KEY_CHANNEL "channel"
+#define NVS_KEY_VOLUME "volume"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -250,6 +252,49 @@ esp_err_t oal_config_set_channel(oal_channel_t channel)
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "channel set to %s (takes effect on reboot)", name);
     }
+    return err;
+}
+
+/*
+ * Playback volume. Stored as the percentage rather than as the computed
+ * gain, so the curve can change without every node in the house getting
+ * quieter or louder on the next update.
+ */
+uint8_t oal_config_get_volume(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return OAL_VOLUME_DEFAULT;
+    }
+
+    uint8_t stored = OAL_VOLUME_DEFAULT;
+    esp_err_t err = nvs_get_u8(nvs, NVS_KEY_VOLUME, &stored);
+    nvs_close(nvs);
+
+    if (err != ESP_OK || stored > 100) {
+        return OAL_VOLUME_DEFAULT;
+    }
+    return stored;
+}
+
+esp_err_t oal_config_set_volume(uint8_t percent)
+{
+    if (percent > 100) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_u8(nvs, NVS_KEY_VOLUME, percent);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
     return err;
 }
 
