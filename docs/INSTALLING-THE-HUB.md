@@ -6,14 +6,32 @@ upgrades with one command.
 
 ## First install
 
-1. Download `OpenAudioLink-Hub-win-x64-<version>.zip` from the
-   [releases page](https://github.com/valfrid/OpenAudioLink/releases).
-2. Extract it anywhere — the folder you extract to is temporary.
-3. From an **elevated** PowerShell prompt, in that folder:
+Download `OpenAudioLink-Hub-win-x64-<version>.zip` from the
+[releases page](https://github.com/valfrid/OpenAudioLink/releases), then
+paste this into an **elevated** PowerShell prompt:
 
-   ```powershell
-   .\scripts\install-service.ps1
-   ```
+```powershell
+$zip = "$HOME\Downloads\OpenAudioLink-Hub-win-x64-0.7.0.zip"
+$tmp = "$env:TEMP\oal-install"
+
+Expand-Archive -Path $zip -DestinationPath $tmp -Force
+Get-ChildItem -Path $tmp -Recurse -Include *.ps1 | Unblock-File
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+& "$tmp\scripts\install-service.ps1"
+```
+
+The folder it extracts to is temporary; the install copies out of it.
+
+**The two middle lines are not optional on a fresh machine.** Windows
+marks every file that came from the internet, and PowerShell refuses to
+run a marked script — so a first install fails twice before it starts,
+once on the mark and once on the execution policy. Neither error mentions
+this project, which is why the commands are here rather than left to be
+discovered.
+
+An elevated prompt opens in `C:\Windows\system32`, so `.\install-service.ps1`
+finds nothing. Run it by full path, as above.
 
 That copies the Hub to `C:\Program Files\OpenAudioLink`, registers the
 service, opens the three firewall ports it needs, starts it and then asks
@@ -91,11 +109,17 @@ Between two commits that did not bump the version, the rolling build
 reports the same number as the one installed and the script stops.
 `-Force` installs it anyway.
 
-If you would rather download by hand, or want a build that has no release:
+If you would rather download by hand, or want a build that has no
+release, the installer already on the machine takes a zip directly:
 
 ```powershell
-.\scripts\install-service.ps1 -FromZip $HOME\Downloads\OpenAudioLink-Hub-win-x64.zip
+& "$env:ProgramFiles\OpenAudioLink\scripts\install-service.ps1" `
+    -FromZip $HOME\Downloads\OpenAudioLink-Hub-win-x64.zip
 ```
+
+That is an upgrade path and not a first install: `-FromZip` saves
+unpacking, but the script has to come from somewhere, and on a machine
+with no Hub the only copy is inside the zip.
 
 Either way the same rules apply.
 

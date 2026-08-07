@@ -7,15 +7,23 @@
     one; run it on a machine that already has one and it upgrades in place,
     keeping the settings, the data and the librespot binary.
 
-    From the folder produced by the CI artifact, in an elevated PowerShell
-    prompt:
+    From the extracted package, in an elevated PowerShell prompt. Note the
+    full path: an elevated prompt opens in C:\Windows\system32, where
+    .\install-service.ps1 finds nothing.
 
-        .\scripts\install-service.ps1
+        & "$env:TEMP\oal-install\scripts\install-service.ps1"
+
+    On a machine that has never run this, Windows will have marked the
+    downloaded scripts and PowerShell will refuse them. Unblock-File and a
+    process-scoped Bypass are what get past that; see
+    docs/INSTALLING-THE-HUB.md.
 
     Add -WithLibrespot to fetch the Spotify Connect receiver as well; it
     is a separate download and never part of the Hub package.
 
-    Or point it straight at the downloaded zip, without extracting first:
+    -FromZip installs straight from a download without unpacking it. That
+    is for upgrades, where this script is already on the machine — on a
+    machine with no Hub the only copy of it is inside the zip.
 
         .\install-service.ps1 -FromZip $HOME\Downloads\OpenAudioLink-Hub-win-x64.zip
 
