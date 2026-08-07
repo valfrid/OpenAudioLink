@@ -18,6 +18,14 @@ on:
         description: "librespot version to build (from crates.io)"
         default: "0.8.0"
         required: true
+      publish:
+        description: >
+          Also attach the binary to a permanent release, so
+          install-service.ps1 -WithLibrespot can fetch it without a login.
+          The artifact below always needs one and expires after ninety
+          days; a release asset does neither.
+        type: boolean
+        default: true
       features:
         description: >
           Cargo features. with-libmdns is librespot's own mDNS responder and
@@ -28,6 +36,9 @@ on:
           present, which is the thing to find out.
         default: "native-tls,with-libmdns"
         required: true
+
+permissions:
+  contents: write
 
 jobs:
   windows:
@@ -90,3 +101,58 @@ jobs:
           name: librespot-${{ inputs.version }}-win-x64
           path: ${{ runner.temp }}\out\bin\librespot.exe
           if-no-files-found: error
+
+      # --- publishing ---------------------------------------------------
+      #
+      # A release of its own, tagged by librespot's version rather than the
+      # Hub's. This program changes when its version changes and never when
+      # this project does, so tying it to a Hub release would rebuild ten
+      # minutes of Rust for every commit that touched a web page.
+      #
+      # It is deliberately a separate download and not part of the Hub
+      # package. Whether a reimplementation of somebody's streaming
+      # protocol is licensed for use with that service is the operator's
+      # decision, not this project's (docs/CAST-POINTS.md); fetching it is
+      # therefore an explicit act, behind an explicit flag.
+      - name: Stage the release files
+        if: inputs.publish
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $exe = "$env:RUNNER_TEMP\out\bin\librespot.exe"
+          Copy-Item $exe release\librespot-win-x64.exe
+          # The checksum travels with it so the fetch script can verify what
+          # it downloaded. An executable pulled over the network and run as
+          # a service is exactly the thing worth checking.
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  librespot-win-x64.exe" |
+            Out-File -FilePath release\librespot-win-x64.exe.sha256 -Encoding ascii -NoNewline
+
+      - uses: softprops/action-gh-release@v2
+        if: inputs.publish
+        with:
+          tag_name: librespot-v${{ inputs.version }}
+          name: librespot ${{ inputs.version }} (win-x64)
+          body: |
+            Built by this repository because the librespot project does not
+            publish Windows binaries ([issue #727](https://github.com/librespot-org/librespot/issues/727),
+            closed `wontfix`).
+
+            Features: `${{ inputs.features }}`, no default features.
+
+            Not part of the Hub package, and not installed unless asked
+            for. See `docs/CAST-POINTS.md` for why, and
+            `docs/INSTALLING-THE-HUB.md` for:
+
+            ```powershell
+            .\scripts\install-service.ps1 -WithLibrespot
+            ```
+
+            librespot is MIT-licensed and is not affiliated with Spotify.
+          files: |
+            release/librespot-win-x64.exe
+            release/librespot-win-x64.exe.sha256
+          # Never the newest thing on the releases page: that is the Hub,
+          # and a person looking for something to download should find it.
+          make_latest: false
+          fail_on_unmatched_files: true

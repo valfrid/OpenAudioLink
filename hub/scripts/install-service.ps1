@@ -12,6 +12,9 @@
 
         .\scripts\install-service.ps1
 
+    Add -WithLibrespot to fetch the Spotify Connect receiver as well; it
+    is a separate download and never part of the Hub package.
+
     Or point it straight at the downloaded zip, without extracting first:
 
         .\install-service.ps1 -FromZip $HOME\Downloads\OpenAudioLink-Hub-win-x64.zip
@@ -55,7 +58,14 @@ param(
     [switch]$AllowPublicNetworks,
 
     # Replace appsettings.json with the packaged one, discarding edits.
-    [switch]$ResetSettings
+    [switch]$ResetSettings,
+
+    # Fetch the Spotify Connect receiver as well. Deliberately opt-in and
+    # deliberately a separate download: whether a reimplementation of
+    # somebody's streaming protocol is licensed for use with that service
+    # is the operator's decision rather than this project's, so asking for
+    # it has to be an act rather than a default (docs/CAST-POINTS.md).
+    [switch]$WithLibrespot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -263,6 +273,23 @@ foreach ($rule in @(
                         -Profile $firewallProfiles | Out-Null
 }
 
+# --- the Spotify Connect receiver ----------------------------------------
+# Before the firewall rules below, which need the file to exist.
+if ($WithLibrespot) {
+    $fetch = Join-Path $PSScriptRoot 'get-librespot.ps1'
+    if (-not (Test-Path $fetch)) {
+        $fetch = Join-Path $InstallPath 'scripts\get-librespot.ps1'
+    }
+    if (Test-Path $fetch) {
+        Write-Host ""
+        & $fetch -InstallPath $InstallPath
+        Write-Host ""
+    }
+    else {
+        Write-Host "get-librespot.ps1 not found; skipping." -ForegroundColor Yellow
+    }
+}
+
 # The receivers are separate processes, so a port rule is not enough on
 # every configuration; a program rule covers whatever else they open.
 $librespot = Join-Path $InstallPath 'librespot.exe'
@@ -276,7 +303,7 @@ if (Test-Path $librespot) {
 }
 else {
     Write-Host "  no librespot.exe here; cast points will not be offered to Spotify" -ForegroundColor DarkGray
-    Write-Host "  copy it into $InstallPath and re-run this script" -ForegroundColor DarkGray
+    Write-Host "  re-run with -WithLibrespot to fetch one, or copy your own in" -ForegroundColor DarkGray
 }
 
 # --- the trap that cost an evening ---------------------------------------

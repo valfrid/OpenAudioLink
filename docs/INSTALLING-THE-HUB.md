@@ -34,11 +34,35 @@ declines to publish one. This repository builds it — **Actions →
 librespot → Run workflow** — and `docs/BUILDING-LIBRESPOT-WINDOWS.md`
 covers that and the local route.
 
-Copy `librespot.exe` into `C:\Program Files\OpenAudioLink` and re-run the
-install script. It adds a firewall rule for it and says so; without it
-the script tells you cast points will not be offered to Spotify.
+So it is a separate download, fetched only when asked for:
 
-Upgrades keep it. It is one of two files the installer never replaces.
+```powershell
+.\scripts\install-service.ps1 -WithLibrespot
+```
+
+or on a Hub that is already installed:
+
+```powershell
+& "$env:ProgramFiles\OpenAudioLink\scripts\get-librespot.ps1"
+```
+
+That pulls the binary from a `librespot-v*` release of this repository,
+**checks it against the SHA256 published beside it**, and only then puts
+it in place. A missing checksum is a refusal rather than a shrug: this is
+a downloaded executable that a Windows service will launch.
+
+If no such release exists yet, build one: **Actions → librespot → Run
+workflow**, with *Publish* ticked. It takes about ten minutes and only
+needs doing again when librespot's own version changes — which is why it
+is not built with every Hub release.
+
+Your own build is welcome too; just copy `librespot.exe` into
+`C:\Program Files\OpenAudioLink`. `get-librespot.ps1` leaves an existing
+one alone unless passed `-Force`, because yours may have features this
+one does not.
+
+Either way the install script adds a firewall rule for it and says so.
+Upgrades keep it — it is one of two files the installer never replaces.
 
 ## Upgrading
 
