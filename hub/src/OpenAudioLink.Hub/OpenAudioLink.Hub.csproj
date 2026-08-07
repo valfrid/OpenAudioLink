@@ -31,6 +31,10 @@
     <!-- WASAPI loopback capture. MIT-licensed and bundled into the
          published binary, so it adds no install step for the user. -->
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <!-- MP3 frame decoding for internet radio, through Windows' own ACM
+         codec. Chosen over a reader because a radio station is not
+         seekable and the usual readers insist on it. MIT, bundled. -->
+    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
   </ItemGroup>
 
 </Project>

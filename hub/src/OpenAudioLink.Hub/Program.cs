@@ -52,6 +52,15 @@ builder.Services.AddHttpClient(nameof(DeviceStatusService),
         PooledConnectionIdleTimeout = TimeSpan.FromSeconds(10),
         MaxConnectionsPerServer = 2,
     });
+// A station is an endless response, so the default hundred-second timeout
+// would end one mid-song. Infinite here is safe because the read is
+// cancelled when the source is disposed. A User-Agent because some
+// stations refuse requests without one, which reads as a dead station.
+builder.Services.AddHttpClient(nameof(RadioSource), client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenAudioLink/1.0");
+});
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
 // Registered twice on purpose: the host runs it, and the API reads what it
@@ -647,6 +656,46 @@ app.MapPost("/api/stream/test-tone", async (
     }
 });
 
+app.MapPost("/api/stream/radio", async (
+    StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer,
+    IHttpClientFactory clients, ILoggerFactory loggers) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Url))
+    {
+        return Results.BadRequest(new { error = "a station url is required" });
+    }
+
+    var failure = ResolveDestinations(request, context, registry, out var destinations);
+    if (destinations.Count == 0)
+    {
+        return failure;
+    }
+
+    try
+    {
+        var format = BuildFormat(request);
+        format.Validate();
+
+        // Constructed before the streamer takes ownership, so a station
+        // that cannot be reached fails here with its own message rather
+        // than as a stream that starts and plays silence.
+        var radio = new RadioSource(
+            request.Url, format, clients.CreateClient(nameof(RadioSource)),
+            loggers.CreateLogger<RadioSource>());
+
+        return Results.Ok(await streamer.StartAsync(
+            "radio", radio, destinations, request.Port ?? 41100, format));
+    }
+    catch (NotSupportedException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = $"could not start {request.Url}: {ex.Message}" });
+    }
+});
+
 app.MapPost("/api/stream/system-audio", async (
     StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer) =>
 {
@@ -721,6 +770,7 @@ internal sealed record ChannelRequest(string? Channel);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 
+
 /// <summary>
 /// The producer is named per play rather than stored on the cast point: a
 /// cast point is a place, and which source feeds it is a property of the
@@ -747,4 +797,6 @@ internal sealed record StreamRequest(
     int? Port,
     string? Encoding,
     double? FrequencyHz,
-    int? PacketMilliseconds);
+    int? PacketMilliseconds,
+    // The station, for /api/stream/radio. Ignored by every other endpoint.
+    string? Url = null);
