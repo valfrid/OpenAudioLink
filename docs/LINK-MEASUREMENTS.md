@@ -138,6 +138,46 @@ visible from the node:
   playout target is 100 ms, which leaves 15 ms of margin. This run predates
   the Hub's GC change; the same field is how to tell whether that helped.
 
+## Run 18: a turntable, node to node
+
+**2026-08-07. The Analog Source works.** A record on a turntable, through
+a PCM1808 module into a XIAO ESP32-S3 holding Producer, out as RTP, into a
+second S3 holding Consumer, through a PCM5102A into powered speakers. No
+PC in the audio path at all — the Hub only said who sends to whom.
+
+Firmware 0.12.0 both ends. Levels at the ADC read **−5 / −7 dBFS**, which
+is a healthy line signal with about 5 dB of headroom left.
+
+Occasional missed samples, audible as the odd tick rather than as
+dropouts. **The two nodes were on different mesh access points — three
+hops across the backhaul**, and the page said so, which is the whole
+reason the BSSID is on that line. Not comparable with runs 14-16, and not
+a number worth quoting: the vinyl path has less slack than any other
+source here, because the capture ring is 40 ms by design and every
+millisecond in it is delay between the needle and the speaker.
+
+The measurement worth taking is the same path with both nodes on one
+access point. Until then this run establishes that it works, not how well.
+
+### What made this findable at all
+
+Nothing in the capture path could say whether a turntable was connected.
+The rate, the buffer fill, the drop count and the read errors all count
+*frames*, and a powered ADC clocks out frames whether or not anything is
+plugged into it — so a node with the cable on the floor produced a trace
+identical to one playing a record. The first bring-up attempt read as
+perfectly healthy and made no sound.
+
+The peak level meter added in 0.12.0 is what closed that, and it is the
+same lesson as the whole of this document: **an instrument that cannot
+distinguish the failure from the success is not an instrument.**
+
+The second thing that cost time was not a fault at all. The setup page's
+link test offered Pattern and Tone and nothing else, so there was no way
+to send the ADC anywhere from it — and a vinyl test run on Pattern proves
+the network and says nothing about the turntable. Both selectors now offer
+Line in.
+
 ## What the series established
 
 **Wi-Fi power save costs packets.** Run 1 → 2: loss halved and jitter fell

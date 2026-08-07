@@ -111,7 +111,8 @@ Goals:
 
 ## Phase 4 — Analog Source
 
-When the ordered boards arrive:
+**Done 2026-08-07.** A record played through the whole chain for the first
+time (`LINK-MEASUREMENTS.md` run 18).
 
 ```text
 PCM1808 -> ESP32-S3 -> RTP/UDP -> Receiver(s)
@@ -119,10 +120,35 @@ PCM1808 -> ESP32-S3 -> RTP/UDP -> Receiver(s)
 
 Goals:
 
-- clean ADC capture
-- direct Producer-to-Consumer stream
-- Hub control without Hub audio relay
-- standalone limited Controller mode later
+- ~~clean ADC capture~~ — 47 998 Hz, 0 read errors, −5 / −7 dBFS
+- ~~direct Producer-to-Consumer stream~~ — no PC in the audio path
+- ~~Hub control without Hub audio relay~~ — the Hub only says who sends to whom
+- standalone limited Controller mode later — still later
+
+Two things the bring-up cost a session each, both recorded where they
+happened:
+
+- **Nothing could say whether a turntable was connected.** Every counter
+  the capture path had counted frames, and a powered ADC produces frames
+  with its inputs open. Fixed by the peak level meter in firmware 0.12.0,
+  and the general lesson is in run 18: an instrument that cannot
+  distinguish the failure from the success is not an instrument.
+- **The ADC could not be selected from the setup page at all.** Both
+  source selectors offered Pattern and Tone only, so the obvious first
+  test proved the network and said nothing about the turntable.
+
+Still open on this path:
+
+- **A same-access-point measurement.** The first run had the two nodes
+  three hops apart across a mesh backhaul and lost the occasional sample.
+  That is a network condition, not a result.
+- **Noise floor and clipping headroom** for this turntable and preamp.
+  The meter can answer both now; neither has been characterised.
+- **The producer reported every packet late** on an earlier synthetic run,
+  with 36.92 ms of jitter at the consumer. Real — those counters reset at
+  stream start — and unexplained. The capture task runs at a higher
+  priority than the sending task, which is new since the ADC became
+  enabled by default, so that is the first place to look.
 
 ## Known gaps, small enough to fix when convenient
 

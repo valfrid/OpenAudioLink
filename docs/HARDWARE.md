@@ -462,12 +462,16 @@ sharing a board with a radio:
 
 ### ADC test
 
-- capture line input at 24-bit/48 kHz
-- verify master/slave configuration
-- confirm actual BCLK and LRCK
-- measure silence noise floor
-- test channel balance
-- determine clipping input level
+Verified on hardware 2026-08-07 (`LINK-MEASUREMENTS.md` run 18) except
+where noted.
+
+- ~~capture line input at 24-bit/48 kHz~~ — 47 998 Hz measured, 0 read errors
+- ~~verify master/slave configuration~~ — slave; the module clocks itself
+- ~~confirm actual BCLK and LRCK~~ — reported by the capture trace
+- ~~test channel balance~~ — −5 / −7 dBFS, both channels live
+- measure silence noise floor — the meter can now answer this; not yet done
+- determine clipping input level — above −3 dBFS clips; the practical
+  headroom on this turntable and preamp has not been characterised
 
 ### Is anything actually being captured?
 
@@ -529,10 +533,22 @@ once something has actually read from it.
 
 ### End-to-end test
 
-- ADC node captures audio
-- RTP/UDP transport
-- receiver node plays audio
-- measure latency, packet loss behaviour and drift
+**Done 2026-08-07**, first time a record played through this system.
+
+- ~~ADC node captures audio~~
+- ~~RTP/UDP transport~~
+- ~~receiver node plays audio~~
+- measure latency, packet loss behaviour and drift — **still open**. The
+  first run had the two nodes on different mesh access points, three hops
+  across the backhaul, and lost the occasional sample. That is a network
+  condition rather than a result; the run worth measuring puts both nodes
+  on one access point.
+
+Latency, by arithmetic rather than measurement: 40 ms of capture ring at
+most, plus the network, plus the playout target of 100 ms, plus 20 ms of
+DMA. Around 160 ms needle to speaker. Fine for another room, and the
+reason the capture ring is deliberately a fifth of the playout one — every
+millisecond there is delay nothing downstream will absorb.
 
 ## Bringing up the DAC
 
