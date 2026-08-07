@@ -36,7 +36,18 @@ public static class DataDirectory
 
         if (!string.IsNullOrWhiteSpace(configured))
         {
-            return configured;
+            /*
+             * Resolved against the executable, not against whatever the
+             * working directory happens to be. "data" is the obvious thing
+             * to write here for anyone who wants the old portable
+             * arrangement back, and it is exactly the value that would
+             * otherwise mean three different folders: the download folder
+             * from a double-click, the shell's folder from a console, and
+             * C:\Windows\System32 when Windows starts it as a service.
+             *
+             * An absolute path is still used as written.
+             */
+            return Path.GetFullPath(configured.Trim(), AppContext.BaseDirectory);
         }
 
         var chosen = Default();
