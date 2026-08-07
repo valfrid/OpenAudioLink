@@ -23,9 +23,16 @@ Then open **http://localhost:41080/play**.
 
 ### Spotify Connect needs one more file
 
-The Hub does not ship librespot — it is GPL and a separate project, so
-you supply the binary (`docs/LIBRESPOT.md` has the reasoning and
-`docs/BUILDING-LIBRESPOT-WINDOWS.md` has the build).
+The Hub does not ship librespot. Not because of its copyright licence —
+librespot is MIT, and bundling it would be permitted — but because
+whether a reimplementation of somebody's streaming protocol is licensed
+for use with *that service* is the operator's decision rather than this
+project's (`docs/CAST-POINTS.md`, "Bundling").
+
+There is no official Windows binary either: the librespot project
+declines to publish one. This repository builds it — **Actions →
+librespot → Run workflow** — and `docs/BUILDING-LIBRESPOT-WINDOWS.md`
+covers that and the local route.
 
 Copy `librespot.exe` into `C:\Program Files\OpenAudioLink` and re-run the
 install script. It adds a firewall rule for it and says so; without it
@@ -39,10 +46,26 @@ Upgrades keep it. It is one of two files the installer never replaces.
 & "$env:ProgramFiles\OpenAudioLink\scripts\update-hub.ps1"
 ```
 
-That asks GitHub for the latest release, stops if you already have it,
-and otherwise downloads and installs it. No login, no browser, no
-unzipping — a release asset is a plain public URL, which is exactly why
-upgrades come from releases rather than from CI artifacts.
+That asks GitHub what has been published, stops if you already have it,
+and otherwise downloads and installs. No login, no browser, no unzipping
+— a release asset is a plain public URL, which is exactly why upgrades
+come from releases rather than from CI artifacts, which need a token and
+expire after ninety days.
+
+### Two kinds of build
+
+| | |
+| --- | --- |
+| `hub-latest` | whatever the working branch last built, marked prerelease. Replaces itself on every push |
+| `hub-v0.7.0` | a deliberate, permanent release |
+
+The update script takes whichever is newer, so **upgrading never requires
+remembering to tag first**. On a machine somebody else depends on, use
+`-StableOnly` and it ignores the rolling build entirely.
+
+Between two commits that did not bump the version, the rolling build
+reports the same number as the one installed and the script stops.
+`-Force` installs it anyway.
 
 If you would rather download by hand, or want a build that has no release:
 
@@ -103,9 +126,13 @@ If you want the old portable arrangement, set `Hub:DataDirectory` in
 not against whatever the working directory happens to be — which, for a
 service, is `C:\Windows\System32`.
 
-## Publishing a release
+## Publishing
 
-Upgrades come from releases, so there has to be one:
+The rolling `hub-latest` build publishes itself on every push to `main`
+or a `claude/**` branch, so nothing has to be done for day-to-day
+upgrades to work.
+
+A permanent, tagged release is a deliberate act:
 
 ```
 git tag hub-v0.7.0
@@ -113,9 +140,10 @@ git push origin hub-v0.7.0
 ```
 
 The release workflow checks the tag against `<Version>` in
-`hub/Directory.Build.props` and refuses the build if they disagree — an
-installer that reports a different version from the one on the tin is
-worse than no installer. Then it publishes the zip.
+`hub/Directory.Build.props` and refuses the build if they disagree — a
+tagged release is a promise about a version number, and an installer that
+reports a different version from the one on the tin is worse than no
+installer.
 
 ## Uninstalling
 

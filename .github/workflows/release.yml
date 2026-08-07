@@ -17,15 +17,27 @@
 # version from the one on the tin is worse than no installer.
 name: Release
 
+# Two kinds of release, because they answer different questions.
+#
+#   hub-v0.7.0   a deliberate act. Tagged, permanent, the version somebody
+#                is told to install.
+#   hub-latest   whatever the working branch last built. Moves, marked
+#                prerelease, and exists so that upgrading never requires
+#                remembering to tag first. This is what makes
+#                update-hub.ps1 useful during a week of daily changes.
+#
+# The rolling one costs nothing: the package is already built on every
+# push, and this only publishes it somewhere a script can reach without a
+# token. CI artifacts cannot be — they need a login and expire after
+# ninety days.
 on:
   push:
     tags:
       - "hub-v*"
+    branches:
+      - main
+      - "claude/**"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to publish, e.g. hub-v0.7.0"
-        required: true
 
 permissions:
   contents: write
@@ -40,19 +52,36 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Check the tag against the version in the tree
+      - name: Work out what is being published
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME -like 'hub-v*') { $env:GITHUB_REF_NAME } else { '${{ inputs.tag }}' }
-          $tagged = $tag -replace '^hub-v', ''
           $props = Get-Content hub/Directory.Build.props -Raw
           if ($props -notmatch '<Version>([^<]+)</Version>') { throw 'No <Version> in Directory.Build.props' }
           $declared = $Matches[1]
-          Write-Host "tag $tagged, Directory.Build.props $declared"
-          if ($tagged -ne $declared) {
-            throw "Tag says $tagged and the tree says $declared. Bump one of them."
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            # A tagged release is a promise about a version number, so the
+            # tag and the tree have to agree. An installer that reports a
+            # different version from the one on the tin is worse than no
+            # installer.
+            $tagged = $env:GITHUB_REF_NAME -replace '^hub-v', ''
+            if ($tagged -ne $declared) {
+              throw "Tag says $tagged and hub/Directory.Build.props says $declared. Bump one of them."
+            }
+            "tag=$env:GITHUB_REF_NAME"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "name=Hub $declared"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "prerelease=false"                | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
-          "version=$tagged" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          else {
+            # The rolling one. Named with the version and the commit so the
+            # releases page says what it is, but always the same tag so it
+            # replaces itself rather than accumulating.
+            $short = $env:GITHUB_SHA.Substring(0, 7)
+            "tag=hub-latest"                              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "name=Hub $declared (latest, $short)"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "prerelease=true"                             | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+          "version=$declared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         id: version
 
       - name: Publish self-contained win-x64
@@ -77,10 +106,14 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Hub ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
           files: ${{ steps.package.outputs.asset }}
-          generate_release_notes: true
-          # The asset name is what update-hub.ps1 matches on, so it must
-          # keep the OpenAudioLink-Hub-win-x64 prefix.
+          # The rolling release keeps one asset, not a growing pile of
+          # them: update-hub.ps1 picks by name pattern, and two matching
+          # zips would make which one it installs a matter of order.
+          make_latest: ${{ steps.version.outputs.prerelease == 'false' }}
+          # The asset name is what update-hub.ps1 reads the version out of,
+          # so it must keep the OpenAudioLink-Hub-win-x64-<version> shape.
           fail_on_unmatched_files: true
