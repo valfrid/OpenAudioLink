@@ -1,8 +1,10 @@
 # A control surface for the house
 
-Status: recorded, nothing scheduled. Written down so the shape is not
-re-derived later, and because one half of it is much cheaper than it
-looks.
+Status: **step 1 built** — the switchboard is at `/play`, and it honours
+`/play#room=kitchen`. Steps 2 and 3 (tags, panel) are unscheduled and
+unchanged. What follows is the reasoning as it was written before any of it
+existed; the section at the end records what building the first step
+actually changed.
 
 ## The problem it solves
 
@@ -124,3 +126,71 @@ hosting the Controller role, serving the same endpoints from
 
 Written that way, "break it out onto the wall" is a matter of hosting the
 files somewhere else. Written the other way, it is a rewrite.
+
+## What building step 1 changed
+
+The page is `hub/src/OpenAudioLink.Hub/wwwroot/play.html`: one file, no
+build step, no dependencies, served as a static file. It kept the
+constraint above — every call it makes is one of the endpoints below, and
+nothing in it knows which machine served it.
+
+Three things did not survive contact.
+
+### The room URL is `/play#room=`, not `/#room=`
+
+`/` is the setup page and has been since the beginning: firmware, roles,
+diagnostics, and the instructions in `LIBRESPOT.md` that point at it.
+Taking that address for the switchboard would have moved every one of
+those. `/play` redirects to `/play.html` so a printed tag carries the
+short form, and browsers preserve the fragment across the redirect.
+
+The room is matched against the cast point id **and** against its
+slugified name, because whoever writes a sticker is reading the name on
+the setup page rather than the slug underneath it. `#room=Kök` and
+`#room=kok` reach the same room.
+
+### One endpoint had to learn that the Hub is also a producer
+
+The table below says "connect them: `POST /api/castpoints/{id}/play` with
+a producer". That was true only for *node* producers. The Hub holds the
+producer role like any other device, and asking it to start a stream used
+to mean POSTing to a node control endpoint the Hub does not have — so
+radio, a test tone and system audio each had their own endpoint that took
+a list of IP addresses and knew nothing about rooms.
+
+That is the wrong shape for a switchboard, which asks exactly one
+question: *play this in that room*. So `play` now branches on whether the
+named producer is this Hub, and starts the stream locally when it is —
+the same path `LibrespotService` already took when Spotify drove a cast
+point. The per-source endpoints stay, because they are what a script or a
+`curl` line uses, and because they can aim at an address that is not a
+cast point at all.
+
+Spotify is deliberately absent from the sources this accepts. A cast point
+plays Spotify because somebody pressed play on a phone; the Hub cannot
+make that happen, and offering a button that appears to would be a lie.
+
+### Stations had to live on the Hub
+
+The obvious place to keep a list of radio stations is the browser, and it
+is wrong for exactly the reason this document exists: the control surface
+is a wall tag and a phone that has never seen this house before. Stations
+in one browser's local storage are invisible to every other way of
+reaching the Hub, which is most of them. They are a JSON file beside the
+cast points, seeded once with four stations so a fresh Hub has something
+on the page, and never re-seeded — a station somebody deleted stays
+deleted.
+
+### The endpoints as they now stand
+
+| | |
+| --- | --- |
+| What rooms exist | `GET /api/castpoints` |
+| What can play | `GET /api/devices` filtered by the producer role, `GET /api/stations` |
+| Connect them | `POST /api/castpoints/{id}/play` — `{producer, source, stationId}` |
+| Stop | `POST /api/castpoints/{id}/stop` |
+| What is playing | `GET /api/stream` |
+| Remember a station | `POST /api/stations`, `DELETE /api/stations/{id}` |
+
+Still nothing new in the *protocol*. A control surface remains a different
+way of pressing buttons that exist.

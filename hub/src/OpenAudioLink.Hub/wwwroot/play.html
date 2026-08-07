@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111418">
+  <title>OpenAudioLink</title>
+  <!--
+    The switchboard: one provider, one room, in a few seconds, from a phone
+    (docs/CONTROL-SURFACE.md).
+
+    Two rules this page is written to, both from that document:
+
+      1. It talks only to the documented endpoints and renders entirely in
+         the browser. Nothing here knows it is being served by the Hub, so
+         the same file can later be served by a wall panel holding the
+         Controller role — which is a copy rather than a rewrite.
+
+      2. It opens scoped to a room: /play#room=kitchen. That is what makes
+         a printed QR code or a two-krona NFC sticker by the kitchen door
+         into a control surface, with no hardware and no new protocol.
+
+    Deliberately not here: anything from the setup page. Naming rooms,
+    choosing which speakers are in them, firmware, roles and diagnostics
+    all live at "/". This page is for the ten seconds somebody spends
+    starting music, and every control that is not that makes those ten
+    seconds longer.
+  -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fbfbfc;
+      --card: #ffffff;
+      --ink: #14181d;
+      --muted: #6b7581;
+      --line: #e3e6ea;
+      --accent: #2b7de9;
+      --on: #2f9e5f;
+      --off: #c94f4f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111418;
+        --card: #191d23;
+        --ink: #e9edf2;
+        --muted: #8d97a4;
+        --line: #262c34;
+        --accent: #4c96f2;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      margin: 0 auto;
+      max-width: 34rem;
+      padding: 1rem 1rem 4rem;
+      line-height: 1.45;
+      /* A control surface gets tapped, not selected. Long-press to select
+         a room name is never what somebody meant. */
+      -webkit-tap-highlight-color: transparent;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.5rem 0 1rem;
+    }
+    h1 { font-size: 1.05rem; margin: 0; letter-spacing: 0.01em; }
+    h2 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 1.75rem 0 0.6rem;
+      font-weight: 600;
+    }
+    a { color: var(--accent); }
+    .setup-link { font-size: 0.8rem; color: var(--muted); text-decoration: none; }
+    .setup-link:hover { color: var(--accent); }
+
+    /* Rooms and sources are the same shape on purpose: pick a place, then
+       pick a thing, and both steps look and feel identical. */
+    .grid { display: grid; gap: 0.6rem; }
+    .tile {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      width: 100%;
+      text-align: left;
+      font: inherit;
+      color: inherit;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 0.85rem;
+      /* Comfortably past the 44 px a thumb needs, because this is used
+         standing in a doorway with a bag of shopping. */
+      padding: 0.85rem 1rem;
+      min-height: 3.4rem;
+      cursor: pointer;
+    }
+    .tile:hover:not(:disabled) { border-color: var(--accent); }
+    .tile:active:not(:disabled) { transform: scale(0.99); }
+    .tile:disabled { opacity: 0.45; cursor: default; }
+    .tile .title { font-weight: 600; }
+    .tile .sub { font-size: 0.8rem; color: var(--muted); }
+    .tile .body { flex: 1; min-width: 0; }
+    .tile .sub, .tile .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tile.on { border-color: var(--on); }
+
+    .glyph {
+      flex: none;
+      width: 2.1rem;
+      height: 2.1rem;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 1.05rem;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    .dot {
+      display: inline-block;
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--off);
+      margin-right: 0.35rem;
+      vertical-align: 0.05rem;
+    }
+    .dot.online { background: var(--on); }
+
+    /* What is playing, if anything. Pinned to the bottom because on a phone
+       that is where a thumb already is, and because "make it stop" is the
+       one thing that must never need scrolling to. */
+    #now {
+      position: sticky;
+      bottom: 0;
+      margin: 1.5rem -1rem -4rem;
+      padding: 0.9rem 1rem calc(0.9rem + env(safe-area-inset-bottom));
+      background: var(--card);
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    #now .body { flex: 1; min-width: 0; }
+    #now .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #now .sub { font-size: 0.8rem; color: var(--muted); }
+    #stop {
+      font: inherit;
+      font-weight: 600;
+      color: #fff;
+      background: var(--off);
+      border: none;
+      border-radius: 0.7rem;
+      padding: 0.6rem 1.1rem;
+      cursor: pointer;
+    }
+
+    .back {
+      font: inherit;
+      font-size: 0.85rem;
+      background: none;
+      border: none;
+      color: var(--accent);
+      padding: 0.2rem 0;
+      cursor: pointer;
+    }
+    .room-name { font-size: 1.35rem; font-weight: 600; margin: 0.2rem 0 0.1rem; }
+    .hint { color: var(--muted); font-size: 0.83rem; margin: 0.3rem 0 0; }
+    .note {
+      font-size: 0.83rem;
+      color: var(--muted);
+      background: var(--card);
+      border: 1px dashed var(--line);
+      border-radius: 0.7rem;
+      padding: 0.7rem 0.9rem;
+      margin-top: 0.6rem;
+    }
+    #message {
+      min-height: 1.3rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 0.75rem 0 0;
+    }
+    #message.bad { color: var(--off); }
+
+    form.add {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.6rem;
+    }
+    form.add input {
+      font: inherit;
+      font-size: 0.9rem;
+      flex: 1 1 8rem;
+      min-width: 0;
+      padding: 0.6rem 0.7rem;
+      border: 1px solid var(--line);
+      border-radius: 0.6rem;
+      background: var(--card);
+      color: inherit;
+    }
+    form.add button {
+      font: inherit;
+      font-size: 0.9rem;
+      padding: 0.6rem 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 0.6rem;
+      background: var(--card);
+      color: inherit;
+      cursor: pointer;
+    }
+    .remove {
+      font: inherit;
+      font-size: 1rem;
+      line-height: 1;
+      background: none;
+      border: none;
+      color: var(--muted);
+      padding: 0.5rem;
+      cursor: pointer;
+      flex: none;
+    }
+    .remove:hover { color: var(--off); }
+    .station-row { display: flex; gap: 0.4rem; align-items: stretch; }
+    .station-row .tile { flex: 1; min-width: 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenAudioLink</h1>
+    <a class="setup-link" href="/">Setup →</a>
+  </header>
+
+  <!-- Step one: which room. Skipped entirely when the URL already said. -->
+  <section id="rooms-view">
+    <h2>Play in</h2>
+    <div class="grid" id="rooms"></div>
+    <p class="note" id="rooms-empty" hidden>
+      No rooms yet. Open <a href="/">Setup</a> to name one and put a speaker
+      in it.
+    </p>
+  </section>
+
+  <!-- Step two: what to play there. -->
+  <section id="sources-view" hidden>
+    <button class="back" id="back">← All rooms</button>
+    <p class="room-name" id="room-name"></p>
+    <p class="hint" id="room-speakers"></p>
+
+    <h2>Radio</h2>
+    <div class="grid" id="stations"></div>
+    <form class="add" id="add-station">
+      <input id="station-name" type="text" placeholder="Name" autocomplete="off">
+      <input id="station-url" type="url" placeholder="https://… .pls, .m3u or a stream" autocomplete="off" required>
+      <button type="submit">Add</button>
+    </form>
+
+    <h2>In this house</h2>
+    <div class="grid" id="providers"></div>
+    <p class="note" id="providers-empty" hidden>
+      Nothing else can produce audio right now. A node with the producer
+      role and a line input appears here when it comes online.
+    </p>
+
+    <p class="note">
+      <strong>Spotify is not on this page.</strong> Every room is offered to
+      Spotify under its own name, so it is chosen from the phone that is
+      playing — which also picks what plays. Starting something here takes
+      the room back from it.
+    </p>
+
+    <p id="message"></p>
+  </section>
+
+  <div id="now" hidden>
+    <span class="glyph">▶</span>
+    <div class="body">
+      <div class="title" id="now-what"></div>
+      <div class="sub" id="now-where"></div>
+    </div>
+    <button id="stop">Stop</button>
+  </div>
+
+  <script>
+    'use strict';
+
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    // --- State -----------------------------------------------------------
+    // Four fetches, kept whole rather than merged: each mirrors one endpoint,
+    // so a change to any of them is a change in one place.
+    let castPoints = [];
+    let devices = [];
+    let stations = [];
+    let hub = null;          // The Hub's own device entry, which is a producer.
+    let room = null;         // The chosen cast point id, or null for the list.
+    let busy = false;        // A play or stop is in flight.
+
+    // From /api/stream, which is the only place that knows a station's name
+    // rather than merely that something is streaming.
+    let nowDescription = null;
+
+    function say(text, bad) {
+      const el = $('message');
+      el.textContent = text || '';
+      el.classList.toggle('bad', !!bad);
+    }
+
+    async function api(method, path, body) {
+      const response = await fetch(path, {
+        method,
+        cache: 'no-store',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      // Every endpoint answers a failure with {error}, so the message the
+      // Hub wrote is the message the person reads. Inventing one here would
+      // throw away the only part that says what to do about it.
+      let payload = null;
+      try { payload = await response.json(); } catch { /* 204, or not JSON */ }
+      if (!response.ok) {
+        throw new Error(payload?.error || `${response.status} ${response.statusText}`);
+      }
+      return payload;
+    }
+
+    // --- The room in the URL ---------------------------------------------
+    // #room=kitchen. Matched against the id first and then against the name,
+    // because whoever writes an NFC sticker is looking at the name on the
+    // setup page, not at the slug underneath it.
+
+    function slug(text) {
+      return String(text ?? '')
+        // NFD splits "ö" into "o" and a combining mark, which folds accented
+        // room names the same way the Hub's own slug does — "Kök" and "kok"
+        // must reach the same room, because one of them was written on a
+        // sticker by hand.
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+
+    function roomFromUrl() {
+      const wanted = new URLSearchParams(location.hash.slice(1)).get('room');
+      if (!wanted) return null;
+      const key = slug(wanted);
+      const match = castPoints.find(p => p.id === wanted)
+        ?? castPoints.find(p => p.id === key || slug(p.name) === key);
+      return match?.id ?? null;
+    }
+
+    function currentRoom() {
+      return castPoints.find(p => p.id === room) ?? null;
+    }
+
+    // --- Rendering --------------------------------------------------------
+
+    // `title` is escaped here; `sub` is inserted as HTML, because half the
+    // callers put a status dot in it. Callers passing anything a person
+    // typed — a station name, a URL — escape it themselves.
+    function tile({ glyph, title, sub, on, disabled, attrs }) {
+      return `<button class="tile${on ? ' on' : ''}"${disabled ? ' disabled' : ''} ${attrs ?? ''}>`
+        + `<span class="glyph">${glyph}</span>`
+        + `<span class="body"><span class="title">${esc(title)}</span>`
+        + (sub ? `<br><span class="sub">${sub}</span>` : '')
+        + `</span></button>`;
+    }
+
+    function renderRooms() {
+      const grid = $('rooms');
+      $('rooms-empty').hidden = castPoints.length > 0;
+      grid.innerHTML = castPoints.map(point => {
+        const live = (point.members ?? []).filter(m => m.online).length;
+        const total = (point.members ?? []).length;
+        // A room whose speaker is unplugged says so rather than looking
+        // ready, which is the one thing the setup page got right that a
+        // switchboard must not lose.
+        const sub = total === 0
+          ? '<span class="dot"></span>no speakers yet'
+          : `<span class="dot${live ? ' online' : ''}"></span>`
+            + `${live} of ${total} speaker${total === 1 ? '' : 's'} online`;
+        return tile({
+          glyph: '⌂',
+          title: point.name,
+          sub,
+          on: point.playing,
+          attrs: `data-room="${esc(point.id)}"`,
+        });
+      }).join('');
+    }
+
+    function renderStations() {
+      $('stations').innerHTML = stations.map(station => {
+        // The remove button sits outside the tile rather than inside it: a
+        // button in a button is not a thing, and a stray tap that deletes a
+        // station instead of playing it is exactly the accident to avoid.
+        return `<div class="station-row">`
+          + tile({
+              glyph: '📻',
+              title: station.name,
+              sub: esc(station.url),
+              attrs: `data-station="${esc(station.id)}"`,
+            })
+          + `<button class="remove" data-forget="${esc(station.id)}" `
+          + `title="Forget ${esc(station.name)}" aria-label="Forget ${esc(station.name)}">×</button>`
+          + `</div>`;
+      }).join('');
+    }
+
+    function renderProviders() {
+      // Every online producer that is not this Hub: a node with a line input
+      // (a turntable, a CD player) sending its ADC straight out as RTP.
+      const nodes = devices.filter(d =>
+        d.online && (d.roles ?? []).includes('producer') && d.id !== hub?.id);
+
+      const parts = nodes.map(node => tile({
+        glyph: '🎚',
+        title: `Line in on ${node.name}`,
+        sub: 'Whatever is plugged into that node',
+        attrs: `data-node="${esc(node.id)}"`,
+      }));
+
+      // The Hub's own two, kept last because they are the least often
+      // wanted. System audio only on the machine that has any.
+      if (hub) {
+        if (hub.hardwareProfile === 'windows-hub') {
+          parts.push(tile({
+            glyph: '🖥',
+            title: `Whatever ${hub.name} is playing`,
+            sub: 'This computer’s own sound, captured and sent',
+            attrs: 'data-hub="system-audio"',
+          }));
+        }
+        parts.push(tile({
+          glyph: '♪',
+          title: 'Test tone',
+          sub: '1 kHz, for checking a speaker actually works',
+          attrs: 'data-hub="tone"',
+        }));
+      }
+
+      $('providers').innerHTML = parts.join('');
+      $('providers-empty').hidden = parts.length > 0;
+    }
+
+    function renderNowPlaying() {
+      const playing = castPoints.find(p => p.playing);
+      const bar = $('now');
+      if (!playing) {
+        bar.hidden = true;
+        return;
+      }
+      bar.hidden = false;
+      // What is playing comes from the Hub's own view of the stream when it
+      // has one, and from the receiver when Spotify is driving.
+      $('now-what').textContent = playing.receiver?.playing
+        ? 'Spotify'
+        : (nowDescription ?? 'Playing');
+      $('now-where').textContent = `in ${playing.name}`;
+      bar.dataset.room = playing.id;
+    }
+
+    function render() {
+      const inRoom = currentRoom();
+      $('rooms-view').hidden = !!inRoom;
+      $('sources-view').hidden = !inRoom;
+
+      if (inRoom) {
+        $('room-name').textContent = inRoom.name;
+        const members = inRoom.members ?? [];
+        $('room-speakers').innerHTML = members.length === 0
+          ? 'No speakers in this room yet.'
+          : members.map(m =>
+              `<span class="dot${m.online ? ' online' : ''}"></span>${esc(m.name)}`).join(' &nbsp; ');
+        renderStations();
+        renderProviders();
+      } else {
+        renderRooms();
+      }
+      renderNowPlaying();
+    }
+
+    // --- Loading ----------------------------------------------------------
+
+    async function refresh() {
+      // Anything that fails leaves its list as it was: a switchboard that
+      // empties itself because one poll timed out is worse than a stale one.
+      const [points, deviceList, stationList, stream] = await Promise.all([
+        api('GET', '/api/castpoints').catch(() => null),
+        api('GET', '/api/devices').catch(() => null),
+        api('GET', '/api/stations').catch(() => null),
+        api('GET', '/api/stream').catch(() => null),
+      ]);
+
+      if (points) castPoints = points;
+      if (deviceList) {
+        devices = deviceList;
+        hub = devices.find(d => d.hardwareProfile === 'windows-hub') ?? null;
+      }
+      if (stationList) stations = stationList;
+      nowDescription = stream?.running ? (stream.description ?? stream.source) : null;
+
+      if (room === null) {
+        room = roomFromUrl();
+      }
+      render();
+    }
+
+    // --- Acting -----------------------------------------------------------
+
+    async function play(body, what) {
+      if (busy) return;
+      busy = true;
+      say(`Starting ${what}…`);
+      try {
+        await api('POST', `/api/castpoints/${encodeURIComponent(room)}/play`, body);
+        say(`${what} is playing.`);
+      } catch (error) {
+        say(error.message, true);
+      } finally {
+        busy = false;
+        await refresh();
+      }
+    }
+
+    document.addEventListener('click', async event => {
+      const hit = selector => event.target.closest(`[${selector}]`);
+
+      const pick = hit('data-room');
+      if (pick) {
+        room = pick.dataset.room;
+        // Written into the URL so the page a tag opened and the page a
+        // person navigated to are the same page, and so a back gesture and
+        // the back button agree with each other.
+        history.replaceState(null, '', `#room=${encodeURIComponent(room)}`);
+        say('');
+        render();
+        return;
+      }
+
+      if (event.target.closest('#back')) {
+        room = null;
+        history.replaceState(null, '', location.pathname);
+        say('');
+        render();
+        return;
+      }
+
+      const forget = hit('data-forget');
+      if (forget) {
+        const station = stations.find(s => s.id === forget.dataset.forget);
+        if (!station || !confirm(`Forget ${station.name}?`)) return;
+        try {
+          await api('DELETE', `/api/stations/${encodeURIComponent(station.id)}`);
+        } catch (error) {
+          say(error.message, true);
+        }
+        await refresh();
+        return;
+      }
+
+      const station = hit('data-station');
+      if (station && hub) {
+        const chosen = stations.find(s => s.id === station.dataset.station);
+        await play(
+          { producer: hub.id, source: 'radio', stationId: chosen.id }, chosen.name);
+        return;
+      }
+
+      const node = hit('data-node');
+      if (node) {
+        const chosen = devices.find(d => d.id === node.dataset.node);
+        // "capture" is the node's ADC — protocol/CONTROL-API.md. A node
+        // without one sends silence rather than refusing, which is why the
+        // tile says what is plugged in rather than promising sound.
+        await play({ producer: chosen.id, source: 'capture' }, `Line in on ${chosen.name}`);
+        return;
+      }
+
+      const own = hit('data-hub');
+      if (own && hub) {
+        const source = own.dataset.hub;
+        await play(
+          { producer: hub.id, source },
+          source === 'tone' ? 'Test tone' : `${hub.name}’s audio`);
+        return;
+      }
+
+      if (event.target.closest('#stop')) {
+        const target = $('now').dataset.room;
+        if (!target || busy) return;
+        busy = true;
+        try {
+          await api('POST', `/api/castpoints/${encodeURIComponent(target)}/stop`);
+          say('Stopped.');
+        } catch (error) {
+          say(error.message, true);
+        } finally {
+          busy = false;
+          await refresh();
+        }
+      }
+    });
+
+    $('add-station').addEventListener('submit', async event => {
+      event.preventDefault();
+      const name = $('station-name').value.trim();
+      const url = $('station-url').value.trim();
+      try {
+        await api('POST', '/api/stations', { name: name || null, url });
+        $('station-name').value = '';
+        $('station-url').value = '';
+        say('Station saved.');
+      } catch (error) {
+        say(error.message, true);
+      }
+      await refresh();
+    });
+
+    // A tag scanned while the page is already open changes the room rather
+    // than doing nothing, which is what a person waving a phone at a sticker
+    // expects to happen.
+    addEventListener('hashchange', () => {
+      room = roomFromUrl();
+      render();
+    });
+
+    refresh();
+    // Slower than the setup page's two seconds. Nothing here is diagnostics,
+    // and a switchboard that repaints under a thumb is a switchboard that
+    // gets mistapped.
+    setInterval(() => { if (!busy) refresh(); }, 4000);
+  </script>
+</body>
+</html>

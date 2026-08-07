@@ -35,6 +35,7 @@ builder.Services.AddSingleton(librespot);
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
+builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 builder.Services.AddHttpClient<DeviceCommandClient>();
 // A short timeout on purpose: a node that does not answer promptly is a
@@ -91,6 +92,13 @@ app.Use(async (context, next) =>
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// The switchboard's short address, so a printed QR code or an NFC sticker
+// carries "/play#room=kitchen" rather than "/play.html#room=kitchen"
+// (docs/CONTROL-SURFACE.md). A redirect rather than a route that renders,
+// because the page must stay a static file that something other than this
+// Hub can serve; browsers carry the fragment across the redirect themselves.
+app.MapGet("/play", () => Results.Redirect("/play.html"));
 
 // Firmware images served to devices for OTA pulls (protocol/OTA.md).
 app.UseStaticFiles(new StaticFileOptions
@@ -431,9 +439,52 @@ app.MapPut("/api/castpoints/{id}", (string id, CastPointRequest request, CastPoi
 app.MapDelete("/api/castpoints/{id}", (string id, CastPointStore store) =>
     store.Delete(id) ? Results.Ok(new { status = "deleted" }) : Results.NotFound());
 
+// --- Stations (docs/ROADMAP.md, internet radio) -----------------------
+// Saved on the Hub rather than in a browser, because a control surface is
+// a wall tag and a phone that has never been here before.
+
+app.MapGet("/api/stations", (StationStore stations) => Results.Ok(stations.Snapshot()));
+
+app.MapPost("/api/stations", (StationRequest request, StationStore stations) =>
+{
+    var error = stations.Create(request.Name, request.Url, out var created);
+    return error == StationError.None ? Results.Ok(created) : StationFailure(error);
+});
+
+app.MapPut("/api/stations/{id}", (string id, StationRequest request, StationStore stations) =>
+{
+    var error = stations.Update(id, request.Name, request.Url);
+    if (error == StationError.NotFound)
+    {
+        return Results.NotFound();
+    }
+    if (error != StationError.None)
+    {
+        return StationFailure(error);
+    }
+    return stations.TryGet(id, out var updated) ? Results.Ok(updated) : Results.NotFound();
+});
+
+app.MapDelete("/api/stations/{id}", (string id, StationStore stations) =>
+    stations.Delete(id) ? Results.Ok(new { status = "deleted" }) : Results.NotFound());
+
+static IResult StationFailure(StationError error) => error switch
+{
+    StationError.NameRequired => Results.BadRequest(new { error = "a name is required" }),
+    StationError.NameUnusable => Results.BadRequest(
+        new { error = "that name has no letters or digits to build an id from" }),
+    StationError.UrlRequired => Results.BadRequest(new { error = "a station url is required" }),
+    StationError.UrlUnusable => Results.BadRequest(
+        new { error = "that is not an http or https address" }),
+    StationError.NameTaken => Results.Conflict(
+        new { error = "a station with that name already exists" }),
+    _ => Results.BadRequest(new { error = error.ToString() }),
+};
+
 app.MapPost("/api/castpoints/{id}/play",
     async (string id, CastPointPlayRequest request, CastPointStore store, DeviceRegistry registry,
-           HubConfig hubConfig, RtpStreamer streamer,
+           HubConfig hubConfig, RtpStreamer streamer, StationStore stations,
+           IHttpClientFactory clients, ILoggerFactory loggers,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>
 {
     if (!store.TryGet(id, out var point))
@@ -489,8 +540,123 @@ app.MapPost("/api/castpoints/{id}/play",
         stopped = conflict.CastPointId == id ? null : conflict.CastPointId;
     }
 
+    var port = request.Port ?? ProtocolSuite.RtpPort;
+
+    /*
+     * The Hub holds the producer role like any other device, but it is not
+     * reachable at a node's control endpoint — telling it to start a stream
+     * means starting one here. This is the same path LibrespotService takes
+     * when Spotify drives a cast point; the difference is only who chose.
+     *
+     * Which is what makes this one endpoint answer the whole question the
+     * switchboard asks: play *this* in *that room*, whichever machine turns
+     * out to produce it.
+     */
+    if (producer.Id == hubConfig.Id)
+    {
+        var targets = new List<IPAddress>();
+        foreach (var address in addresses)
+        {
+            if (!IPAddress.TryParse(address, out var target))
+            {
+                return Results.BadRequest(new { error = $"'{address}' is not a usable address" });
+            }
+            targets.Add(target);
+        }
+
+        var format = new AudioStreamFormat();
+        IAudioSource source;
+        string kind;
+
+        switch ((request.Source ?? "").ToLowerInvariant())
+        {
+            case "radio":
+                var url = request.Url;
+                if (string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(request.StationId))
+                {
+                    if (!stations.TryGet(request.StationId, out var station))
+                    {
+                        return Results.BadRequest(new { error = "unknown station" });
+                    }
+                    url = station.Url;
+                }
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    return Results.BadRequest(new { error = "a station url or stationId is required" });
+                }
+
+                try
+                {
+                    // Connecting happens on the source's own thread, so an
+                    // unreachable station is not an error here — it says so
+                    // in the stream description the switchboard displays.
+                    source = new RadioSource(
+                        url, format, clients.CreateClient(nameof(RadioSource)),
+                        loggers.CreateLogger<RadioSource>());
+                }
+                catch (Exception ex)
+                {
+                    return Results.BadRequest(new { error = $"could not start {url}: {ex.Message}" });
+                }
+                kind = "radio";
+                break;
+
+            case "tone":
+                source = new SineToneSource(format, request.ToneHz ?? 1000);
+                kind = "test-tone";
+                break;
+
+            case "system-audio":
+                if (!OperatingSystem.IsWindows())
+                {
+                    return Results.BadRequest(new { error = "system audio capture requires Windows" });
+                }
+                try
+                {
+                    source = new SystemAudioSource(format);
+                }
+                catch (NotSupportedException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                kind = "system-audio";
+                break;
+
+            default:
+                // Spotify is missing from this list on purpose: a cast point
+                // plays Spotify because somebody pressed play on a phone, and
+                // the Hub cannot make that happen from here.
+                return Results.BadRequest(new
+                {
+                    error = string.IsNullOrWhiteSpace(request.Source)
+                        ? $"{producer.Name} needs a source: radio, tone or system-audio"
+                        : $"{producer.Name} can produce radio, tone or system-audio, "
+                            + $"not '{request.Source}'",
+                });
+        }
+
+        try
+        {
+            await streamer.StartAsync(kind, source, targets, port, format);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
+
+        store.MarkPlaying(id, producer.Id);
+        return Results.Ok(new
+        {
+            status = "playing",
+            castPoint = point.Name,
+            destinations = addresses,
+            source = kind,
+            stopped,
+        });
+    }
+
     var ok = await commands.StartStreamAsync(
-        producer, addresses, request.Port ?? ProtocolSuite.RtpPort,
+        producer, addresses, port,
         request.Source ?? "pattern", request.ToneHz ?? 1000, cancellationToken);
     if (!ok)
     {
@@ -676,9 +842,10 @@ app.MapPost("/api/stream/radio", async (
         var format = BuildFormat(request);
         format.Validate();
 
-        // Constructed before the streamer takes ownership, so a station
-        // that cannot be reached fails here with its own message rather
-        // than as a stream that starts and plays silence.
+        // This returns as soon as the source's thread is started, so a
+        // station that turns out to be unreachable is not a failure here.
+        // It reports itself through the stream's description, which is what
+        // GET /api/stream returns and what the switchboard shows.
         var radio = new RadioSource(
             request.Url, format, clients.CreateClient(nameof(RadioSource)),
             loggers.CreateLogger<RadioSource>());
@@ -778,7 +945,17 @@ internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Des
 /// the receiver adapter supplies.
 /// </summary>
 internal sealed record CastPointPlayRequest(
-    string? Producer, int? Port, string? Source, int? ToneHz);
+    string? Producer,
+    int? Port,
+    string? Source,
+    int? ToneHz,
+    // Both only apply when the producer is this Hub and the source is
+    // radio. A station id is the switchboard's way of saying it; a bare
+    // url is for anything driving the API without saving one first.
+    string? Url = null,
+    string? StationId = null);
+
+internal sealed record StationRequest(string? Name, string? Url);
 
 internal static class StreamLimits
 {

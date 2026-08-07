@@ -189,6 +189,10 @@ Goals:
 
 ## Internet radio, the next source
 
+**Built as far as MP3, plus the switchboard that makes it usable.** The
+sections below are the plan as written; what actually landed, and what is
+still open, is at the end under "Where radio stands".
+
 Chosen because it is the cheapest strong source left and the only one that
 can be **lossless**. Radio Paradise, Linn and Naim serve FLAC over HTTP, so
 the ceiling belongs to the station rather than to the protocol — where
@@ -262,6 +266,46 @@ the same shape a turntable creates. Radio makes the switchboard worth
 opening, and the switchboard makes radio usable. They want doing near each
 other.
 
+### Where radio stands
+
+Done:
+
+- **Playlist resolution.** `StationPlaylist` reads `.pls` and `.m3u`,
+  refuses relative and `file://` entries, and recognises an HLS playlist
+  before parsing it — because an HLS playlist is a valid `.m3u`, and read
+  as a station list it yields four-second segments that play and stop,
+  which looks like a decoder fault rather than an unsupported protocol.
+  20 tests.
+- **MP3 decoding off a live socket**, frame by frame through Windows' own
+  ACM codec, at whatever rate the station's first frame declares.
+  Deliberately not a reader: the usual .NET audio readers want a seekable
+  stream, and a radio station is the opposite of seekable.
+- **Reconnect** on a fixed three-second retry, sending silence meanwhile
+  rather than stalling the sender.
+- **Saved stations**, on the Hub rather than in a browser, with four
+  seeded on first run.
+- **The switchboard**, `/play`, room-scoped by `#room=`. See
+  `CONTROL-SURFACE.md` for what building it changed.
+
+Open, in the order they are worth doing:
+
+- **FLAC.** The reason radio was chosen — it is the only lossless source
+  this project can have — and the one thing still missing. Needs either a
+  decoder library or the ffmpeg dependency the section above weighed.
+- **AAC**, which some SomaFM channels and most European broadcasters use.
+  Media Foundation can do it; the awkwardness is that its readers want a
+  seekable stream for the same reason the MP3 readers did.
+- **ICY metadata** for track titles. Skipped on purpose so far: asking for
+  it means stripping a block every `icy-metaint` bytes, and getting that
+  arithmetic wrong is indistinguishable from a corrupt stream. Worth doing
+  now that the switchboard has somewhere to show a title.
+- **`radio-browser.info`** as a directory, so adding a station is a search
+  rather than a pasted URL.
+- **Nothing verifies a station before it plays.** The stream starts, the
+  source's thread connects, and a station that has moved reports itself
+  through the stream description. Better than silence, worse than an
+  error on the button that was just pressed.
+
 ## Later candidates
 
 Priority is intentionally not fixed:
@@ -275,11 +319,12 @@ Priority is intentionally not fixed:
   keeping the Cast front end that already works and is account-free while
   OpenAudioLink distributes to speakers. Analog through the PCM1808 first,
   because it needs no new parts and no sample-rate conversion
-- ~~internet radio~~ — **next**, see below
+- ~~internet radio~~ — MP3 done, FLAC and AAC open, see above
 - Home Assistant integration
 - Bluetooth input
 - DSP
 - more hardware profiles
 - alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode,
   a PC Consumer application, a Raspberry Pi Consumer (see decision 8)
-- a wall control surface — see `CONTROL-SURFACE.md`
+- a wall control surface — the web app half is built (`/play`); tags and
+  the panel are still open, see `CONTROL-SURFACE.md`

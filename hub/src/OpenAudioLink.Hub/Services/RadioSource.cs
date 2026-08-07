@@ -102,6 +102,17 @@ public sealed class RadioSource : IAudioSource
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Radio {Url} stopped; reconnecting", _url);
+
+                /*
+                 * Into the description, because the description is the only
+                 * thing about a running stream that reaches a person: it is
+                 * what /api/stream returns and what the switchboard shows
+                 * while something is playing. Without this, a station that
+                 * has moved or gone away is indistinguishable from one
+                 * playing quietly — the stream is running, packets are
+                 * going out, and they are all silence.
+                 */
+                Description = $"Internet radio: {_url} — {ex.Message}";
             }
 
             // Silence rather than a stalled stream while reconnecting. The
