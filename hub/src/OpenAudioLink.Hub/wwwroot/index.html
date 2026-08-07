@@ -202,6 +202,7 @@
 
   <h2>Firmware</h2>
   <div class="fw-bar">
+    <button id="fw-fetch">Fetch latest from GitHub</button>
     <input type="file" id="fw-file" accept=".bin">
     <button id="fw-upload">Upload</button>
     <label>Update image: <select id="fw-select"></select></label>
@@ -210,6 +211,11 @@
     Version and build time are read out of the image itself, so you can see
     what an upload actually contains — an update that reinstalls the version
     already running otherwise looks exactly like a successful one.
+    <br>
+    <strong>Fetching is not installing.</strong> It downloads the published
+    image to this Hub; pressing Update on a node stays a separate, deliberate
+    act. Automatically flashing every speaker in a house is a way to lose an
+    evening.
   </p>
   <table id="firmware" hidden>
     <thead>
@@ -569,6 +575,20 @@
         `${f.descriptor ? ` — ${esc(f.descriptor.version)}` : ''}</option>`).join('');
       if ([...select.options].some(o => o.value === current)) select.value = current;
     }
+
+    document.getElementById('fw-fetch').addEventListener('click', async () => {
+      say('Asking GitHub for the newest node firmware…');
+      const response = await fetch('/api/firmware/fetch', { method: 'POST' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        say(`Could not fetch firmware: ${body.error ?? response.status}`);
+        return;
+      }
+      say(body.status === 'fetched'
+        ? `Fetched ${body.file}. Choose it above and press Update on a node.`
+        : `Already had ${body.file} — nothing newer published.`);
+      await refreshFirmware();
+    });
 
     document.getElementById('fw-upload').addEventListener('click', async () => {
       const input = document.getElementById('fw-file');

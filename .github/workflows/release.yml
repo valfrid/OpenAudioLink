@@ -43,9 +43,53 @@ permissions:
   contents: write
 
 jobs:
+  # Node firmware, published beside the Hub so the Hub can fetch it the same
+  # way it fetches itself: a release asset is a public URL, and a CI artifact
+  # needs a login and expires. That is the difference between "press Update"
+  # and "find the right zip on a laptop, unpack it, upload it".
+  #
+  # Its own version, from firmware/testnode/version.txt, because a node and
+  # the Hub are released independently and always have been. The two live in
+  # one release only because a release is a convenient place to put files.
+  firmware:
+    name: Node firmware (esp32s3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read the firmware version
+        id: version
+        run: echo "version=$(cat firmware/testnode/version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.1
+          target: esp32s3
+          path: firmware/testnode
+          command: >
+            idf.py build &&
+            cd build &&
+            esptool.py --chip esp32s3 merge_bin
+            -o testnode-esp32s3-flash.bin @flash_args &&
+            cp oal_testnode.bin testnode-esp32s3-ota.bin
+      - name: Name the files after what is in them
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          mkdir -p release
+          cp firmware/testnode/build/testnode-esp32s3-ota.bin   "release/testnode-esp32s3-$v-ota.bin"
+          cp firmware/testnode/build/testnode-esp32s3-flash.bin "release/testnode-esp32s3-$v-flash.bin"
+          # So a Hub can say which build it holds without opening it.
+          ( cd release && sha256sum *.bin > testnode-esp32s3-$v.sha256 )
+      - uses: actions/upload-artifact@v5
+        with:
+          name: firmware-release-files
+          path: release/
+          if-no-files-found: error
+
   hub:
     name: Hub win-x64 package
     runs-on: windows-latest
+    # The release carries both, so both have to exist before it is cut.
+    needs: firmware
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -104,12 +148,19 @@ jobs:
           "asset=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         id: package
 
+      - uses: actions/download-artifact@v5
+        with:
+          name: firmware-release-files
+          path: firmware-release
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.name }}
           prerelease: ${{ steps.version.outputs.prerelease }}
-          files: ${{ steps.package.outputs.asset }}
+          files: |
+            ${{ steps.package.outputs.asset }}
+            firmware-release/*
           # The rolling release keeps one asset, not a growing pile of
           # them: update-hub.ps1 picks by name pattern, and two matching
           # zips would make which one it installs a matter of order.

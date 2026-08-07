@@ -62,6 +62,14 @@ builder.Services.AddHttpClient(nameof(RadioSource), client =>
     client.Timeout = Timeout.InfiniteTimeSpan;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenAudioLink/1.0");
 });
+// GitHub asks for a User-Agent and refuses without one, which reads as a
+// network fault rather than as a missing header.
+builder.Services.AddHttpClient(nameof(FirmwareFetcher), client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(2);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenAudioLink-Hub");
+});
+builder.Services.AddSingleton<FirmwareFetcher>();
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
 // Puts a node-to-node stream back after a roam takes it away. Only node
@@ -156,6 +164,30 @@ app.MapPost("/api/firmware", async (HttpRequest request, FirmwareStore store, Ca
     {
         return Results.BadRequest(new { error = ex.Message });
     }
+});
+
+/*
+ * Fetches the published node firmware into this Hub's store.
+ *
+ * Deliberately not automatic, and deliberately not a flash. Downloading is
+ * a convenience; flashing every speaker in a house without being asked is
+ * a way to lose an evening. This puts the image where the Hub can serve it
+ * and leaves pressing Update a human act.
+ */
+app.MapPost("/api/firmware/fetch",
+    async (FirmwareFetcher fetcher, CancellationToken cancellationToken) =>
+{
+    var result = await fetcher.FetchLatestAsync(cancellationToken);
+    if (result.Message is not null)
+    {
+        return Results.BadRequest(new { error = result.Message });
+    }
+    return Results.Ok(new
+    {
+        status = result.AlreadyHad ? "already had it" : "fetched",
+        file = result.File,
+        version = result.Version,
+    });
 });
 
 app.MapPost("/api/devices/{id}/reboot",

@@ -168,6 +168,26 @@ discarded and nothing is silently withheld.
 
 To take the new defaults instead: `-ResetSettings`.
 
+## Node firmware
+
+The same reasoning, one layer down. The published node image is attached
+to the same releases the Hub package is, so the Hub can fetch it itself:
+
+**Setup page → Firmware → Fetch latest from GitHub.**
+
+That downloads the newest published `testnode-esp32s3-<version>-ota.bin`
+into the Hub's store and stops. It does **not** install anything.
+
+**Fetching is not flashing, on purpose.** Downloading an image is a
+convenience; flashing every speaker in a house without being asked is a
+way to lose an evening. Pressing *Update* on a node stays a separate,
+deliberate act, and the version and build time shown beside each image
+are read out of the image itself — an update that reinstalls the version
+already running otherwise looks exactly like a successful one.
+
+Uploading a `.bin` by hand still works and is what to use for a build
+that has no release, or one made locally.
+
 ## Where things live
 
 | | |
