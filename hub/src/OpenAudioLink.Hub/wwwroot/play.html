@@ -799,7 +799,14 @@
         ? 'Spotify'
         : (nowDescription ?? 'Playing');
       $('now-where').textContent = `in ${playing.name}`;
-      bar.dataset.room = playing.id;
+      /*
+       * Deliberately not data-room. The Stop button sits inside this bar,
+       * and a data-room attribute here made the room-picker branch of the
+       * click handler match first — so Stop navigated into the room and
+       * never stopped anything. The bar and a room tile are different
+       * things and must not answer to the same selector.
+       */
+      bar.dataset.playingRoom = playing.id;
     }
 
     function render() {
@@ -889,6 +896,29 @@
     document.addEventListener('click', async event => {
       const hit = selector => event.target.closest(`[${selector}]`);
 
+      /*
+       * Stop first, before anything that matches broadly. It is the one
+       * control on this page that must work, and it sits inside the
+       * now-playing bar — so any attribute that bar grows is a chance for
+       * an earlier branch to swallow the click. That is not hypothetical:
+       * it is exactly what happened when the bar carried data-room.
+       */
+      if (event.target.closest('#stop')) {
+        const target = $('now').dataset.playingRoom;
+        if (!target || busy) return;
+        busy = true;
+        try {
+          await api('POST', `/api/castpoints/${encodeURIComponent(target)}/stop`);
+          say('Stopped.');
+        } catch (error) {
+          say(error.message, true);
+        } finally {
+          busy = false;
+          await refresh();
+        }
+        return;
+      }
+
       const pick = hit('data-room');
       if (pick) {
         wantsRoomList = false;
@@ -899,7 +929,7 @@
       // The now-playing bar is a way back to the room that is playing, so
       // "turn that down" is a tap and a drag rather than a hunt.
       if (event.target.closest('#now-open')) {
-        enterRoom($('now').dataset.room);
+        enterRoom($('now').dataset.playingRoom);
         return;
       }
 
@@ -952,20 +982,6 @@
         return;
       }
 
-      if (event.target.closest('#stop')) {
-        const target = $('now').dataset.room;
-        if (!target || busy) return;
-        busy = true;
-        try {
-          await api('POST', `/api/castpoints/${encodeURIComponent(target)}/stop`);
-          say('Stopped.');
-        } catch (error) {
-          say(error.message, true);
-        } finally {
-          busy = false;
-          await refresh();
-        }
-      }
     });
 
     $('add-station').addEventListener('submit', async event => {
