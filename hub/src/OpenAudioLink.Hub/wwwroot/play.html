@@ -696,6 +696,34 @@
       return !!(nowDescription && text && nowDescription.includes(text));
     }
 
+    /*
+     * What a line-in tile says underneath its name, and the most useful
+     * sentence on this page.
+     *
+     * "Whatever is plugged into that node" was the old text and it was
+     * useless: a turntable that is playing and one whose cable is on the
+     * floor produced exactly the same tile. The node measures its input
+     * continuously, whether or not anything is streaming, so this can say
+     * which before a single packet is sent.
+     */
+    function inputSub(node) {
+      const input = node.status?.input;
+      if (!input) return 'Whatever is plugged into that node';
+      if (input.leftDb <= -120 && input.rightDb <= -120) {
+        return '<span class="dot"></span>silent — nothing on the input';
+      }
+      // One channel dead is the ordinary turntable fault, so it gets said
+      // rather than averaged away into "quiet".
+      if (input.leftDb <= -120 || input.rightDb <= -120) {
+        return `<span class="dot"></span>only the `
+          + `${input.leftDb > -120 ? 'left' : 'right'} channel — check the other cable`;
+      }
+      const worst = Math.max(input.leftDb, input.rightDb);
+      return `<span class="dot online"></span>signal `
+        + `${esc(input.leftDb)} / ${esc(input.rightDb)} dB`
+        + (worst > -3 ? ' — close to clipping' : '');
+    }
+
     function renderProviders() {
       // Every online producer that is not this Hub: a node with a line input
       // (a turntable, a CD player) sending its ADC straight out as RTP.
@@ -705,7 +733,7 @@
       const parts = nodes.map(node => tile({
         glyph: '🎚', kind: 'line',
         title: `Line in on ${node.name}`,
-        sub: 'Whatever is plugged into that node',
+        sub: inputSub(node),
         on: isPlayingHere(node.name),
         attrs: `data-node="${esc(node.id)}"`,
       }));

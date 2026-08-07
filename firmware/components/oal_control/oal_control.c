@@ -1,10 +1,12 @@
 #include "oal_control.h"
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
+#include "oal_capture.h"
 #include "oal_discovery.h"
 #include "oal_join.h"
 #include "oal_playout.h"
@@ -133,11 +135,30 @@ static esp_err_t status_handler(httpd_req_t *req)
                  oal_join_acknowledged() ? "true" : "false", oal_join_last_status());
     }
 
-    char body[896];
+    /*
+     * What the analog input is hearing, or null on a node with no ADC.
+     *
+     * In /status rather than /stream because it has to be answerable
+     * *before* anything is streaming: the question it exists for is "is the
+     * turntable wired up", asked by somebody standing at the turntable with
+     * nothing playing. /stream only says anything while a stream runs, which
+     * is exactly the wrong time.
+     */
+    char input[112] = "null";
+    if (oal_capture_running()) {
+        oal_capture_state_t capture;
+        oal_capture_get(&capture);
+        snprintf(input, sizeof(input),
+                 "{\"leftDb\":%d,\"rightDb\":%d,\"hz\":%" PRIu32 ",\"readErrors\":%" PRIu32 "}",
+                 capture.peak_left_dbfs, capture.peak_right_dbfs,
+                 capture.measured_hz, capture.read_errors);
+    }
+
+    char body[1024];
     int len = snprintf(body, sizeof(body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
                        "\"roles\":%s,\"channel\":\"%s\",\"volume\":%u,"
-                       "\"hw\":\"%s\",\"fw\":\"%s\","
+                       "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"audio\":{\"state\":\"idle\"}}",
@@ -147,7 +168,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                         * stored: they differ for as long as it takes an
                         * NVS write to fail, and the sound is the truth. */
                        (unsigned)oal_playout_volume(),
-                       s_config.hardware_profile, s_config.firmware_version,
+                       input, s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
                        controller, join);

@@ -128,3 +128,72 @@ void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16)
         samples[i] = (int32_t)(((int64_t)samples[i] * gain_q16) / OAL_GAIN_UNITY);
     }
 }
+
+int32_t oal_pcm_peak(const int32_t *samples, size_t count, unsigned channel)
+{
+    if (samples == NULL || channel >= OAL_PCM_CHANNELS) {
+        return 0;
+    }
+
+    int32_t peak = 0;
+    for (size_t i = channel; i < count; i += OAL_PCM_CHANNELS) {
+        /*
+         * Negated rather than abs()ed. INT32_MIN has no positive
+         * counterpart, so abs() on it is undefined — and INT32_MIN is
+         * exactly what a full-scale negative sample becomes here, which
+         * makes it the value most likely to appear rather than least.
+         */
+        int32_t value = samples[i];
+        if (value == INT32_MIN) {
+            return INT32_MAX;
+        }
+        if (value < 0) {
+            value = -value;
+        }
+        if (value > peak) {
+            peak = value;
+        }
+    }
+    return peak;
+}
+
+int oal_pcm_dbfs(int32_t peak)
+{
+    if (peak <= 0) {
+        return OAL_DBFS_SILENT;
+    }
+
+    /*
+     * 20*log10(peak / 2^31), by repeated halving rather than logf.
+     *
+     * Six decibels per halving gets within 3 dB, and a small table
+     * corrects the remainder. That is coarse, deliberately: this is read
+     * as "silent", "quiet", "about right" or "clipping", and a tenth of a
+     * decibel would be false precision on a measurement taken over a few
+     * hundred milliseconds of a record.
+     *
+     * Integer throughout so it behaves identically on the node and in a
+     * host test, and so nothing in the capture path needs an FPU — the
+     * task computing this has a hardware deadline every 5 ms.
+     */
+    /* 20*log10((16+i)/32) for i in 0..15, rounded: where inside the
+     * doubling the value fell, once it has been normalised into
+     * [2^30, 2^31). */
+    static const int OCTAVE_DB[16] = {
+        -6, -5, -5, -5, -4, -4, -3, -3, -2, -2, -2, -1, -1, -1, -1, 0,
+    };
+
+    int db = 0;
+    uint32_t value = (uint32_t)peak;
+
+    /* Double until the value sits in the top octave. Each doubling means
+     * the original was another 6 dB below it. */
+    while (value < 0x40000000u) {
+        value <<= 1;
+        db -= 6;
+    }
+
+    db += OCTAVE_DB[(value - 0x40000000u) / 0x04000000u];
+
+    return db < OAL_DBFS_SILENT ? OAL_DBFS_SILENT : db;
+}

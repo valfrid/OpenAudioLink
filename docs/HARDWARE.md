@@ -469,6 +469,64 @@ sharing a board with a radio:
 - test channel balance
 - determine clipping input level
 
+### Is anything actually being captured?
+
+The question the first turntable raises, and until firmware 0.12.0 nothing
+could answer it.
+
+**Every counter the capture path reported was identical whether a record
+was playing or the cable was lying on the floor.** The rate, the buffer
+fill, the drop count, the read errors — all of them count *frames*, and a
+powered ADC clocks out frames regardless of what is on its inputs. So a
+trace reading
+
+```
+oal_capture: input 40/40/40 ms (min/now/max), 47998 Hz, dropped 584980 ms,
+             silence 0 ms, underruns 0, read errors 0
+```
+
+says the ADC is alive, clocked correctly and delivering — and says nothing
+whatsoever about whether a turntable is connected to it.
+
+From 0.12.0 the trace carries a peak level, and so does `GET /status`:
+
+```
+oal_capture: input idle, level L -14 R -15 dBFS, 47998 Hz, read errors 0
+             — no stream is taking it
+oal_capture: input idle, level SILENT — nothing on the input, 47998 Hz, …
+```
+
+Measured continuously from boot rather than only while streaming, because
+the person asking is standing at the turntable with nothing playing. Both
+channels separately, because half a turntable failing is the ordinary
+fault — a lifted ground, a bad RCA, a worn cartridge coil — and one number
+for both reports that as merely quiet.
+
+Reading the numbers:
+
+| Peak        | Means                                             |
+| ----------- | ------------------------------------------------- |
+| `-120`      | digital silence. Nothing is reaching the ADC      |
+| −60 to −40  | the ADC's own noise floor, or a source turned off |
+| −20 to −6   | a healthy line-level signal                       |
+| above −3    | the preamp is close to clipping; turn it down     |
+
+The Hub shows the same reading in the device table's **Line in** column,
+and the switchboard puts it under each "Line in on …" tile — so a phone
+standing next to the turntable says *signal −14 / −15 dB* or *silent —
+nothing on the input* without anything being started.
+
+### That "dropped" figure is not a fault
+
+An idle capture ring fills and then discards its oldest frames forever,
+which is correct: live audio should stay current, and holding old frames
+back would only make the delay permanent. But it makes `dropped` climb by
+a second every second from boot, which reads as catastrophic loss.
+
+From 0.12.0 a node that has never been asked for a packet says `input
+idle … — no stream is taking it` instead, and only reports buffer figures
+once something has actually read from it.
+
 ### End-to-end test
 
 - ADC node captures audio

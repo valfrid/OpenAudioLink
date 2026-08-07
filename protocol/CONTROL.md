@@ -249,6 +249,41 @@ request with `400` rather than silently storing a subset. The roles take
 effect at the next boot, because they decide which tasks start; changing
 them under a running node would mean tearing down live audio.
 
+### The `input` block in `GET /status`
+
+```json
+"input": { "leftDb": -14, "rightDb": -15, "hz": 47998, "readErrors": 0 }
+```
+
+`null` on a node with no ADC, and absent entirely on firmware older than
+0.12.0.
+
+**The only field in the whole status document that can tell a working ADC
+from a merely connected one.** Every other reading the capture path
+produces — the sample rate, the buffer fill, the read errors — is identical
+whether a record is playing or the cable is lying on the floor, because the
+ADC clocks out frames either way. That is exactly how a first attempt at
+wiring a turntable reads as perfectly healthy and makes no sound.
+
+`leftDb` and `rightDb` are peak level over the last half second, in whole
+decibels below full scale, `-120` for digital silence. Reported apart
+because a turntable is the one source where half of it failing is ordinary
+— a lifted ground, a bad RCA, a worn cartridge coil — and one number for
+both reports that as merely quiet.
+
+Measured **continuously from boot**, not only while a stream is running.
+The question this answers is asked by somebody standing at the turntable
+with nothing playing, so an instrument that only works during playback
+would be useless for it.
+
+Rough readings: a healthy line-level source peaks around −20 to −6 dBFS;
+above −3 the preamp is close to clipping; below about −60 there is nothing
+there but the ADC's own noise.
+
+`hz` is what the ADC's clock actually turned out to be, measured rather
+than configured — a self-clocked module divides its crystal according to
+its strapping, and 96 kHz sent down a 48 kHz profile plays at half speed.
+
 ### POST /volume
 
 Sets the playback level, 0-100, on a Consumer.

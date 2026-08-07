@@ -91,6 +91,9 @@ public sealed class DeviceStatusService : BackgroundService
                 Rssi = status.Wifi?.Rssi,
                 AudioChannel = status.AudioChannel,
                 Volume = status.Volume,
+                Input = status.Input is { } input
+                    ? new InputLevel(input.LeftDb, input.RightDb, input.Hz, input.ReadErrors)
+                    : null,
                 // Null means the node did not say, which older firmware
                 // does not. That is a different thing from having looked
                 // and found nobody, and showing them alike would report a
@@ -132,11 +135,29 @@ public sealed class DeviceStatusService : BackgroundService
         [JsonPropertyName("volume")]
         public int? Volume { get; init; }
 
+        [JsonPropertyName("input")]
+        public InputStatus? Input { get; init; }
+
         [JsonPropertyName("controller")]
         public ControllerStatus? Controller { get; init; }
 
         [JsonPropertyName("join")]
         public JoinStatus? Join { get; init; }
+    }
+
+    private sealed record InputStatus
+    {
+        [JsonPropertyName("leftDb")]
+        public int LeftDb { get; init; }
+
+        [JsonPropertyName("rightDb")]
+        public int RightDb { get; init; }
+
+        [JsonPropertyName("hz")]
+        public int Hz { get; init; }
+
+        [JsonPropertyName("readErrors")]
+        public int ReadErrors { get; init; }
     }
 
     private sealed record ControllerStatus

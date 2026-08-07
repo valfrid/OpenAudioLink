@@ -81,6 +81,13 @@ void oal_pcm_i2s_to_l24(const int32_t *in, uint8_t *payload, size_t samples);
  * "quieter in the kitchen" mean what a person means by it.
  */
 
+/**
+ * Interleaving this file assumes. Stated here rather than taken from the
+ * RTP profile, because this header is deliberately free of every other
+ * header in the project so the arithmetic can be tested on a host.
+ */
+#define OAL_PCM_CHANNELS 2
+
 /** Full scale. The gain a fresh node has until told otherwise. */
 #define OAL_VOLUME_DEFAULT 100
 
@@ -118,6 +125,40 @@ int32_t oal_pcm_gain_q16(uint8_t percent);
  * — which is most of them, most of the time — pays nothing for this.
  */
 void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16);
+
+/** What <see cref="oal_pcm_dbfs"/> returns for silence. */
+#define OAL_DBFS_SILENT (-120)
+
+/**
+ * Turns a peak sample magnitude into whole decibels below full scale.
+ *
+ * The one measurement that answers "is anything actually plugged in".
+ * Everything else the capture path reports — the rate, the buffer fill,
+ * the read errors — is identical whether a record is playing or the cable
+ * is lying on the floor, because they all count frames and frames arrive
+ * either way. Only the level distinguishes an ADC that is working from an
+ * input that is connected.
+ *
+ * @param peak the largest absolute sample seen, as a left-justified I²S
+ *             word — so full scale is 2^31, not 2^23
+ * @return 0 at full scale, negative below it, OAL_DBFS_SILENT for digital
+ *         silence. Whole dB: a tenth of a decibel is below the resolution
+ *         of the question being asked.
+ */
+int oal_pcm_dbfs(int32_t peak);
+
+/**
+ * The largest absolute value in one channel of an interleaved buffer.
+ *
+ * @param samples interleaved, one word per sample
+ * @param count   samples, not frames
+ * @param channel 0 for left, 1 for right
+ *
+ * Per channel because a turntable is the one source where half of it
+ * failing is ordinary: a lifted ground, a bad RCA, a worn cartridge coil.
+ * One number for both would report that as "quieter than expected".
+ */
+int32_t oal_pcm_peak(const int32_t *samples, size_t count, unsigned channel);
 
 #ifdef __cplusplus
 }

@@ -76,6 +76,33 @@ typedef struct {
     uint32_t silence_frames;  /* the ring was empty when a packet was due */
     uint32_t underruns;       /* times it was empty, however long each lasted */
     uint32_t read_errors;     /* the I²S driver refused a read */
+
+    /*
+     * Peak level per channel over the last window, in whole decibels below
+     * full scale, OAL_DBFS_SILENT for digital silence.
+     *
+     * The only field here that can tell a working ADC from a connected
+     * one. Every other counter is identical whether a record is playing or
+     * the cable is lying on the floor, because they all count frames and
+     * the ADC produces frames either way — which is exactly how a first
+     * attempt at wiring a turntable looks perfectly healthy and makes no
+     * sound.
+     *
+     * Measured continuously from boot rather than only while streaming, so
+     * "is the needle actually connected" can be answered before anything
+     * has been started.
+     */
+    int peak_left_dbfs;
+    int peak_right_dbfs;
+
+    /*
+     * What the ADC's own clock actually turned out to be, measured rather
+     * than configured. A self-clocked module divides its crystal to
+     * whatever its strapping says, and 96 kHz sent down a 48 kHz profile
+     * plays at half speed — obvious once heard, baffling until the number
+     * is in front of you.
+     */
+    uint32_t measured_hz;
 } oal_capture_state_t;
 
 /**

@@ -11,6 +11,7 @@
 #include "oal_pcm.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -380,6 +381,95 @@ static void gain_null_arguments_are_survivable(void)
     CHECK_EQ(samples[0], 1000);
 }
 
+/*
+ * The level meter. This is the only instrument that can tell a working
+ * ADC from a connected one — everything else the capture path reports
+ * counts frames, and frames arrive whether or not a cable does.
+ */
+static void the_meter_reads_full_scale_as_zero(void)
+{
+    TEST("the meter reads full scale as zero");
+
+    CHECK_EQ(oal_pcm_dbfs(INT32_MAX), 0);
+
+    /* A full-scale negative sample is INT32_MIN, which has no positive
+     * counterpart — abs() on it is undefined, and it is the value most
+     * likely to appear rather than least. */
+    const int32_t loud[2] = { INT32_MIN, INT32_MIN };
+    CHECK_EQ(oal_pcm_dbfs(oal_pcm_peak(loud, 2, 0)), 0);
+    CHECK_EQ(oal_pcm_dbfs(oal_pcm_peak(loud, 2, 1)), 0);
+}
+
+static void silence_reads_as_silence(void)
+{
+    TEST("silence reads as silence");
+
+    CHECK_EQ(oal_pcm_dbfs(0), OAL_DBFS_SILENT);
+    CHECK_EQ(oal_pcm_dbfs(-1), OAL_DBFS_SILENT);
+
+    const int32_t quiet[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    CHECK_EQ(oal_pcm_peak(quiet, 8, 0), 0);
+    CHECK_EQ(oal_pcm_dbfs(oal_pcm_peak(quiet, 8, 0)), OAL_DBFS_SILENT);
+}
+
+static void halving_the_signal_costs_six_decibels(void)
+{
+    TEST("halving the signal costs six decibels");
+
+    CHECK_EQ(oal_pcm_dbfs(1 << 30), -6);
+    CHECK_EQ(oal_pcm_dbfs(1 << 29), -12);
+    CHECK_EQ(oal_pcm_dbfs(1 << 28), -18);
+    CHECK_EQ(oal_pcm_dbfs(1 << 25), -36);
+
+    /* A quiet passage of a record sits around here. The floor is a clamp,
+     * not an overflow: anything below it is inaudible anyway. */
+    CHECK_EQ(oal_pcm_dbfs(1), OAL_DBFS_SILENT);
+}
+
+/*
+ * Against real logarithms rather than against itself. The table is small
+ * enough to get subtly wrong, and a meter that is consistently three
+ * decibels optimistic would send somebody looking for a wiring fault that
+ * is not there.
+ */
+static void the_meter_agrees_with_the_arithmetic(void)
+{
+    TEST("the meter agrees with the arithmetic");
+
+    for (int shift = 0; shift < 20; shift++) {
+        for (int step = 0; step < 16; step++) {
+            int64_t value = (int64_t)(0x40000000 + step * 0x04000000) >> shift;
+            if (value <= 0) {
+                continue;
+            }
+            double exact = 20.0 * log10((double)value / 2147483648.0);
+            int reported = oal_pcm_dbfs((int32_t)value);
+            /* Within a decibel of the truth, which is finer than the
+             * question "is the turntable connected" can use. */
+            CHECK(reported - exact < 1.0 && exact - reported < 1.0);
+        }
+    }
+}
+
+static void the_two_channels_are_measured_apart(void)
+{
+    TEST("the two channels are measured apart");
+
+    /* A dead right channel: one lifted ground on an RCA, which is the
+     * ordinary turntable failure and reads as "quieter than expected" if
+     * both channels are folded into one number. */
+    const int32_t one_sided[8] = {
+        1 << 30, 0, -(1 << 30), 0, 1 << 29, 0, 1 << 30, 0,
+    };
+
+    CHECK_EQ(oal_pcm_dbfs(oal_pcm_peak(one_sided, 8, 0)), -6);
+    CHECK_EQ(oal_pcm_dbfs(oal_pcm_peak(one_sided, 8, 1)), OAL_DBFS_SILENT);
+
+    /* An out-of-range channel index must not read off the end. */
+    CHECK_EQ(oal_pcm_peak(one_sided, 8, 2), 0);
+    CHECK_EQ(oal_pcm_peak(NULL, 8, 0), 0);
+}
+
 int main(void)
 {
     reads_the_extremes();
@@ -400,6 +490,11 @@ int main(void)
     the_taper_is_cubed();
     a_loud_sample_scales_without_overflowing();
     gain_null_arguments_are_survivable();
+    the_meter_reads_full_scale_as_zero();
+    silence_reads_as_silence();
+    halving_the_signal_costs_six_decibels();
+    the_meter_agrees_with_the_arithmetic();
+    the_two_channels_are_measured_apart();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);

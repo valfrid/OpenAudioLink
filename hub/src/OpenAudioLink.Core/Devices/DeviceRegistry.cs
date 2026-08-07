@@ -45,6 +45,19 @@ public sealed record DeviceStatus
     public int? Volume { get; init; }
 
     /// <summary>
+    /// What the node's analog input is hearing, or null on a node with no
+    /// ADC.
+    /// </summary>
+    /// <remarks>
+    /// The only reading that distinguishes a working ADC from a connected
+    /// one. Everything else a capture path reports counts frames, and an
+    /// ADC produces frames whether or not a turntable is plugged into it —
+    /// which is how a first attempt at wiring one looks perfectly healthy
+    /// and makes no sound.
+    /// </remarks>
+    public InputLevel? Input { get; init; }
+
+    /// <summary>
     /// Who this node believes holds the Controller role: "self", the name
     /// of a peer, or null when it has found nobody (decision 9).
     ///
@@ -59,6 +72,27 @@ public sealed record DeviceStatus
 
     /// <summary>When the Hub last read this, so a stale reading is visible as stale.</summary>
     public DateTimeOffset ObservedAt { get; init; }
+}
+
+/// <summary>
+/// Peak level on a node's analog input, in whole decibels below full scale.
+/// </summary>
+/// <param name="LeftDb">Left channel, -120 for digital silence.</param>
+/// <param name="RightDb">
+/// Right channel. Reported apart from the left because a turntable is the
+/// one source where half of it failing is ordinary — a lifted ground, a bad
+/// RCA, a worn cartridge coil — and one number for both would report that as
+/// merely quiet.
+/// </param>
+/// <param name="Hz">
+/// The rate the ADC's own clock turned out to be, measured rather than
+/// configured.
+/// </param>
+/// <param name="ReadErrors">Times the I2S driver refused a read.</param>
+public readonly record struct InputLevel(int LeftDb, int RightDb, int Hz, int ReadErrors)
+{
+    /// <summary>Nothing above the noise floor on either channel.</summary>
+    public bool Silent => LeftDb <= -120 && RightDb <= -120;
 }
 
 /// <summary>
