@@ -4,6 +4,14 @@ on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
+  # A Run workflow button. Actions had a bad afternoon -- jobs failing in
+  # "Set up job" with Service Unavailable while resolving actions/checkout,
+  # and the firmware job sitting fifteen minutes without a runner before
+  # being cancelled -- and there was no way to ask for the build again
+  # except by pushing a commit that changed nothing. Re-running the old run
+  # is worse than it sounds: it deletes that run's artifacts first, so a
+  # failed retry leaves you with less than you started with.
+  workflow_dispatch:
 
 jobs:
   hub:
