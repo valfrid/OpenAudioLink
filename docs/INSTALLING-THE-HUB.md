@@ -6,32 +6,51 @@ upgrades with one command.
 
 ## First install
 
-Download `OpenAudioLink-Hub-win-x64-<version>.zip` from the
-[releases page](https://github.com/valfrid/OpenAudioLink/releases), then
-paste this into an **elevated** PowerShell prompt:
+Paste this into an **elevated** PowerShell prompt. It needs nothing
+downloaded first:
 
 ```powershell
-$zip = "$HOME\Downloads\OpenAudioLink-Hub-win-x64-0.7.0.zip"
-$tmp = "$env:TEMP\oal-install"
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-Expand-Archive -Path $zip -DestinationPath $tmp -Force
-Get-ChildItem -Path $tmp -Recurse -Include *.ps1 | Unblock-File
+$tmp = "$env:TEMP\oal-install"
+Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $tmp | Out-Null
+
+$releases = Invoke-RestMethod "https://api.github.com/repos/valfrid/OpenAudioLink/releases?per_page=10" `
+                              -Headers @{ 'User-Agent' = 'oal' }
+$asset = ($releases | ForEach-Object { $_.assets } |
+          Where-Object { $_.name -like 'OpenAudioLink-Hub-win-x64*.zip' })[0]
+if (-not $asset) { throw "No Hub package published yet." }
+
+Write-Host "Downloading $($asset.name)"
+Invoke-WebRequest $asset.browser_download_url -OutFile "$tmp\hub.zip" `
+                  -UseBasicParsing -Headers @{ 'User-Agent' = 'oal' }
+
+Expand-Archive -Path "$tmp\hub.zip" -DestinationPath "$tmp\pkg" -Force
+Get-ChildItem "$tmp\pkg" -Recurse -Include *.ps1 | Unblock-File
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
-& "$tmp\scripts\install-service.ps1"
+& "$tmp\pkg\scripts\install-service.ps1"
 ```
 
-The folder it extracts to is temporary; the install copies out of it.
+It asks GitHub what the newest Hub package is, fetches it, unblocks it
+and installs — the same route `update-hub.ps1` takes for every upgrade
+afterwards.
 
-**The two middle lines are not optional on a fresh machine.** Windows
-marks every file that came from the internet, and PowerShell refuses to
-run a marked script — so a first install fails twice before it starts,
-once on the mark and once on the execution policy. Neither error mentions
-this project, which is why the commands are here rather than left to be
-discovered.
+**Every line of that block earns its place**, which is why it is not
+shorter:
 
-An elevated prompt opens in `C:\Windows\system32`, so `.\install-service.ps1`
-finds nothing. Run it by full path, as above.
+| Line | Without it |
+| --- | --- |
+| `SecurityProtocol` | Windows PowerShell 5.1 still offers TLS 1.0 on some builds and GitHub refuses; the error reads like the network is down |
+| Fetching the asset URL | A hand-downloaded file means guessing a filename, and a wrong guess is "path does not exist" |
+| `Unblock-File` | Windows marks everything from the internet and PowerShell refuses marked scripts |
+| `Set-ExecutionPolicy` | The default policy refuses unsigned scripts regardless |
+| `&` with a full path | An elevated prompt opens in `C:\Windows\system32`, where `.\install-service.ps1` finds nothing |
+
+None of those errors mention this project, which is why they are listed
+rather than left to be met one at a time.
 
 That copies the Hub to `C:\Program Files\OpenAudioLink`, registers the
 service, opens the three firewall ports it needs, starts it and then asks
