@@ -412,6 +412,7 @@
   <section id="rooms-view">
     <h2>Play in</h2>
     <div class="grid" id="rooms"></div>
+    <p class="hint" id="rooms-hint" hidden></p>
     <p class="note" id="rooms-empty" hidden>
       No rooms yet. Open <a href="/">Setup</a> to name one and put a speaker
       in it.
@@ -486,6 +487,7 @@
     let hub = null;          // The Hub's own device entry, which is a producer.
     let room = null;         // The chosen cast point id, or null for the list.
     let busy = false;        // A play or stop is in flight.
+    let wantsRoomList = false;  // Set by Back, so auto-entry does not undo it.
 
     // From /api/stream, which is the only place that knows a station's name
     // rather than merely that something is streaming.
@@ -669,6 +671,28 @@
           attrs: `data-room="${esc(point.id)}"`,
         });
       }).join('');
+
+      /*
+       * What there is to play, said on the screen that has none of it.
+       *
+       * The sources live inside a room, which is right — you cannot play
+       * something nowhere — but it left this page listing rooms and giving
+       * no evidence the system could do anything at all. Somebody looking
+       * for internet radio found a list of room names and concluded it had
+       * not been built.
+       */
+      const lineIns = devices.filter(d =>
+        d.online && (d.roles ?? []).includes('producer') && d.id !== hub?.id).length;
+      const parts = [];
+      if (stations.length) parts.push(`${stations.length} radio station${stations.length === 1 ? '' : 's'}`);
+      if (lineIns) parts.push(`${lineIns} line in`);
+      if (hub) parts.push('a test tone');
+
+      const hint = $('rooms-hint');
+      hint.hidden = castPoints.length === 0 || parts.length === 0;
+      hint.textContent = parts.length
+        ? `${parts.join(', ')} — pick a room to play them.`
+        : '';
     }
 
     function renderStations() {
@@ -833,6 +857,15 @@
       if (room === null) {
         room = roomFromUrl();
       }
+
+      // A house with one room has nothing to choose, and making somebody
+      // tap through a list of one to reach the sources is the step that
+      // hid radio. Only until they press Back, which is them saying they
+      // wanted the list.
+      if (room === null && !wantsRoomList && castPoints.length === 1) {
+        room = castPoints[0].id;
+      }
+
       render();
     }
 
@@ -858,6 +891,7 @@
 
       const pick = hit('data-room');
       if (pick) {
+        wantsRoomList = false;
         enterRoom(pick.dataset.room);
         return;
       }
@@ -870,6 +904,7 @@
       }
 
       if (event.target.closest('#back')) {
+        wantsRoomList = true;
         room = null;
         history.replaceState(null, '', location.pathname);
         say('');
