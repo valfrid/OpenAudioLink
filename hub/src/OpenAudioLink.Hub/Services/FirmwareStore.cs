@@ -33,13 +33,40 @@ public sealed class FirmwareStore
 
     public string DirectoryPath => _directory;
 
+    /// <summary>
+    /// Newest firmware first, by the version inside the image.
+    /// </summary>
+    /// <remarks>
+    /// By version and not by file time, because the first entry is what the
+    /// page offers by default and pressing Update on the wrong one silently
+    /// downgrades a speaker.
+    ///
+    /// File time is the moment the bytes landed here, which is not the same
+    /// as how new the build is: re-uploading last month's image makes it the
+    /// most recently written file, and copying a directory or restoring a
+    /// backup rewrites every timestamp at once. The version is in the image
+    /// header, it is already read to display, and it is the thing being
+    /// asked about.
+    ///
+    /// An image whose version cannot be read sorts last rather than first —
+    /// one this cannot place is one it must not offer by default.
+    /// </remarks>
     public IReadOnlyList<FirmwareImage> List() =>
         new DirectoryInfo(_directory)
             .EnumerateFiles("*.bin")
-            .OrderByDescending(f => f.LastWriteTimeUtc)
             .Select(f => new FirmwareImage(
                 f.Name, f.Length, ComputeSha256(f.FullName), f.LastWriteTimeUtc, ReadDescriptor(f.FullName)))
+            .OrderByDescending(image => ParsedVersion(image))
+            .ThenByDescending(image => image.ModifiedAt)
             .ToList();
+
+    /// <summary>
+    /// The image's own version as something orderable, or null when it does
+    /// not parse. Null sorts last under OrderByDescending, which is the
+    /// intent: an unplaceable image must not become the default choice.
+    /// </summary>
+    private static Version? ParsedVersion(FirmwareImage image) =>
+        Version.TryParse(image.Descriptor?.Version, out var version) ? version : null;
 
     public bool Exists(string file) =>
         TrySanitize(file, out var path) && File.Exists(path);

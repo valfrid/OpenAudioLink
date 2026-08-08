@@ -570,9 +570,14 @@
       const current = select.value;
       // The version belongs in the label: choosing the image is the moment
       // you can still notice it is not the one you meant to install.
-      select.innerHTML = images.map(f =>
+      // Newest first, said out loud. The Hub orders by the version inside
+      // the image rather than by file time, so the first entry really is
+      // the newest build — but nothing on screen said so, and pressing
+      // Update on the wrong one silently downgrades a speaker.
+      select.innerHTML = images.map((f, i) =>
         `<option value="${esc(f.file)}">${esc(f.file)}` +
-        `${f.descriptor ? ` — ${esc(f.descriptor.version)}` : ''}</option>`).join('');
+        `${f.descriptor ? ` — ${esc(f.descriptor.version)}` : ' — version unreadable'}` +
+        `${i === 0 && f.descriptor ? ' (newest)' : ''}</option>`).join('');
       if ([...select.options].some(o => o.value === current)) select.value = current;
     }
 

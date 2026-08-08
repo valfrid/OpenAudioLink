@@ -60,6 +60,12 @@ public class FirmwareStoreTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "oal-tests-" + Guid.NewGuid());
 
+    private static async Task Save(FirmwareStore store, string file, string version)
+    {
+        using var content = new MemoryStream(FakeImage.Application(version: version));
+        await store.SaveAsync(file, content, CancellationToken.None);
+    }
+
     [Fact]
     public async Task Save_then_list_reports_size_and_checksum()
     {
@@ -136,6 +142,74 @@ public class FirmwareStoreTests : IDisposable
             () => store.SaveAsync("notes.bin", content, CancellationToken.None));
 
         Assert.Empty(store.List());
+    }
+
+    /// <summary>
+    /// The first entry is what the page offers by default, and pressing
+    /// Update on the wrong one silently downgrades a speaker.
+    /// </summary>
+    [Fact]
+    public async Task The_newest_version_is_listed_first()
+    {
+        var store = new FirmwareStore(_dir);
+        await Save(store, "old.bin", "0.9.0");
+        await Save(store, "new.bin", "0.13.0");
+        await Save(store, "mid.bin", "0.12.0");
+
+        var listed = store.List();
+
+        Assert.Equal("0.13.0", listed[0].Descriptor!.Version);
+        Assert.Equal("0.12.0", listed[1].Descriptor!.Version);
+        Assert.Equal("0.9.0", listed[2].Descriptor!.Version);
+    }
+
+    /// <summary>
+    /// The case file time gets wrong. 0.13.0 was fetched, then an older
+    /// image was uploaded by hand — so the old one is the most recently
+    /// written file and would sort first by timestamp.
+    /// </summary>
+    [Fact]
+    public async Task An_image_uploaded_later_does_not_outrank_a_newer_version()
+    {
+        var store = new FirmwareStore(_dir);
+        await Save(store, "fetched.bin", "0.13.0");
+        await Task.Delay(20);
+        await Save(store, "uploaded.bin", "0.12.0");
+
+        Assert.Equal("0.13.0", store.List()[0].Descriptor!.Version);
+    }
+
+    /// <summary>
+    /// Ten is after nine, which string ordering gets backwards — and this is
+    /// a project whose firmware is on 0.13 with 0.9 still in the folder.
+    /// </summary>
+    [Fact]
+    public async Task Versions_are_compared_as_numbers_not_as_text()
+    {
+        var store = new FirmwareStore(_dir);
+        await Save(store, "nine.bin", "0.9.0");
+        await Save(store, "thirteen.bin", "0.13.0");
+
+        Assert.Equal("0.13.0", store.List()[0].Descriptor!.Version);
+    }
+
+    /// <summary>
+    /// A hand-built image from before version.txt carries a git hash where a
+    /// version should be. It still installs, so it must still be listed —
+    /// just never as the default choice.
+    /// </summary>
+    [Fact]
+    public async Task An_unreadable_version_is_listed_but_never_first()
+    {
+        var store = new FirmwareStore(_dir);
+        await Save(store, "hash.bin", "6c79b3e");
+        await Save(store, "numbered.bin", "0.9.0");
+
+        var listed = store.List();
+
+        Assert.Equal(2, listed.Count);
+        Assert.Equal("0.9.0", listed[0].Descriptor!.Version);
+        Assert.Equal("6c79b3e", listed[1].Descriptor!.Version);
     }
 
     public void Dispose()
