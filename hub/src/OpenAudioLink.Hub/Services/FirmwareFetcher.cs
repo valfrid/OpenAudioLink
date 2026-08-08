@@ -68,19 +68,37 @@ public sealed class FirmwareFetcher
          * refusal to have, and a poor one to rely on when the right file is
          * sitting beside it under a name that says which is which.
          *
-         * Releases come back newest first, so the first one carrying an
-         * image wins whether it is a tagged release or the rolling build.
+         * The **highest version** among all of them, not the first found. A
+         * rolling release is meant to hold one build, but an asset whose
+         * name carries a version does not replace one carrying a different
+         * version, so versions accumulate — and the API returns them in
+         * upload order, which makes the first the oldest. That exact
+         * mistake offered a Hub 0.7.0 while 0.9.2 sat beside it.
          */
         Asset? asset = null;
+        Version? newest = null;
         foreach (var release in releases ?? [])
         {
-            asset = (release.Assets ?? [])
-                .FirstOrDefault(a => a.Name is not null
-                                     && a.Name.StartsWith("testnode-", StringComparison.OrdinalIgnoreCase)
-                                     && a.Name.EndsWith("-ota.bin", StringComparison.OrdinalIgnoreCase));
-            if (asset is not null)
+            foreach (var candidate in release.Assets ?? [])
             {
-                break;
+                if (candidate.Name is null || candidate.DownloadUrl is null
+                    || !candidate.Name.StartsWith("testnode-", StringComparison.OrdinalIgnoreCase)
+                    || !candidate.Name.EndsWith("-ota.bin", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Unparseable versions are skipped rather than guessed at:
+                // an image this cannot order is one it cannot say is newer.
+                if (!Version.TryParse(VersionFrom(candidate.Name), out var parsed))
+                {
+                    continue;
+                }
+                if (newest is null || parsed > newest)
+                {
+                    newest = parsed;
+                    asset = candidate;
+                }
             }
         }
 

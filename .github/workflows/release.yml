@@ -153,6 +153,37 @@ jobs:
           name: firmware-release-files
           path: firmware-release
 
+      # The rolling release is one build, not an archive.
+      #
+      # Uploading replaces an asset of the *same* name and leaves every
+      # other one in place — and these names carry versions, so each build
+      # added a file rather than replacing one. The API then returns them
+      # in upload order, which makes the first the oldest. A Hub was
+      # offered 0.7.0 and told it was up to date while 0.9.2 sat in the
+      # same release.
+      #
+      # Both readers now pick the highest version rather than the first,
+      # so this is belt as well as braces; but a release listing five old
+      # builds is confusing to a person too.
+      - name: Clear the rolling release's old assets
+        if: steps.version.outputs.prerelease == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $existing = gh release view hub-latest --json assets -q '.assets[].name' 2>$null
+          if (-not $existing) {
+            Write-Host "No rolling release yet; nothing to clear."
+            exit 0
+          }
+          foreach ($name in $existing) {
+            if ($name) {
+              Write-Host "Removing stale asset $name"
+              gh release delete-asset hub-latest $name --yes 2>$null
+            }
+          }
+          exit 0
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -161,9 +192,8 @@ jobs:
           files: |
             ${{ steps.package.outputs.asset }}
             firmware-release/*
-          # The rolling release keeps one asset, not a growing pile of
-          # them: update-hub.ps1 picks by name pattern, and two matching
-          # zips would make which one it installs a matter of order.
+          # Never the newest thing on the releases page unless it is a
+          # tagged one: somebody browsing should find a real release.
           make_latest: ${{ steps.version.outputs.prerelease == 'false' }}
           # The asset name is what update-hub.ps1 reads the version out of,
           # so it must keep the OpenAudioLink-Hub-win-x64-<version> shape.

@@ -100,46 +100,55 @@ if ($StableOnly) {
     $releases = $releases | Where-Object { -not $_.prerelease }
 }
 
-# Matching on the name rather than taking the first asset, so adding a
-# second one later — firmware, a checksum, librespot — cannot quietly
-# install the wrong thing.
-$release = $null
-$asset   = $null
+<#
+    The highest version among every matching asset, not the first one found.
+
+    The rolling release is meant to hold one build, but an asset whose name
+    carries a version does not replace one carrying a different version, so
+    it accumulates. GitHub returns assets in upload order, which makes the
+    first the *oldest* — and that is not a hypothetical: a Hub was offered
+    0.7.0 and told "already up to date" while 0.9.2 sat beside it in the
+    same release.
+
+    The version comes from the filename rather than the tag. A tagged
+    release carries it in both, but the rolling one is always tagged
+    hub-latest — the tag has to stay put for the release to replace itself —
+    so only the filename says which build an asset holds.
+#>
+$candidates = @()
 foreach ($candidate in $releases) {
-    $match = $candidate.assets |
-             Where-Object { $_.name -like 'OpenAudioLink-Hub-win-x64*.zip' } |
-             Select-Object -First 1
-    if ($match) {
-        $release = $candidate
-        $asset   = $match
-        break
+    foreach ($file in $candidate.assets) {
+        if ($file.name -match '^OpenAudioLink-Hub-win-x64-([0-9][^-]*)\.zip$') {
+            $parsed = $null
+            if ([version]::TryParse($Matches[1], [ref]$parsed)) {
+                $candidates += [pscustomobject]@{
+                    Asset = $file; Release = $candidate
+                    Text = $Matches[1]; Version = $parsed
+                }
+            }
+        }
     }
 }
 
-if (-not $asset) {
+if ($candidates.Count -eq 0) {
     throw ("No published Hub package found for $Repository" +
            $(if ($StableOnly) { ' (stable only). Tag a build with hub-v<version>.' }
              else { '. Push to a build branch, or tag with hub-v<version>.' }))
 }
 
-<#
-    The version comes from the asset's filename rather than from the tag.
-
-    A tagged release carries it in both, but the rolling one is always
-    tagged hub-latest — the tag has to stay put for the release to replace
-    itself instead of accumulating — so the tag says nothing about which
-    build it holds. The filename does.
-#>
-if ($asset.name -match 'OpenAudioLink-Hub-win-x64-([0-9][^-]*)\.zip$') {
-    $available = $Matches[1]
-} else {
-    $available = $release.tag_name -replace '^hub-v', ''
-}
+$best      = $candidates | Sort-Object -Property Version -Descending | Select-Object -First 1
+$asset     = $best.Asset
+$release   = $best.Release
+$available = $best.Text
 
 $kind = if ($release.prerelease) { 'latest build' } else { 'release' }
 Write-Host "Available: $available  ($kind, $($asset.name))"
+if ($candidates.Count -gt 1) {
+    Write-Host "  ($($candidates.Count) packages published; this is the newest)" -ForegroundColor DarkGray
+}
 
-if ($installed -and $available -eq $installed -and -not $Force) {
+$sameVersion = $installed -and $available -eq $installed
+if ($sameVersion -and -not $Force) {
     Write-Host ""
     Write-Host "Already on $installed. Nothing to do." -ForegroundColor Green
     Write-Host "  Re-run with -Force to install it again anyway."
