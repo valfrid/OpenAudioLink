@@ -1,3 +1,30 @@
+# Inputs
+
+The swithpanel shoul select type of a provider with a cast-point.
+One active pair at a time, when selecting new pair provider <=> cast-point.
+A cast-point is defined cast-point but also all consumers.
+
+Spotify / librespot is a special case, or an alternative way to set up a p/c pair in case spotify is provider.
+
+This switchpanel should clear show active aktive pair.
+In adition volume control on cast-point shoul be availabke in this switch-panel.
+
+Simple attribute of active provider like Spotify song, Internet channel should be visible.
+
+The internet radio should as provider have its own panel like a "spotify app"
+
+The today control pannel is more of a admin set-up. This should be cleaned up. The part that was used for performance and integratio activity shoul be kept, but moved a part from needed admin pars.
+Whats needed 
+device connectiity setting
+setting up device roles, consumer/provider settings like stereo/mono/left/right
+firmware upgrade
+device status
+
+what cold be sparate tooling are
+generate test signals
+
+
+
 # A control surface for the house
 
 Status: **step 1 built** — the switchboard is at `/play`, and it honours
