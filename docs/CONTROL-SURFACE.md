@@ -23,6 +23,9 @@ device status
 what cold be sparate tooling are
 generate test signals
 
+If no server, the swith control skould be on one availabe provider, likr the vinyle provider or the node provide a usb virtual sound card connected to a pc.
+
+This control role could also host a stand alone wifi ap (as kind of back up) for this small node system
 
 
 # A control surface for the house
