@@ -2,11 +2,14 @@
 
 The swithpanel shoul select type of a provider with a cast-point.
 One active pair at a time, when selecting new pair provider <=> cast-point.
-A cast-point is defined cast-point but also all consumers.
+(the cast-point could be one2one consunsumer, but also one2many. 
+So all targets that should be available, for Spotify, but also Vinyle, Internet Radio, and other to come is must be defined as cast-point)
 
-Spotify / librespot is a special case, or an alternative way to set up a p/c pair in case spotify is provider.
+Spotify / librespot is a special case, or an alternative way to set up a p/c pair in case spotify is provider, by simpli in app select cast-point.
 
-This switchpanel should clear show active aktive pair.
+I would like to make this very symetrical, and also as we 
+
+This switchpanel should clear show active active pair.
 In adition volume control on cast-point shoul be availabke in this switch-panel.
 
 Simple attribute of active provider like Spotify song, Internet channel should be visible.
