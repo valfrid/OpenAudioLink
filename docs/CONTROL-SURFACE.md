@@ -7,14 +7,21 @@ So all targets that should be available, for Spotify, but also Vinyle, Internet 
 
 Spotify / librespot is a special case, or an alternative way to set up a cast-point <=> consumer pair in case spotify is provider, by simpli in app select cast-point.
 
-I would like to make this very symetrical, so this i
+I would like to make this very symetrical, and one way to do this is that Vinyle provider also like "Spotify" by user select one cast-point.
+The same for Internet radio (that is not part of switch panel) its like a "Spotify" app also select one available cast-points.
 
-This switchpanel should clear show active active pair.
-In adition volume control on cast-point shoul be availabke in this switch-panel.
+So switching path is more or less to select a new provider and start to "cast" to an available cast-point"
 
-Simple attribute of active provider like Spotify song, Internet channel should be visible.
+Whats then in switch panel view
+1. View of active connection
+2. Volume control (possible if we dont move this isnt to "provider apps" (Vinyle Player, Internet Radio), but if better architecture anyway the adjustment is made in consumer end
+3. Stop active connection. Think this is needed still, and this should stopp whatever provider that was active
+4. Simple attribute of active provider like Spotify song, Internet channel should be visible.
 
-The internet radio should as provider have its own panel like a "spotify app"
+As user of system you only need provider view
+If some more details the switch panel
+If trobleshooting the OAL gui panel, with channel faults, sending tone, fw update and so on
+(Please comment on this, architectures could be done in many ways)
 
 The today control pannel is more of a admin set-up. This should be cleaned up. The part that was used for performance and integratio activity shoul be kept, but moved a part from needed admin pars.
 Whats needed 
