@@ -5,9 +5,9 @@ One active pair at a time, when selecting new pair provider <=> cast-point.
 (the cast-point could be one2one consunsumer, but also one2many. 
 So all targets that should be available, for Spotify, but also Vinyle, Internet Radio, and other to come is must be defined as cast-point)
 
-Spotify / librespot is a special case, or an alternative way to set up a p/c pair in case spotify is provider, by simpli in app select cast-point.
+Spotify / librespot is a special case, or an alternative way to set up a cast-point <=> consumer pair in case spotify is provider, by simpli in app select cast-point.
 
-I would like to make this very symetrical, and also as we 
+I would like to make this very symetrical, so this i
 
 This switchpanel should clear show active active pair.
 In adition volume control on cast-point shoul be availabke in this switch-panel.
