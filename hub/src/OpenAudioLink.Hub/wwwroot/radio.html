@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Internet Radio — OpenAudioLink</title>
+<link rel="stylesheet" href="oal.css">
+</head>
+<body>
+<!--
+  The Internet Radio app.
+
+  Same shape as every other source app: pick the thing on the right, pick
+  where it comes out on the left, press play. Spotify does it this way and
+  it is the reason nobody needs instructions for Spotify.
+
+  The Hub is the producer for radio — it fetches, decodes and sends. So the
+  station list is the Hub's, and the destination is a cast point.
+-->
+<div class="app">
+  <header>
+    <div class="brand"><a href="play.html">← OpenAudioLink</a></div>
+    <div class="status" id="health"><span class="dot">●</span> <span id="health-text">Connecting…</span></div>
+  </header>
+
+  <div class="layout">
+    <section class="card now">
+      <div>
+        <div class="section-label">Internet Radio</div>
+
+        <div class="station-hero">
+          <div class="logo" id="hero-logo">📻</div>
+          <div>
+            <div class="station-name" id="station-name">No station chosen</div>
+            <div class="meta" id="station-meta">Pick one from the list</div>
+          </div>
+        </div>
+
+        <div class="track">
+          <div class="section-label">On air</div>
+          <div class="artist" id="on-air-sub">Nothing playing</div>
+          <div class="title" id="on-air">—</div>
+        </div>
+
+        <div class="controls">
+          <button id="prev">◀ Station</button>
+          <button class="play" id="play">▶ Play</button>
+          <button id="next">Station ▶</button>
+        </div>
+
+        <div class="destination">
+          <div class="section-label">Playing on</div>
+          <select id="room"></select>
+        </div>
+
+        <div class="volume-box">
+          <div class="section-label">Room volume</div>
+          <div class="volume-row">
+            <span>🔈</span>
+            <input id="volume" type="range" min="0" max="100" value="50">
+            <span>🔊</span>
+            <div class="vol-number" id="vol-text">50%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-note" id="state-text">Ready.</div>
+    </section>
+
+    <section class="card picker">
+      <h2>Stations</h2>
+      <div class="picker-grid" id="stations"></div>
+
+      <form class="add" id="add-station">
+        <input id="station-name" type="text" placeholder="Name" autocomplete="off">
+        <input id="station-url" type="url" placeholder="https://… .pls, .m3u or a stream" required>
+        <button type="submit">Add</button>
+      </form>
+      <div class="footer-note">
+        MP3 streams and the playlists that point at them. AAC and FLAC are
+        not decoded yet, so a station that stays silent is probably one of
+        those rather than a wiring fault.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="oal.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+
+  let state = null;
+  let chosen = null;   // Station id the user has selected, not necessarily playing.
+  let busy = false;
+
+  const sendVolume = OAL.volumeSender(() => $('room').value, message => say(message, true));
+
+  function say(text, bad) {
+    $('state-text').textContent = text;
+    $('state-text').classList.toggle('bad', !!bad);
+  }
+
+  function setHealth(text, bad) {
+    $('health-text').textContent = text;
+    $('health').classList.toggle('bad', !!bad);
+  }
+
+  /** Two letters off the station's name, which is all a tile has room for. */
+  const initials = name => String(name).split(/\s+/).slice(0, 2)
+    .map(word => word[0] ?? '').join('').toUpperCase() || '📻';
+
+  /** Whether this room is playing this station right now. */
+  function liveHere() {
+    const playing = state?.playing;
+    if (!playing || playing.id !== $('room').value) return false;
+    return state.stream?.running && state.stream.source === 'radio';
+  }
+
+  function renderStations() {
+    $('stations').innerHTML = state.stations.map(station => `
+      <button class="choice${station.id === chosen ? ' active' : ''}"
+              data-station="${OAL.esc(station.id)}">
+        <div class="mini-logo">${OAL.esc(initials(station.name))}</div>
+        <div style="min-width:0">
+          <div class="choice-title">${OAL.esc(station.name)}</div>
+          <div class="choice-sub" style="overflow:hidden;text-overflow:ellipsis">
+            ${OAL.esc(station.url)}</div>
+        </div>
+      </button>`).join('')
+      || '<div class="footer-note">No stations yet. Add one below — SomaFM and '
+         + 'Radio Paradise both publish plain MP3 streams.</div>';
+  }
+
+  function renderHero() {
+    const station = state.stations.find(s => s.id === chosen);
+    $('hero-logo').textContent = station ? initials(station.name) : '📻';
+    $('station-name').textContent = station ? station.name : 'No station chosen';
+    $('station-meta').textContent = station ? station.url : 'Pick one from the list';
+
+    const live = liveHere();
+    $('play').textContent = live ? '■ Stop' : '▶ Play';
+    $('play').classList.toggle('stop', live);
+    $('play').classList.toggle('play', !live);
+    $('play').disabled = !station && !live;
+
+    /*
+     * What the Hub says it is actually playing, which is not always what
+     * is selected here — somebody may have started a station from another
+     * phone. The description is the only thing that knows: RadioSource
+     * writes the station's own icy-name into it, and writes the failure
+     * there too when a station has moved or gone away.
+     */
+    if (state.stream?.running && state.stream.source === 'radio') {
+      $('on-air').textContent = state.stream.description ?? 'Internet radio';
+      $('on-air-sub').textContent = state.playing ? `in ${state.playing.name}` : '';
+    } else if (state.playing) {
+      $('on-air').textContent = '—';
+      $('on-air-sub').textContent =
+        `${state.playing.name} is playing something else`;
+    } else {
+      $('on-air').textContent = '—';
+      $('on-air-sub').textContent = 'Nothing playing';
+    }
+  }
+
+  function renderVolume() {
+    const point = state.castPoints.find(p => p.id === $('room').value);
+    if (document.activeElement === $('volume')) return;
+    if (typeof point?.volume === 'number') {
+      $('volume').value = point.volume;
+      $('vol-text').textContent = `${point.volume}%`;
+    }
+  }
+
+  async function refresh() {
+    try {
+      state = await OAL.load();
+      setHealth(state.hub ? 'Hub connected' : 'No Hub in the device list', !state.hub);
+
+      OAL.fillRooms($('room'), state.castPoints, OAL.roomFromUrl(state.castPoints)?.id);
+      if (chosen === null && state.stations.length) chosen = state.stations[0].id;
+
+      renderStations();
+      renderHero();
+      renderVolume();
+    } catch (error) {
+      setHealth(error.message, true);
+    }
+  }
+
+  function step(delta) {
+    if (!state?.stations.length) return;
+    const at = state.stations.findIndex(s => s.id === chosen);
+    const next = (at + delta + state.stations.length) % state.stations.length;
+    chosen = state.stations[next].id;
+    renderStations();
+    renderHero();
+  }
+
+  async function toggle() {
+    if (busy) return;
+    const room = $('room').value;
+    if (!room) { say('There is no room to play into yet.', true); return; }
+
+    busy = true;
+    $('play').disabled = true;
+    try {
+      if (liveHere()) {
+        await OAL.api('POST', `/api/castpoints/${encodeURIComponent(room)}/stop`);
+        say('Stopped.');
+      } else if (!state.hub) {
+        // The Hub is what fetches and decodes radio, so without it in the
+        // device list there is no producer to name.
+        say('The Hub is not in the device list, and the Hub is what plays radio.', true);
+      } else {
+        const station = state.stations.find(s => s.id === chosen);
+        say(`Starting ${station.name}…`);
+        await OAL.api('POST', `/api/castpoints/${encodeURIComponent(room)}/play`,
+          { producer: state.hub.id, source: 'radio', stationId: station.id });
+        say(`${station.name} is playing. Give it a second — there are two `
+            + `seconds of buffer before the first sound.`);
+      }
+    } catch (error) {
+      say(error.message, true);
+    } finally {
+      busy = false;
+      await refresh();
+    }
+  }
+
+  $('stations').addEventListener('click', event => {
+    const tile = event.target.closest('[data-station]');
+    if (!tile) return;
+    chosen = tile.dataset.station;
+    renderStations();
+    renderHero();
+  });
+
+  $('play').addEventListener('click', toggle);
+  $('prev').addEventListener('click', () => step(-1));
+  $('next').addEventListener('click', () => step(1));
+  $('room').addEventListener('change', () => { renderHero(); renderVolume(); });
+
+  $('volume').addEventListener('input', event => {
+    const percent = Number(event.target.value);
+    $('vol-text').textContent = `${percent}%`;
+    sendVolume(percent);
+  });
+
+  $('add-station').addEventListener('submit', async event => {
+    event.preventDefault();
+    try {
+      await OAL.api('POST', '/api/stations', {
+        name: $('station-name').value.trim() || null,
+        url: $('station-url').value.trim(),
+      });
+      $('station-name').value = '';
+      $('station-url').value = '';
+      say('Station saved.');
+    } catch (error) {
+      say(error.message, true);
+    }
+    await refresh();
+  });
+
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>

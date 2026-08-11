@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vinyl — OpenAudioLink</title>
+<link rel="stylesheet" href="oal.css">
+</head>
+<body>
+<!--
+  The Vinyl app.
+
+  Deliberately the same page as Internet Radio with one word changed: the
+  thing you pick is a turntable rather than a station. That symmetry is the
+  whole point of splitting the apps up — if the second app needs a second
+  mental model, the split has bought nothing.
+
+  The producer here is the node with the record player wired into its ADC,
+  not the Hub. Nothing else changes: still a cast point, still a volume,
+  still one Play.
+-->
+<div class="app">
+  <header>
+    <div class="brand"><a href="play.html">← OpenAudioLink</a></div>
+    <div class="status" id="health"><span class="dot">●</span> <span id="health-text">Connecting…</span></div>
+  </header>
+
+  <div class="layout">
+    <section class="card now">
+      <div>
+        <div class="section-label">Vinyl</div>
+
+        <div class="station-hero">
+          <div class="logo" id="hero-logo">💿</div>
+          <div>
+            <div class="station-name" id="input-name">No input chosen</div>
+            <div class="meta" id="input-meta">Pick a node from the list</div>
+          </div>
+        </div>
+
+        <div class="track">
+          <div class="section-label">On the input</div>
+          <div class="artist" id="level-sub">Nothing connected</div>
+          <div class="title" id="level">—</div>
+        </div>
+
+        <div class="controls">
+          <button class="play" id="play">▶ Play</button>
+        </div>
+
+        <div class="destination">
+          <div class="section-label">Playing on</div>
+          <select id="room"></select>
+        </div>
+
+        <div class="volume-box">
+          <div class="section-label">Room volume</div>
+          <div class="volume-row">
+            <span>🔈</span>
+            <input id="volume" type="range" min="0" max="100" value="50">
+            <span>🔊</span>
+            <div class="vol-number" id="vol-text">50%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-note" id="state-text">Ready.</div>
+    </section>
+
+    <section class="card picker">
+      <h2>Inputs</h2>
+      <div class="picker-grid" id="inputs"></div>
+      <div class="footer-note">
+        The level is read from the node's ADC and updates every few seconds,
+        so you can tell a wiring fault from a quiet passage before you walk
+        back to the speaker. A channel reading silent while the other one
+        does not is nearly always the cable.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="oal.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+
+  let state = null;
+  let chosen = null;   // Device id of the node whose input we would play.
+  let busy = false;
+
+  const sendVolume = OAL.volumeSender(() => $('room').value, message => say(message, true));
+
+  function say(text, bad) {
+    $('state-text').textContent = text;
+    $('state-text').classList.toggle('bad', !!bad);
+  }
+
+  function setHealth(text, bad) {
+    $('health-text').textContent = text;
+    $('health').classList.toggle('bad', !!bad);
+  }
+
+  /*
+   * What the input is hearing, in a sentence rather than in decibels.
+   *
+   * The question this answers is "is the turntable plugged in and running",
+   * asked by somebody standing at the turntable. -120 dBFS is the firmware's
+   * digital silence, so both channels there means nothing is arriving at
+   * all — which is a different fault from one channel silent.
+   */
+  function describeLevel(device) {
+    const input = device?.status?.input;
+    if (!input) return { lead: '—', sub: 'This node reports no input' };
+    const { leftDb, rightDb } = input;
+    if (leftDb <= -120 && rightDb <= -120) {
+      return { lead: 'Silent', sub: 'Nothing on either channel — check the cable and the deck' };
+    }
+    if (leftDb <= -120 || rightDb <= -120) {
+      const dead = leftDb <= -120 ? 'left' : 'right';
+      return {
+        lead: `Only the ${dead === 'left' ? 'right' : 'left'} channel`,
+        sub: `The ${dead} channel is silent — check that RCA plug and the ground`,
+      };
+    }
+    return {
+      lead: `L ${leftDb} dB · R ${rightDb} dB`,
+      sub: `Sampling at ${input.hz} Hz`,
+    };
+  }
+
+  /** Whether this room is playing this node's input right now. */
+  function liveHere() {
+    const playing = state?.playing;
+    return !!playing
+      && playing.id === $('room').value
+      && playing.source === 'capture';
+  }
+
+  function renderInputs() {
+    $('inputs').innerHTML = state.lineIn.map(device => {
+      const level = describeLevel(device);
+      return `
+        <button class="choice${device.id === chosen ? ' active' : ''}"
+                data-input="${OAL.esc(device.id)}">
+          <div class="mini-logo">💿</div>
+          <div style="min-width:0">
+            <div class="choice-title">${OAL.esc(device.name)}</div>
+            <div class="choice-sub">${OAL.esc(level.lead)}</div>
+          </div>
+        </button>`;
+    }).join('')
+      || '<div class="footer-note">No node with an input is online. A node needs '
+         + 'the producer role and an ADC wired up before it appears here.</div>';
+  }
+
+  function renderHero() {
+    const device = state.lineIn.find(d => d.id === chosen);
+    $('input-name').textContent = device ? device.name : 'No input chosen';
+    $('input-meta').textContent = device ? `Node at ${device.address}` : 'Pick a node from the list';
+
+    const level = describeLevel(device);
+    $('level').textContent = level.lead;
+    $('level-sub').textContent = level.sub;
+
+    const live = liveHere();
+    $('play').textContent = live ? '■ Stop' : '▶ Play';
+    $('play').classList.toggle('stop', live);
+    $('play').classList.toggle('play', !live);
+    $('play').disabled = !device && !live;
+  }
+
+  function renderVolume() {
+    const point = state.castPoints.find(p => p.id === $('room').value);
+    if (document.activeElement === $('volume')) return;
+    if (typeof point?.volume === 'number') {
+      $('volume').value = point.volume;
+      $('vol-text').textContent = `${point.volume}%`;
+    }
+  }
+
+  async function refresh() {
+    try {
+      state = await OAL.load();
+      setHealth('Hub connected');
+
+      OAL.fillRooms($('room'), state.castPoints, OAL.roomFromUrl(state.castPoints)?.id);
+      if (chosen === null && state.lineIn.length) chosen = state.lineIn[0].id;
+
+      renderInputs();
+      renderHero();
+      renderVolume();
+    } catch (error) {
+      setHealth(error.message, true);
+    }
+  }
+
+  async function toggle() {
+    if (busy) return;
+    const room = $('room').value;
+    if (!room) { say('There is no room to play into yet.', true); return; }
+
+    busy = true;
+    $('play').disabled = true;
+    try {
+      if (liveHere()) {
+        await OAL.api('POST', `/api/castpoints/${encodeURIComponent(room)}/stop`);
+        say('Stopped.');
+      } else {
+        const device = state.lineIn.find(d => d.id === chosen);
+        say(`Starting ${device.name}…`);
+        await OAL.api('POST', `/api/castpoints/${encodeURIComponent(room)}/play`,
+          { producer: device.id, source: 'capture' });
+        say(`${device.name} is playing. Drop the needle.`);
+      }
+    } catch (error) {
+      say(error.message, true);
+    } finally {
+      busy = false;
+      await refresh();
+    }
+  }
+
+  $('inputs').addEventListener('click', event => {
+    const tile = event.target.closest('[data-input]');
+    if (!tile) return;
+    chosen = tile.dataset.input;
+    renderInputs();
+    renderHero();
+  });
+
+  $('play').addEventListener('click', toggle);
+  $('room').addEventListener('change', () => { renderHero(); renderVolume(); });
+
+  $('volume').addEventListener('input', event => {
+    const percent = Number(event.target.value);
+    $('vol-text').textContent = `${percent}%`;
+    sendVolume(percent);
+  });
+
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>

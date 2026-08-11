@@ -1,1033 +1,176 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0e1116">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>OpenAudioLink</title>
-  <!--
-    The switchboard: pick a room, pick something to play, set how loud
-    (docs/CONTROL-SURFACE.md).
-
-    Two rules this page is written to, both from that document:
-
-      1. It talks only to the documented endpoints and renders entirely in
-         the browser. Nothing here knows it is being served by the Hub, so
-         the same file can later be served by a wall panel holding the
-         Controller role — which is a copy rather than a rewrite.
-
-      2. It opens scoped to a room: /play#room=kitchen. That is what makes
-         a printed QR code or a two-krona NFC sticker by the kitchen door
-         into a control surface, with no hardware and no new protocol.
-
-    Deliberately not here: anything from the setup page. Naming rooms,
-    choosing which speakers are in them, firmware, roles and diagnostics
-    all live at "/". This page is for the ten seconds somebody spends
-    starting music, and every control that is not that makes those ten
-    seconds longer.
-  -->
-  <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #f4f5f7;
-      --bg-2: #e9ebef;
-      --card: #ffffff;
-      --card-2: #fbfbfc;
-      --ink: #14181d;
-      --muted: #69737f;
-      --line: #e2e5ea;
-      --accent: #2b6ee9;
-      --accent-soft: #e8f0fe;
-      --on: #17945a;
-      --off: #c8452f;
-      --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 4px 14px rgba(16, 24, 40, 0.05);
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0e1116;
-        --bg-2: #12161c;
-        --card: #191e26;
-        --card-2: #1e242d;
-        --ink: #e8edf4;
-        --muted: #8a95a3;
-        --line: #272e38;
-        --accent: #5a9bff;
-        --accent-soft: #1c2a41;
-        --on: #2fbd77;
-        --off: #e0654d;
-        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
-      }
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 22rem);
-      background-attachment: fixed;
-      color: var(--ink);
-      margin: 0 auto;
-      max-width: 32rem;
-      padding: 0.75rem 1rem 8rem;
-      line-height: 1.45;
-      /* A control surface gets tapped, not selected. Long-press to select
-         a room name is never what somebody meant. */
-      -webkit-tap-highlight-color: transparent;
-      -webkit-text-size-adjust: 100%;
-    }
-
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      padding: 0.6rem 0.25rem 1.1rem;
-    }
-    .wordmark {
-      font-size: 0.95rem;
-      font-weight: 650;
-      letter-spacing: -0.01em;
-      margin: 0;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    .wordmark .mark {
-      width: 1.35rem;
-      height: 1.35rem;
-      border-radius: 0.45rem;
-      background: var(--accent);
-      color: #fff;
-      display: grid;
-      place-items: center;
-      font-size: 0.7rem;
-    }
-    .setup-link {
-      font-size: 0.8rem;
-      color: var(--muted);
-      text-decoration: none;
-      padding: 0.35rem 0.6rem;
-      border-radius: 0.5rem;
-    }
-    .setup-link:hover { color: var(--accent); background: var(--accent-soft); }
-
-    h2 {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.09em;
-      color: var(--muted);
-      margin: 1.6rem 0.25rem 0.55rem;
-      font-weight: 650;
-    }
-
-    /* Rooms and sources are the same shape on purpose: pick a place, then
-       pick a thing, and both steps look and feel identical. */
-    .grid { display: grid; gap: 0.5rem; }
-
-    .tile {
-      display: flex;
-      align-items: center;
-      gap: 0.8rem;
-      width: 100%;
-      text-align: left;
-      font: inherit;
-      color: inherit;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 1rem;
-      box-shadow: var(--shadow);
-      /* Comfortably past the 44 px a thumb needs, because this is used
-         standing in a doorway with a bag of shopping. */
-      padding: 0.8rem 0.95rem;
-      min-height: 3.6rem;
-      cursor: pointer;
-      transition: border-color 0.12s, transform 0.08s, background 0.12s;
-    }
-    .tile:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-    .tile:active:not(:disabled) { transform: scale(0.985); }
-    .tile:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
-    .tile .body { flex: 1; min-width: 0; }
-    .tile .title { font-weight: 600; letter-spacing: -0.005em; }
-    .tile .sub { font-size: 0.79rem; color: var(--muted); }
-    .tile .sub, .tile .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tile.on {
-      border-color: color-mix(in srgb, var(--on) 55%, var(--line));
-      background: linear-gradient(90deg,
-        color-mix(in srgb, var(--on) 7%, var(--card)) 0%, var(--card) 60%);
-    }
-
-    .glyph {
-      flex: none;
-      width: 2.4rem;
-      height: 2.4rem;
-      border-radius: 0.7rem;
-      display: grid;
-      place-items: center;
-      font-size: 1.1rem;
-      background: var(--accent-soft);
-      color: var(--accent);
-    }
-    .glyph.room { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-    .glyph.radio { background: color-mix(in srgb, #b16be0 16%, transparent); }
-    .glyph.line { background: color-mix(in srgb, #e08a3c 18%, transparent); }
-    .glyph.hub { background: color-mix(in srgb, var(--muted) 18%, transparent); }
-
-    .dot {
-      display: inline-block;
-      width: 0.45rem;
-      height: 0.45rem;
-      border-radius: 50%;
-      background: var(--off);
-      margin-right: 0.35rem;
-      vertical-align: 0.06rem;
-    }
-    .dot.online { background: var(--on); }
-
-    /* --- The room's own header, above its sources --- */
-    .room-card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 1.15rem;
-      box-shadow: var(--shadow);
-      padding: 0.9rem 1.1rem 1.1rem;
-    }
-    .back {
-      font: inherit;
-      font-size: 0.82rem;
-      background: none;
-      border: none;
-      color: var(--muted);
-      padding: 0.3rem 0.2rem;
-      margin: 0 0 0.4rem -0.2rem;
-      cursor: pointer;
-    }
-    .back:hover { color: var(--accent); }
-    .room-name {
-      font-size: 1.5rem;
-      font-weight: 680;
-      letter-spacing: -0.02em;
-      margin: 0;
-    }
-    .room-speakers { color: var(--muted); font-size: 0.82rem; margin: 0.15rem 0 0; }
-
-    /* --- Volume ------------------------------------------------------
-       The one control on this page that is not a list. Given room to
-       breathe because it is the thing most often reached for once music
-       is already playing, and because a slider a thumb misses is worse
-       than no slider. */
-    .volume {
-      display: flex;
-      align-items: center;
-      gap: 0.7rem;
-      margin-top: 0.9rem;
-      padding-top: 0.9rem;
-      border-top: 1px solid var(--line);
-    }
-    .volume .icon { font-size: 1rem; color: var(--muted); flex: none; width: 1.2rem; text-align: center; }
-    .volume output {
-      font-variant-numeric: tabular-nums;
-      font-size: 0.82rem;
-      color: var(--muted);
-      min-width: 2.6rem;
-      text-align: right;
-      flex: none;
-    }
-    input[type="range"] {
-      flex: 1;
-      min-width: 0;
-      -webkit-appearance: none;
-      appearance: none;
-      background: transparent;
-      /* A fat invisible hit area around a thin visible track: the track is
-         4 px because that looks right, and 4 px is impossible to hit. */
-      height: 2.5rem;
-      margin: 0;
-      cursor: pointer;
-    }
-    input[type="range"]::-webkit-slider-runnable-track {
-      height: 0.3rem;
-      border-radius: 0.3rem;
-      background: linear-gradient(90deg, var(--accent) var(--fill, 0%), var(--line) var(--fill, 0%));
-    }
-    input[type="range"]::-moz-range-track {
-      height: 0.3rem;
-      border-radius: 0.3rem;
-      background: linear-gradient(90deg, var(--accent) var(--fill, 0%), var(--line) var(--fill, 0%));
-    }
-    input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 1.4rem;
-      height: 1.4rem;
-      margin-top: -0.55rem;
-      border-radius: 50%;
-      background: var(--card);
-      border: 2px solid var(--accent);
-      box-shadow: 0 1px 4px rgba(16, 24, 40, 0.25);
-    }
-    input[type="range"]::-moz-range-thumb {
-      width: 1.4rem;
-      height: 1.4rem;
-      border-radius: 50%;
-      background: var(--card);
-      border: 2px solid var(--accent);
-      box-shadow: 0 1px 4px rgba(16, 24, 40, 0.25);
-    }
-    input[type="range"]:disabled { opacity: 0.4; cursor: default; }
-
-    /* --- Now playing, pinned ---
-       At the bottom because on a phone that is where a thumb already is,
-       and because "make it stop" must never need scrolling to. */
-    #now {
-      position: fixed;
-      left: 50%;
-      transform: translateX(-50%);
-      bottom: 0;
-      width: min(32rem, 100%);
-      padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
-      background: color-mix(in srgb, var(--card) 92%, transparent);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-top: 1px solid var(--line);
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-    #now-open {
-      display: flex;
-      align-items: center;
-      gap: 0.7rem;
-      flex: 1;
-      min-width: 0;
-      background: none;
-      border: none;
-      font: inherit;
-      color: inherit;
-      text-align: left;
-      padding: 0;
-      cursor: pointer;
-    }
-    #now .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #now .sub { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #now .body { min-width: 0; }
-
-    /* Three bars that rise and fall. The one piece of motion on the page,
-       and it earns its place: from across a room it is what says the
-       system is playing rather than merely switched on. */
-    .bars { flex: none; display: flex; align-items: flex-end; gap: 2px; height: 1.1rem; width: 1.1rem; }
-    .bars i { flex: 1; background: var(--on); border-radius: 1px; animation: bounce 1.1s ease-in-out infinite; }
-    .bars i:nth-child(2) { animation-delay: 0.18s; }
-    .bars i:nth-child(3) { animation-delay: 0.36s; }
-    @keyframes bounce { 0%, 100% { height: 25%; } 50% { height: 100%; } }
-    @media (prefers-reduced-motion: reduce) {
-      .bars i { animation: none; height: 60%; }
-    }
-
-    #stop {
-      font: inherit;
-      font-size: 0.88rem;
-      font-weight: 600;
-      color: var(--off);
-      background: color-mix(in srgb, var(--off) 10%, transparent);
-      border: 1px solid color-mix(in srgb, var(--off) 30%, transparent);
-      border-radius: 0.7rem;
-      padding: 0.55rem 1rem;
-      flex: none;
-      cursor: pointer;
-    }
-    #stop:active { transform: scale(0.97); }
-
-    .note {
-      font-size: 0.8rem;
-      color: var(--muted);
-      background: var(--card-2);
-      border: 1px solid var(--line);
-      border-radius: 0.85rem;
-      padding: 0.7rem 0.9rem;
-      margin-top: 0.6rem;
-    }
-    .note strong { color: var(--ink); font-weight: 600; }
-
-    #message {
-      min-height: 1.3rem;
-      font-size: 0.83rem;
-      color: var(--muted);
-      margin: 0.9rem 0.25rem 0;
-      text-align: center;
-    }
-    #message.bad { color: var(--off); }
-
-    form.add { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.5rem; }
-    form.add input {
-      font: inherit;
-      font-size: 0.88rem;
-      flex: 1 1 8rem;
-      min-width: 0;
-      padding: 0.65rem 0.75rem;
-      border: 1px solid var(--line);
-      border-radius: 0.7rem;
-      background: var(--card);
-      color: inherit;
-    }
-    form.add input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-    form.add button {
-      font: inherit;
-      font-size: 0.88rem;
-      font-weight: 600;
-      padding: 0.65rem 1.1rem;
-      border: 1px solid var(--line);
-      border-radius: 0.7rem;
-      background: var(--card);
-      color: var(--accent);
-      cursor: pointer;
-    }
-
-    .station-row { display: flex; gap: 0.35rem; align-items: stretch; }
-    .station-row .tile { flex: 1; min-width: 0; }
-    .remove {
-      font: inherit;
-      font-size: 1.1rem;
-      line-height: 1;
-      background: none;
-      border: none;
-      color: var(--muted);
-      padding: 0 0.5rem;
-      cursor: pointer;
-      flex: none;
-      border-radius: 0.6rem;
-    }
-    .remove:hover { color: var(--off); background: color-mix(in srgb, var(--off) 8%, transparent); }
-
-    [hidden] { display: none !important; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenAudioLink</title>
+<link rel="stylesheet" href="oal.css">
 </head>
 <body>
+<!--
+  The portal.
+
+  One question: what do you want to listen to. Answering it opens the app
+  for that kind of source, and the app asks the second question — which
+  station, which turntable — and where it should come out.
+
+  This page deliberately does *not* let you start anything. A tile that
+  both opened an app and started playing would mean two different things
+  happened depending on where you tapped, and the one control on this
+  screen that must never be ambiguous is Stop.
+-->
+<div class="app">
   <header>
-    <h1 class="wordmark"><span class="mark">◉</span> OpenAudioLink</h1>
-    <a class="setup-link" href="/">Setup</a>
+    <div class="brand">OpenAudioLink</div>
+    <div class="status" id="health"><span class="dot">●</span> <span id="health-text">Connecting…</span></div>
   </header>
 
-  <!-- Step one: which room. Skipped entirely when the URL already said. -->
-  <section id="rooms-view">
-    <h2>Play in</h2>
-    <div class="grid" id="rooms"></div>
-    <p class="hint" id="rooms-hint" hidden></p>
-    <p class="note" id="rooms-empty" hidden>
-      No rooms yet. Open <a href="/">Setup</a> to name one and put a speaker
-      in it.
-    </p>
-  </section>
-
-  <!-- Step two: what to play there, and how loud. -->
-  <section id="sources-view" hidden>
-    <div class="room-card">
-      <button class="back" id="back">← All rooms</button>
-      <p class="room-name" id="room-name"></p>
-      <p class="room-speakers" id="room-speakers"></p>
-
-      <div class="volume">
-        <span class="icon" id="volume-icon">🔈</span>
-        <input id="volume" type="range" min="0" max="100" step="1" value="100"
-               aria-label="Volume">
-        <output id="volume-value">—</output>
-      </div>
+  <section class="card banner" id="banner" hidden>
+    <div class="what-plays">
+      <div class="section-label">Playing now</div>
+      <div class="lead" id="playing-lead"></div>
+      <div class="sub" id="playing-sub"></div>
     </div>
-
-    <h2>Radio</h2>
-    <div class="grid" id="stations"></div>
-    <form class="add" id="add-station">
-      <input id="station-name" type="text" placeholder="Name" autocomplete="off">
-      <input id="station-url" type="url" placeholder="https://… .pls, .m3u or a stream"
-             autocomplete="off" required>
-      <button type="submit">Add</button>
-    </form>
-
-    <h2>In this house</h2>
-    <div class="grid" id="providers"></div>
-    <p class="note" id="providers-empty" hidden>
-      Nothing else can produce audio right now. A node with the producer
-      role and a line input appears here when it comes online.
-    </p>
-
-    <p class="note">
-      <strong>Spotify is not on this page.</strong> Every room is offered to
-      Spotify under its own name, so it is chosen from the phone that is
-      playing — which also picks what plays. Starting something here takes
-      the room back from it.
-    </p>
-
-    <p id="message"></p>
+    <div class="volume-row" style="flex:1;min-width:220px">
+      <span>🔈</span>
+      <input id="volume" type="range" min="0" max="100" value="50">
+      <span>🔊</span>
+      <div class="vol-number" id="vol-text">50%</div>
+    </div>
+    <button class="stop" id="stop">■ Stop</button>
   </section>
 
-  <div id="now" hidden>
-    <button id="now-open">
-      <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="body">
-        <span class="title" id="now-what"></span><br>
-        <span class="sub" id="now-where"></span>
-      </span>
-    </button>
-    <button id="stop">Stop</button>
+  <section class="card">
+    <h2 style="margin:0 0 4px;font-size:20px">What would you like to hear?</h2>
+    <div class="footer-note" style="margin:0 0 18px" id="destination-note"></div>
+    <div class="apps" id="apps"></div>
+  </section>
+
+  <div class="footer-note">
+    <a href="index.html" style="color:var(--muted)">Setup and diagnostics</a>
+    — devices, roles, firmware. Not needed to play anything.
   </div>
+</div>
 
-  <script>
-    'use strict';
+<script src="oal.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
 
-    const $ = id => document.getElementById(id);
-    const esc = s => String(s ?? '').replace(/[&<>"']/g,
-      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  /*
+   * The apps, in the order somebody is likely to want them. Each one
+   * declares how to tell whether it has anything to offer, so a tile can
+   * say "no stations yet" instead of opening onto an empty page.
+   */
+  const APPS = [
+    {
+      id: 'radio', href: 'radio.html', glyph: '📻', name: 'Internet Radio',
+      what: 'Stations from anywhere, played by the Hub.',
+      ready: state => state.hub
+        ? (state.stations.length ? null : 'No stations saved yet — add one inside')
+        : 'The Hub is not in the device list',
+      isLive: state => state.playing && state.stream?.source === 'radio',
+    },
+    {
+      id: 'vinyl', href: 'vinyl.html', glyph: '💿', name: 'Vinyl',
+      what: 'Whatever is plugged into a node’s input.',
+      ready: state => state.lineIn.length ? null : 'No node with an input is online',
+      isLive: state => state.playing && state.playing.source === 'capture',
+    },
+    {
+      id: 'spotify', href: 'spotify.html', glyph: '🟢', name: 'Spotify',
+      what: 'Choose the room in the Spotify app on your phone.',
+      ready: state => state.castPoints.some(p => p.receiver?.offered)
+        ? null : 'No room is being offered to Spotify',
+      isLive: state => state.castPoints.some(p => p.receiver?.playing),
+    },
+  ];
 
-    // --- State -----------------------------------------------------------
-    // Four fetches, kept whole rather than merged: each mirrors one endpoint,
-    // so a change to any of them is a change in one place.
-    let castPoints = [];
-    let devices = [];
-    let stations = [];
-    let hub = null;          // The Hub's own device entry, which is a producer.
-    let room = null;         // The chosen cast point id, or null for the list.
-    let busy = false;        // A play or stop is in flight.
-    let wantsRoomList = false;  // Set by Back, so auto-entry does not undo it.
+  let state = null;
+  let room = null;   // The cast point an NFC sticker asked for, if any.
 
-    // From /api/stream, which is the only place that knows a station's name
-    // rather than merely that something is streaming.
-    let nowDescription = null;
+  const sendVolume = OAL.volumeSender(
+    () => state?.playing?.id ?? null,
+    message => setHealth(message, true));
 
-    function say(text, bad) {
-      const el = $('message');
-      el.textContent = text || '';
-      el.classList.toggle('bad', !!bad);
+  function setHealth(text, bad) {
+    $('health-text').textContent = text;
+    $('health').classList.toggle('bad', !!bad);
+  }
+
+  function renderApps() {
+    $('apps').innerHTML = APPS.map(app => {
+      const blocked = app.ready(state);
+      const live = app.isLive(state);
+      // The room travels with the link, so an app opened from a sticker
+      // already knows where the sound should come out.
+      const href = room ? `${app.href}#room=${encodeURIComponent(room.id)}` : app.href;
+      return `<a class="card app-tile${live ? ' live' : ''}${blocked ? ' off' : ''}" href="${href}">`
+        + `<div class="glyph">${app.glyph}</div>`
+        + `<div class="name">${OAL.esc(app.name)}</div>`
+        + `<div class="what">${blocked ? OAL.esc(blocked) : OAL.esc(app.what)}</div>`
+        + (live ? '<div class="what" style="color:var(--accent)">Playing now</div>' : '')
+        + `</a>`;
+    }).join('');
+  }
+
+  function renderBanner() {
+    const playing = state.playing;
+    $('banner').hidden = !playing;
+    if (!playing) return;
+
+    // What is playing, in the words of whatever is producing it. The Hub's
+    // stream describes itself ("Internet radio: Groove Salad"); a node
+    // producer does not, so the source name is the honest fallback.
+    const description = state.stream?.running
+      ? state.stream.description
+      : playing.source === 'capture' ? 'Line in' : (playing.source ?? 'Playing');
+    $('playing-lead').textContent = description;
+    $('playing-sub').textContent = `in ${playing.name}`;
+
+    if (document.activeElement !== $('volume') && typeof playing.volume === 'number') {
+      $('volume').value = playing.volume;
+      $('vol-text').textContent = `${playing.volume}%`;
     }
+  }
 
-    async function api(method, path, body) {
-      const response = await fetch(path, {
-        method,
-        cache: 'no-store',
-        headers: body ? { 'Content-Type': 'application/json' } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      // Every endpoint answers a failure with {error}, so the message the
-      // Hub wrote is the message the person reads. Inventing one here would
-      // throw away the only part that says what to do about it.
-      let payload = null;
-      try { payload = await response.json(); } catch { /* 204, or not JSON */ }
-      if (!response.ok) {
-        throw new Error(payload?.error || `${response.status} ${response.statusText}`);
-      }
-      return payload;
-    }
-
-    // --- The room in the URL ---------------------------------------------
-    // #room=kitchen. Matched against the id first and then against the name,
-    // because whoever writes an NFC sticker is looking at the name on the
-    // setup page, not at the slug underneath it.
-
-    function slug(text) {
-      return String(text ?? '')
-        // NFD splits "ö" into "o" and a combining mark, which folds accented
-        // room names the same way the Hub's own slug does — "Kök" and "kok"
-        // must reach the same room, because one of them was written on a
-        // sticker by hand.
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    }
-
-    function roomFromUrl() {
-      const wanted = new URLSearchParams(location.hash.slice(1)).get('room');
-      if (!wanted) return null;
-      const key = slug(wanted);
-      const match = castPoints.find(p => p.id === wanted)
-        ?? castPoints.find(p => p.id === key || slug(p.name) === key);
-      return match?.id ?? null;
-    }
-
-    function currentRoom() {
-      return castPoints.find(p => p.id === room) ?? null;
-    }
-
-    function enterRoom(id) {
-      room = id;
-      // Written into the URL so the page a tag opened and the page a person
-      // navigated to are the same page, and so a back gesture and the back
-      // button agree with each other.
-      history.replaceState(null, '', `#room=${encodeURIComponent(id)}`);
-      say('');
-      render();
-    }
-
-    // --- Volume -----------------------------------------------------------
-    // The only control here that is dragged rather than tapped, which makes
-    // it the only one with a timing problem: the poll must not yank the
-    // slider out from under a thumb, and every pixel of travel must not be
-    // an HTTP request fanned out to every speaker in the room.
-
-    const VOLUME_INTERVAL_MS = 250;
-
-    let dragging = false;
-    let pendingVolume = null;   // Set during a drag, sent on the next tick.
-    let volumeTimer = null;
-    let volumeShownAt = 0;      // When the local value last changed.
-
-    function paintVolume(percent) {
-      const slider = $('volume');
-      const known = Number.isFinite(percent);
-      slider.disabled = !known;
-      if (known) {
-        slider.value = percent;
-      }
-      slider.style.setProperty('--fill', `${known ? percent : 0}%`);
-      $('volume-value').textContent = known ? `${percent}%` : '—';
-      $('volume-icon').textContent =
-        !known ? '🔈' : percent === 0 ? '🔇' : percent < 45 ? '🔈' : percent < 80 ? '🔉' : '🔊';
-    }
-
-    function sendVolume() {
-      volumeTimer = null;
-      if (pendingVolume === null || room === null) return;
-      const percent = pendingVolume;
-      pendingVolume = null;
-
-      api('POST', `/api/castpoints/${encodeURIComponent(room)}/volume`, { percent })
-        .then(result => {
-          const missed = result?.unreachable ?? [];
-          say(missed.length
-            ? `${percent}% — ${missed.join(', ')} did not answer`
-            : '', missed.length > 0);
-        })
-        .catch(error => say(error.message, true));
-    }
-
-    // Throttled rather than debounced, and on purpose: sending only at the
-    // end of a drag means dragging in silence and discovering the result
-    // afterwards. Sending every 250 ms means the room follows the thumb,
-    // which is how a volume knob behaves and is most of why this feels
-    // like a control rather than a form.
-    function queueVolume(percent) {
-      pendingVolume = percent;
-      if (volumeTimer === null) {
-        volumeTimer = setTimeout(sendVolume, VOLUME_INTERVAL_MS);
-      }
-    }
-
-    $('volume').addEventListener('input', event => {
-      const percent = Number(event.target.value);
-      volumeShownAt = Date.now();
-      paintVolume(percent);
-      queueVolume(percent);
-    });
-
-    // The drag flag covers mouse, touch and keyboard alike; without it the
-    // four-second poll would snap the thumb back to whatever the speakers
-    // last reported, mid-gesture.
-    for (const start of ['pointerdown', 'keydown']) {
-      $('volume').addEventListener(start, () => { dragging = true; });
-    }
-    for (const end of ['pointerup', 'pointercancel', 'keyup', 'blur']) {
-      $('volume').addEventListener(end, () => {
-        dragging = false;
-        // Flush immediately rather than waiting out the throttle: letting
-        // go is the moment the person expects to be obeyed.
-        if (pendingVolume !== null) {
-          clearTimeout(volumeTimer);
-          sendVolume();
-        }
-      });
-    }
-
-    // --- Rendering --------------------------------------------------------
-
-    // `title` is escaped here; `sub` is inserted as HTML, because half the
-    // callers put a status dot in it. Callers passing anything a person
-    // typed — a station name, a URL — escape it themselves.
-    function tile({ glyph, kind, title, sub, on, attrs }) {
-      return `<button class="tile${on ? ' on' : ''}" ${attrs ?? ''}>`
-        + `<span class="glyph ${kind ?? ''}">${glyph}</span>`
-        + `<span class="body"><span class="title">${esc(title)}</span>`
-        + (sub ? `<br><span class="sub">${sub}</span>` : '')
-        + `</span></button>`;
-    }
-
-    function renderRooms() {
-      $('rooms-empty').hidden = castPoints.length > 0;
-      $('rooms').innerHTML = castPoints.map(point => {
-        const members = point.members ?? [];
-        const live = members.filter(m => m.online).length;
-        // A room whose speaker is unplugged says so rather than looking
-        // ready, which is the one thing the setup page got right that a
-        // switchboard must not lose.
-        let sub;
-        if (members.length === 0) {
-          sub = '<span class="dot"></span>no speakers yet';
-        } else if (point.playing) {
-          sub = `<span class="dot online"></span>playing`
-            + (point.volume === null || point.volume === undefined ? '' : ` · ${point.volume}%`);
-        } else {
-          sub = `<span class="dot${live ? ' online' : ''}"></span>`
-            + `${live} of ${members.length} speaker${members.length === 1 ? '' : 's'} online`;
-        }
-        return tile({
-          glyph: '⌂', kind: 'room', title: point.name, sub,
-          on: point.playing,
-          attrs: `data-room="${esc(point.id)}"`,
-        });
-      }).join('');
-
-      /*
-       * What there is to play, said on the screen that has none of it.
-       *
-       * The sources live inside a room, which is right — you cannot play
-       * something nowhere — but it left this page listing rooms and giving
-       * no evidence the system could do anything at all. Somebody looking
-       * for internet radio found a list of room names and concluded it had
-       * not been built.
-       */
-      const lineIns = devices.filter(d =>
-        d.online && (d.roles ?? []).includes('producer') && d.id !== hub?.id).length;
-      const parts = [];
-      if (stations.length) parts.push(`${stations.length} radio station${stations.length === 1 ? '' : 's'}`);
-      if (lineIns) parts.push(`${lineIns} line in`);
-      if (hub) parts.push('a test tone');
-
-      const hint = $('rooms-hint');
-      hint.hidden = castPoints.length === 0 || parts.length === 0;
-      hint.textContent = parts.length
-        ? `${parts.join(', ')} — pick a room to play them.`
+  async function refresh() {
+    try {
+      state = await OAL.load();
+      room = OAL.roomFromUrl(state.castPoints) ?? room;
+      setHealth('Hub connected');
+      $('destination-note').textContent = room
+        ? `This tag chose ${room.name}. The app you pick will play there.`
         : '';
+      renderBanner();
+      renderApps();
+    } catch (error) {
+      setHealth(error.message, true);
     }
+  }
 
-    function renderStations() {
-      $('stations').innerHTML = stations.map(station => {
-        // The remove button sits outside the tile rather than inside it: a
-        // button in a button is not a thing, and a stray tap that deletes a
-        // station instead of playing it is exactly the accident to avoid.
-        return `<div class="station-row">`
-          + tile({
-              glyph: '📻', kind: 'radio', title: station.name,
-              sub: esc(station.url),
-              on: isPlayingHere(station.name) || isPlayingHere(station.url),
-              attrs: `data-station="${esc(station.id)}"`,
-            })
-          + `<button class="remove" data-forget="${esc(station.id)}" `
-          + `title="Forget ${esc(station.name)}" aria-label="Forget ${esc(station.name)}">×</button>`
-          + `</div>`;
-      }).join('');
-    }
+  $('volume').addEventListener('input', event => {
+    const percent = Number(event.target.value);
+    $('vol-text').textContent = `${percent}%`;
+    sendVolume(percent);
+  });
 
-    // Whether the running stream is this thing. The description is the only
-    // handle there is, so this is a match rather than an identity — good
-    // enough to light up a tile, and never used to decide anything.
-    function isPlayingHere(text) {
-      return !!(nowDescription && text && nowDescription.includes(text));
-    }
-
-    /*
-     * What a line-in tile says underneath its name, and the most useful
-     * sentence on this page.
-     *
-     * "Whatever is plugged into that node" was the old text and it was
-     * useless: a turntable that is playing and one whose cable is on the
-     * floor produced exactly the same tile. The node measures its input
-     * continuously, whether or not anything is streaming, so this can say
-     * which before a single packet is sent.
-     */
-    function inputSub(node) {
-      const input = node.status?.input;
-      if (!input) return 'Whatever is plugged into that node';
-      if (input.leftDb <= -120 && input.rightDb <= -120) {
-        return '<span class="dot"></span>silent — nothing on the input';
-      }
-      // One channel dead is the ordinary turntable fault, so it gets said
-      // rather than averaged away into "quiet".
-      if (input.leftDb <= -120 || input.rightDb <= -120) {
-        return `<span class="dot"></span>only the `
-          + `${input.leftDb > -120 ? 'left' : 'right'} channel — check the other cable`;
-      }
-      const worst = Math.max(input.leftDb, input.rightDb);
-      return `<span class="dot online"></span>signal `
-        + `${esc(input.leftDb)} / ${esc(input.rightDb)} dB`
-        + (worst > -3 ? ' — close to clipping' : '');
-    }
-
-    function renderProviders() {
-      // Every online producer that is not this Hub: a node with a line input
-      // (a turntable, a CD player) sending its ADC straight out as RTP.
-      const nodes = devices.filter(d =>
-        d.online && (d.roles ?? []).includes('producer') && d.id !== hub?.id);
-
-      const parts = nodes.map(node => tile({
-        glyph: '🎚', kind: 'line',
-        title: `Line in on ${node.name}`,
-        sub: inputSub(node),
-        on: isPlayingHere(node.name),
-        attrs: `data-node="${esc(node.id)}"`,
-      }));
-
-      // The Hub's own two, kept last because they are the least often
-      // wanted. System audio only on the machine that has any.
-      if (hub) {
-        if (hub.hardwareProfile === 'windows-hub') {
-          parts.push(tile({
-            glyph: '🖥', kind: 'hub',
-            title: `Whatever ${hub.name} is playing`,
-            sub: 'This computer’s own sound, captured and sent',
-            attrs: 'data-hub="system-audio"',
-          }));
-        }
-        parts.push(tile({
-          glyph: '♪', kind: 'hub',
-          title: 'Test tone',
-          sub: '1 kHz, for checking a speaker actually works',
-          attrs: 'data-hub="tone"',
-        }));
-      }
-
-      $('providers').innerHTML = parts.join('');
-      $('providers-empty').hidden = parts.length > 0;
-    }
-
-    function renderNowPlaying() {
-      const playing = castPoints.find(p => p.playing);
-      const bar = $('now');
-      if (!playing) {
-        bar.hidden = true;
-        return;
-      }
-      bar.hidden = false;
-      // What is playing comes from the Hub's own view of the stream when it
-      // has one, and from the receiver when Spotify is driving.
-      $('now-what').textContent = playing.receiver?.playing
-        ? 'Spotify'
-        : (nowDescription ?? 'Playing');
-      $('now-where').textContent = `in ${playing.name}`;
-      /*
-       * Deliberately not data-room. The Stop button sits inside this bar,
-       * and a data-room attribute here made the room-picker branch of the
-       * click handler match first — so Stop navigated into the room and
-       * never stopped anything. The bar and a room tile are different
-       * things and must not answer to the same selector.
-       */
-      bar.dataset.playingRoom = playing.id;
-    }
-
-    function render() {
-      const inRoom = currentRoom();
-      $('rooms-view').hidden = !!inRoom;
-      $('sources-view').hidden = !inRoom;
-
-      if (inRoom) {
-        $('room-name').textContent = inRoom.name;
-        const members = inRoom.members ?? [];
-        $('room-speakers').innerHTML = members.length === 0
-          ? 'No speakers in this room yet.'
-          : members.map(m =>
-              `<span class="dot${m.online ? ' online' : ''}"></span>${esc(m.name)}`).join(' &nbsp; ');
-
-        /*
-         * The slider follows the speakers except while it is being used,
-         * and for a moment afterwards. That grace matters: a node reports
-         * its level on the Hub's own poll cycle, so for a second or two
-         * after a change the freshest reading is still the old one, and
-         * without the grace the thumb springs back and then forward again.
-         */
-        if (!dragging && Date.now() - volumeShownAt > 2500) {
-          paintVolume(inRoom.volume ?? NaN);
-        }
-
-        renderStations();
-        renderProviders();
-      } else {
-        renderRooms();
-      }
-      renderNowPlaying();
-    }
-
-    // --- Loading ----------------------------------------------------------
-
-    async function refresh() {
-      // Anything that fails leaves its list as it was: a switchboard that
-      // empties itself because one poll timed out is worse than a stale one.
-      const [points, deviceList, stationList, stream] = await Promise.all([
-        api('GET', '/api/castpoints').catch(() => null),
-        api('GET', '/api/devices').catch(() => null),
-        api('GET', '/api/stations').catch(() => null),
-        api('GET', '/api/stream').catch(() => null),
-      ]);
-
-      if (points) castPoints = points;
-      if (deviceList) {
-        devices = deviceList;
-        hub = devices.find(d => d.hardwareProfile === 'windows-hub') ?? null;
-      }
-      if (stationList) stations = stationList;
-      nowDescription = stream?.running ? (stream.description ?? stream.source) : null;
-
-      if (room === null) {
-        room = roomFromUrl();
-      }
-
-      // A house with one room has nothing to choose, and making somebody
-      // tap through a list of one to reach the sources is the step that
-      // hid radio. Only until they press Back, which is them saying they
-      // wanted the list.
-      if (room === null && !wantsRoomList && castPoints.length === 1) {
-        room = castPoints[0].id;
-      }
-
-      render();
-    }
-
-    // --- Acting -----------------------------------------------------------
-
-    async function play(body, what) {
-      if (busy) return;
-      busy = true;
-      say(`Starting ${what}…`);
-      try {
-        await api('POST', `/api/castpoints/${encodeURIComponent(room)}/play`, body);
-        say(`${what} is playing.`);
-      } catch (error) {
-        say(error.message, true);
-      } finally {
-        busy = false;
-        await refresh();
-      }
-    }
-
-    document.addEventListener('click', async event => {
-      const hit = selector => event.target.closest(`[${selector}]`);
-
-      /*
-       * Stop first, before anything that matches broadly. It is the one
-       * control on this page that must work, and it sits inside the
-       * now-playing bar — so any attribute that bar grows is a chance for
-       * an earlier branch to swallow the click. That is not hypothetical:
-       * it is exactly what happened when the bar carried data-room.
-       */
-      if (event.target.closest('#stop')) {
-        const target = $('now').dataset.playingRoom;
-        if (!target || busy) return;
-        busy = true;
-        try {
-          await api('POST', `/api/castpoints/${encodeURIComponent(target)}/stop`);
-          say('Stopped.');
-        } catch (error) {
-          say(error.message, true);
-        } finally {
-          busy = false;
-          await refresh();
-        }
-        return;
-      }
-
-      const pick = hit('data-room');
-      if (pick) {
-        wantsRoomList = false;
-        enterRoom(pick.dataset.room);
-        return;
-      }
-
-      // The now-playing bar is a way back to the room that is playing, so
-      // "turn that down" is a tap and a drag rather than a hunt.
-      if (event.target.closest('#now-open')) {
-        enterRoom($('now').dataset.playingRoom);
-        return;
-      }
-
-      if (event.target.closest('#back')) {
-        wantsRoomList = true;
-        room = null;
-        history.replaceState(null, '', location.pathname);
-        say('');
-        render();
-        return;
-      }
-
-      const forget = hit('data-forget');
-      if (forget) {
-        const station = stations.find(s => s.id === forget.dataset.forget);
-        if (!station || !confirm(`Forget ${station.name}?`)) return;
-        try {
-          await api('DELETE', `/api/stations/${encodeURIComponent(station.id)}`);
-        } catch (error) {
-          say(error.message, true);
-        }
-        await refresh();
-        return;
-      }
-
-      /*
-       * `&& hub` used to be part of the condition, which meant a page that
-       * could not find the Hub did nothing at all when a station was
-       * pressed — no sound, no message, no way to tell a broken station
-       * from a broken page. That is the third time a silent guard has
-       * turned a bug into "nothing happens", after Stop and the source
-       * list. A branch that cannot do its job says so.
-       */
-      const station = hit('data-station');
-      if (station) {
-        if (!hub) {
-          say('No Hub in the device list, and the Hub is what plays radio.', true);
-          return;
-        }
-        const chosen = stations.find(s => s.id === station.dataset.station);
-        await play(
-          { producer: hub.id, source: 'radio', stationId: chosen.id }, chosen.name);
-        return;
-      }
-
-      const node = hit('data-node');
-      if (node) {
-        const chosen = devices.find(d => d.id === node.dataset.node);
-        // "capture" is the node's ADC — protocol/CONTROL-API.md. A node
-        // without one sends silence rather than refusing, which is why the
-        // tile says what is plugged in rather than promising sound.
-        await play({ producer: chosen.id, source: 'capture' }, `Line in on ${chosen.name}`);
-        return;
-      }
-
-      const own = hit('data-hub');
-      if (own) {
-        if (!hub) {
-          say('No Hub in the device list.', true);
-          return;
-        }
-        const source = own.dataset.hub;
-        await play(
-          { producer: hub.id, source },
-          source === 'tone' ? 'Test tone' : `${hub.name}’s audio`);
-        return;
-      }
-
-    });
-
-    $('add-station').addEventListener('submit', async event => {
-      event.preventDefault();
-      const name = $('station-name').value.trim();
-      const url = $('station-url').value.trim();
-      try {
-        await api('POST', '/api/stations', { name: name || null, url });
-        $('station-name').value = '';
-        $('station-url').value = '';
-        say('Station saved.');
-      } catch (error) {
-        say(error.message, true);
-      }
+  $('stop').addEventListener('click', async () => {
+    const target = state?.playing?.id;
+    if (!target) return;
+    $('stop').disabled = true;
+    try {
+      await OAL.api('POST', `/api/castpoints/${encodeURIComponent(target)}/stop`);
+    } catch (error) {
+      setHealth(error.message, true);
+    } finally {
+      $('stop').disabled = false;
       await refresh();
-    });
+    }
+  });
 
-    // A tag scanned while the page is already open changes the room rather
-    // than doing nothing, which is what a person waving a phone at a sticker
-    // expects to happen.
-    addEventListener('hashchange', () => {
-      room = roomFromUrl();
-      render();
-    });
-
-    refresh();
-    // Slower than the setup page's two seconds. Nothing here is diagnostics,
-    // and a switchboard that repaints under a thumb is a switchboard that
-    // gets mistapped.
-    setInterval(() => { if (!busy && !dragging) refresh(); }, 4000);
-  </script>
+  addEventListener('hashchange', refresh);
+  refresh();
+  setInterval(refresh, 4000);
+</script>
 </body>
 </html>

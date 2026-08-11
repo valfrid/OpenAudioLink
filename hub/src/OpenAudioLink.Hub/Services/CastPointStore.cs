@@ -238,14 +238,25 @@ public sealed class CastPointStore
                 return playing;
             }
 
-            var wanted = _points.FirstOrDefault(p => p.Id == id);
-            var current = _points.FirstOrDefault(p => p.Id == playing.CastPointId);
-            if (wanted is null || current is null)
-            {
-                return playing;
-            }
-
-            return wanted.Destinations.Intersect(current.Destinations).Any() ? playing : null;
+            /*
+             * Every playing pair, not only an overlapping one.
+             *
+             * This used to return null when the two cast points shared no
+             * speaker, on the reasoning that they could both play. They
+             * cannot — not because of the audio, but because _playing is a
+             * single field. Starting a second, non-overlapping cast point
+             * left the first one streaming and overwrote the only record
+             * that it existed: nothing showed it, and Stop could not reach
+             * it. The only way to silence it was to reboot the node.
+             *
+             * One pair at a time is also the model the control surface is
+             * built around (docs/CONTROL-SURFACE.md): pick a source, pick a
+             * cast point, and that is what the house is playing. Genuine
+             * simultaneous streams are a real feature and a bigger change —
+             * _playing becomes a collection, and every reader of it learns
+             * to ask "which one". Until then this refuses to pretend.
+             */
+            return playing;
         }
     }
 

@@ -1,4 +1,132 @@
-# Inputs
+# Source apps and the switch panel
+
+Your notes are kept below under "Inputs — the note this answers", in your
+words. This section is the reply, and the design that got built from it.
+
+## The shape
+
+One portal, three source apps, one setup page.
+
+```
+    play.html          the portal: what do you want to hear, and what is playing
+      ├── radio.html   pick a station   + pick a cast point → play
+      ├── vinyl.html   pick an input    + pick a cast point → play
+      └── spotify.html (the phone picks both) + stop
+    index.html         setup: devices, roles, firmware, status
+```
+
+Every app is the same sentence: **pick a thing, pick a cast point, press
+play.** That is the symmetry you asked for, and it is worth being strict
+about — if the second app needs a second mental model, splitting them up
+has bought nothing.
+
+## Where I agree, and why it was cheap
+
+The API already had this shape. `POST /api/castpoints/{id}/play` has always
+taken `{producer, source, …}`, which *is* "what to play and where". What was
+asymmetric was only the GUI: radio was a tile inside a room, vinyl was a
+tile called "in this house", and Spotify happened somewhere else entirely.
+So this change is mostly a view reorganisation over an API that was already
+right. That is usually a sign the underlying model is sound.
+
+Cast points as the single destination abstraction is likewise already true,
+and it is the thing that makes one-to-many work without a special case:
+a cast point with four speakers and a cast point with one differ in a list
+length, nowhere else.
+
+## Where Spotify genuinely differs, and why that is fine
+
+Spotify is not a special case of the switch panel — it is the same shape
+with one choice relocated. librespot advertises one Spotify Connect
+receiver per cast point, so the **phone** picks the destination. Forcing a
+"choose the room here" step onto it would fight the app people already use,
+and lose.
+
+So `spotify.html` is a window rather than a control: which rooms are
+offered, which one is playing, and the same Stop as everywhere else. The
+symmetry holds where it matters (a thing, a place, one action) and bends
+where the outside world requires it.
+
+The general rule worth keeping: **an app view owns the choice of *what*; the
+cast point owns the choice of *where*; whoever can pick the destination
+picks it exactly once.**
+
+## Volume — you were right, and it costs nothing
+
+You wondered whether volume belongs in the apps or the switch panel. It is
+already resolved by where it is *applied*: the consumer scales the samples
+(`oal_playout.c`), and `POST /api/castpoints/{id}/volume` fans out to every
+speaker in the room. So volume is not state either view owns — both are
+views onto the same node. Showing it in both places duplicates no truth, so
+put it wherever a hand is: in the app while choosing, and in the portal
+while listening.
+
+## One active pair at a time — agreed, and it was quietly broken
+
+You wrote "one active pair at a time". The Hub already behaved that way, but
+by accident rather than design, and the accident had a bug in it.
+
+`CastPointStore` keeps a **single** `_playing` field. `ConflictWith` only
+reported a clash when the two cast points *shared a speaker*. So starting a
+disjoint second pair — a record in the dining room while radio played in the
+kitchen — left the first one streaming and overwrote the only record that it
+existed. Nothing displayed it. Stop could not reach it. The only way to
+silence it was to reboot the node.
+
+That is fixed: any playing pair is now reported and stopped, so the model
+you described is the model the code implements.
+
+**The one place I would push back**, for later rather than now: a house
+where the kitchen radio stops because somebody put a record on in the
+dining room is a worse multi-room system than one where it does not. With
+two nodes it costs nothing. With six it will be the first complaint. The
+change when it comes is bounded and known — `_playing` becomes a
+collection, and every reader learns to ask *which one* — and nothing in
+this design forecloses it. I would not build it until there are enough
+rooms to want it.
+
+## The three-audience split
+
+Your instinct — user needs the app view, more detail in the switch panel,
+troubleshooting in the OAL panel — is right, and it should be enforced by
+*address*, not by layout, so a person can be handed a URL rather than
+instructions:
+
+| Who | Where | What |
+| --- | --- | --- |
+| Anybody in the house | `radio.html`, `vinyl.html`, `spotify.html` | Play something |
+| Anybody | `play.html` | What is playing, volume, stop |
+| Whoever set it up | `index.html` | Devices, roles, channel, firmware, status |
+
+Test-signal generation is diagnostics, not setup, and you are right that it
+does not belong with the daily controls. It is still on the setup page for
+now; splitting it out is a small job with no dependency on this work.
+
+## Hub-less operation is a constraint, not a later feature
+
+The idea that the control role could live on a node — the vinyl producer, or
+a node presenting a USB virtual soundcard — is the most consequential note
+you wrote, because it constrains everything above **today**.
+
+If a control surface must one day be served by an ESP32, then these pages
+must stay small, static, and speak only the documented HTTP API. No build
+step, no framework, no bundler. That is why `oal.css` and `oal.js` are plain
+files a node could serve unchanged, and it is worth protecting: adding a
+framework later is easy, removing one is not.
+
+Two honest limits on that plan:
+
+- **Radio cannot move to a node.** MP3 decode plus resampling on an S3 that
+  is already capturing at 48 kHz is not realistic, and the node that just
+  overflowed a 4 kB HTTP stack is not the place to try. Hub-less means
+  vinyl, tone and Spotify-less — a fallback, not a peer.
+- **The standalone AP is a genuinely good backup** and mostly already
+  exists: the provisioning portal in `oal_wifi.c` is an AP with an HTTP
+  server on it. Turning that into a fallback control surface is a real
+  feature and a small one, and it is the answer to "the router is down and
+  I still want the record player to work".
+
+## Inputs — the note this answers
 
 The swithpanel shoul select type of a provider with a cast-point.
 One active pair at a time, when selecting new pair provider <=> cast-point.
@@ -36,7 +164,6 @@ generate test signals
 If no server, the swith control skould be on one availabe provider, likr the vinyle provider or the node provide a usb virtual sound card connected to a pc.
 
 This control role could also host a stand alone wifi ap (as kind of back up) for this small node system
-
 
 # A control surface for the house
 

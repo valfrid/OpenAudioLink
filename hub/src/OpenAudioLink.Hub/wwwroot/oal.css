@@ -1,0 +1,228 @@
+/*
+ * The look shared by every source app.
+ *
+ * One stylesheet rather than one per page, because the whole point of the
+ * restructure is that the apps are the *same shape*: pick a thing, pick a
+ * cast point, press play. If Radio and Vinyl drift apart visually, they
+ * stop reading as two doors into one system and start reading as two
+ * programs that happen to be installed.
+ *
+ * Kept to plain CSS with no build step for a reason that is not laziness:
+ * the control role is meant to be hostable on a node one day, and an
+ * ESP32 can serve a file it does not have to compile.
+ */
+:root {
+  --bg: #111317;
+  --panel: #1b1f25;
+  --panel2: #242a32;
+  --text: #f4f6f8;
+  --muted: #9ea8b3;
+  --accent: #62d1a6;
+  --border: #343b45;
+  --danger: #ff6b6b;
+  --warn: #f0b866;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, #0e1013 0%, #151920 100%);
+  background-attachment: fixed;
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app { max-width: 1180px; margin: 0 auto; padding: 22px; }
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.brand { font-weight: 800; letter-spacing: .2px; font-size: 22px; }
+.brand a { color: inherit; text-decoration: none; }
+
+.status { font-size: 13px; color: var(--muted); }
+.status .dot { color: var(--accent); }
+.status.bad .dot { color: var(--danger); }
+
+.layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 20px; }
+
+.card {
+  background: rgba(27, 31, 37, .96);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .25);
+}
+
+.now { min-height: 520px; display: flex; flex-direction: column; justify-content: space-between; }
+
+.station-hero { display: flex; gap: 20px; align-items: center; }
+
+.logo {
+  width: 118px; height: 118px;
+  border-radius: 22px;
+  display: grid; place-items: center;
+  font-weight: 900; font-size: 28px;
+  background: #313844;
+  border: 1px solid #46505d;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.station-name { font-size: 30px; font-weight: 800; margin-bottom: 6px; }
+.meta { color: var(--muted); font-size: 14px; }
+
+.track {
+  margin-top: 28px;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.artist { font-size: 17px; color: var(--muted); margin-bottom: 4px; }
+.title { font-size: 25px; font-weight: 700; }
+
+.controls { margin-top: 24px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+button, select, input { font: inherit; }
+
+button {
+  border-radius: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+button:hover:not(:disabled) { filter: brightness(1.08); }
+button:disabled { opacity: .45; cursor: default; }
+
+.play {
+  min-width: 130px;
+  background: var(--accent);
+  color: #07120e;
+  border-color: transparent;
+  font-weight: 800;
+}
+
+.stop { background: var(--danger); color: #240707; border-color: transparent; font-weight: 800; }
+
+.section-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  margin-bottom: 8px;
+}
+
+.destination, .volume-box { margin-top: 22px; }
+
+select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  outline: none;
+}
+
+.volume-row { display: flex; gap: 12px; align-items: center; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.vol-number { width: 48px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.picker h2 { margin: 0 0 15px; font-size: 20px; }
+.picker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+.choice {
+  text-align: left;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+}
+
+.choice.active { outline: 2px solid var(--accent); background: #26352f; }
+
+.mini-logo {
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  display: grid; place-items: center;
+  font-weight: 800;
+  background: #323945;
+  flex: 0 0 auto;
+  font-size: 15px;
+}
+
+.choice-title { font-weight: 700; }
+.choice-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+.footer-note { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.footer-note.bad { color: var(--danger); }
+
+/* The add-a-station form, and anything else shaped like it. */
+.add { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.add input {
+  flex: 1; min-width: 140px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/*
+ * The portal's app tiles. Bigger than a choice, because choosing what
+ * kind of thing to listen to is a bigger decision than choosing which
+ * station — and because this is the screen somebody hits after waving a
+ * phone at a sticker.
+ */
+.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px;
+  min-height: 170px;
+  text-decoration: none;
+  color: inherit;
+  justify-content: center;
+}
+
+.app-tile .glyph { font-size: 38px; line-height: 1; }
+.app-tile .name { font-size: 20px; font-weight: 800; }
+.app-tile .what { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.app-tile.live { outline: 2px solid var(--accent); background: #26352f; }
+.app-tile.off { opacity: .5; }
+
+.banner {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.banner .what-plays { flex: 1; min-width: 200px; }
+.banner .lead { font-size: 19px; font-weight: 700; }
+.banner .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  .app { padding: 14px; }
+  .picker-grid { grid-template-columns: 1fr; }
+  .station-name { font-size: 24px; }
+  .logo { width: 90px; height: 90px; font-size: 22px; }
+  .now { min-height: 0; }
+}

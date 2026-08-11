@@ -215,15 +215,34 @@ public class CastPointStoreTests : IDisposable
         Assert.Equal(kitchen.Id, conflict!.CastPointId);
     }
 
+    /// <summary>
+    /// Disjoint cast points conflict too, because the store remembers one
+    /// playing pair.
+    /// </summary>
+    /// <remarks>
+    /// This used to assert the opposite, on the reasoning that two rooms
+    /// sharing no speaker could both play. They cannot: starting the second
+    /// left the first one streaming and overwrote the only record that it
+    /// existed, so nothing displayed it and Stop could not reach it. The
+    /// stream ran until somebody rebooted the node.
+    ///
+    /// Concurrent pairs are a real feature and a bigger change than this —
+    /// the single playing field becomes a collection and every reader learns
+    /// to ask which one. Until that happens, reporting the conflict means
+    /// the old stream is stopped rather than abandoned.
+    /// </remarks>
     [Fact]
-    public void DisjointCastPointsDoNotConflict()
+    public void A_second_room_replaces_the_first_even_with_no_speaker_in_common()
     {
         var store = NewStore();
         store.Create("Kitchen", ["a"], out var kitchen);
         store.Create("Garage", ["b"], out var garage);
         store.MarkPlaying(kitchen.Id, "producer-1");
 
-        Assert.Null(store.ConflictWith(garage.Id));
+        var conflict = store.ConflictWith(garage.Id);
+
+        Assert.NotNull(conflict);
+        Assert.Equal(kitchen.Id, conflict!.CastPointId);
     }
 
     /// <summary>

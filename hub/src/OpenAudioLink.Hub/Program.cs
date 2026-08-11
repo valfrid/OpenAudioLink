@@ -446,6 +446,17 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry, Li
         point.Name,
         point.Destinations,
         playing = playing?.CastPointId == point.Id,
+        /*
+         * What kind of thing is playing, and who is producing it.
+         *
+         * The source apps need this to answer "is my thing the thing that
+         * is playing here": the Vinyl app must not offer Stop for a room
+         * playing radio, and the portal has to light the right tile. A
+         * boolean says a room is busy; it does not say what with, and
+         * guessing produced a Stop button that stopped the wrong source.
+         */
+        source = playing?.CastPointId == point.Id ? playing.Source : null,
+        producer = playing?.CastPointId == point.Id ? playing.ProducerId : null,
         // Whether the phone can see this room, and whether it is the one
         // making sound. Without it a cast point that is not advertised looks
         // identical to one that is.

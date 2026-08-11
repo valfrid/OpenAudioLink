@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify — OpenAudioLink</title>
+<link rel="stylesheet" href="oal.css">
+</head>
+<body>
+<!--
+  The Spotify app view, which is mostly a window rather than a control.
+
+  Spotify is the one source where the destination is chosen somewhere else:
+  librespot advertises one Spotify Connect receiver per cast point, and the
+  phone picks from that list. Forcing a "choose the room here" step onto it
+  would fight the app people already use, and lose.
+
+  So the symmetry holds in the shape — a thing to play, a place to play it —
+  and only the location of the second choice moves. What is left for this
+  page is saying which rooms are on offer, which one is playing, and giving
+  the same Stop as everywhere else.
+-->
+<div class="app">
+  <header>
+    <div class="brand"><a href="play.html">← OpenAudioLink</a></div>
+    <div class="status" id="health"><span class="dot">●</span> <span id="health-text">Connecting…</span></div>
+  </header>
+
+  <div class="layout">
+    <section class="card now">
+      <div>
+        <div class="section-label">Spotify</div>
+
+        <div class="station-hero">
+          <div class="logo">🟢</div>
+          <div>
+            <div class="station-name" id="where">Nothing playing</div>
+            <div class="meta" id="where-sub">Open Spotify on your phone and pick a room</div>
+          </div>
+        </div>
+
+        <div class="track">
+          <div class="section-label">How this one works</div>
+          <div class="artist">Choose the room in Spotify itself</div>
+          <div class="title" style="font-size:19px;font-weight:600;line-height:1.5">
+            Each room below appears in Spotify's device list. Tap it there and
+            the music follows.
+          </div>
+        </div>
+
+        <div class="controls">
+          <button class="stop" id="stop" disabled>■ Stop</button>
+        </div>
+
+        <div class="volume-box">
+          <div class="section-label">Room volume</div>
+          <div class="volume-row">
+            <span>🔈</span>
+            <input id="volume" type="range" min="0" max="100" value="50" disabled>
+            <span>🔊</span>
+            <div class="vol-number" id="vol-text">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-note" id="state-text">Ready.</div>
+    </section>
+
+    <section class="card picker">
+      <h2>Rooms offered to Spotify</h2>
+      <div class="picker-grid" id="rooms"></div>
+      <div class="footer-note">
+        A room that is not offered has no receiver running — usually because
+        librespot is missing or the room has no speakers in it yet. The setup
+        page says which.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="oal.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+
+  let state = null;
+  let playingRoom = null;
+
+  const sendVolume = OAL.volumeSender(() => playingRoom?.id ?? null,
+    message => say(message, true));
+
+  function say(text, bad) {
+    $('state-text').textContent = text;
+    $('state-text').classList.toggle('bad', !!bad);
+  }
+
+  function setHealth(text, bad) {
+    $('health-text').textContent = text;
+    $('health').classList.toggle('bad', !!bad);
+  }
+
+  function render() {
+    // A receiver that is playing is the one making sound; one that is only
+    // offered is visible in Spotify but idle.
+    playingRoom = state.castPoints.find(p => p.receiver?.playing) ?? null;
+
+    $('where').textContent = playingRoom ? playingRoom.name : 'Nothing playing';
+    $('where-sub').textContent = playingRoom
+      ? 'Playing from Spotify'
+      : 'Open Spotify on your phone and pick a room';
+
+    $('stop').disabled = !playingRoom;
+    $('volume').disabled = !playingRoom;
+
+    if (playingRoom && typeof playingRoom.volume === 'number'
+        && document.activeElement !== $('volume')) {
+      $('volume').value = playingRoom.volume;
+      $('vol-text').textContent = `${playingRoom.volume}%`;
+    } else if (!playingRoom) {
+      $('vol-text').textContent = '—';
+    }
+
+    $('rooms').innerHTML = state.castPoints.map(point => {
+      const receiver = point.receiver;
+      const sub = receiver?.playing ? 'Playing now'
+        : receiver?.offered ? 'Visible in Spotify'
+        : receiver?.error ? OAL.esc(receiver.error)
+        : 'Not offered';
+      return `
+        <div class="choice${receiver?.playing ? ' active' : ''}">
+          <div class="mini-logo">${receiver?.offered ? '🟢' : '○'}</div>
+          <div style="min-width:0">
+            <div class="choice-title">${OAL.esc(point.name)}</div>
+            <div class="choice-sub">${sub}</div>
+          </div>
+        </div>`;
+    }).join('') || '<div class="footer-note">No rooms defined yet.</div>';
+  }
+
+  async function refresh() {
+    try {
+      state = await OAL.load();
+      setHealth('Hub connected');
+      render();
+    } catch (error) {
+      setHealth(error.message, true);
+    }
+  }
+
+  $('stop').addEventListener('click', async () => {
+    if (!playingRoom) return;
+    $('stop').disabled = true;
+    try {
+      await OAL.api('POST', `/api/castpoints/${encodeURIComponent(playingRoom.id)}/stop`);
+      say('Stopped.');
+    } catch (error) {
+      say(error.message, true);
+    } finally {
+      await refresh();
+    }
+  });
+
+  $('volume').addEventListener('input', event => {
+    const percent = Number(event.target.value);
+    $('vol-text').textContent = `${percent}%`;
+    sendVolume(percent);
+  });
+
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>
