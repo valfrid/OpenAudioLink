@@ -341,7 +341,8 @@ Priority is intentionally not fixed:
 - ~~internet radio~~ — MP3 done, FLAC and AAC open, see above
 - Home Assistant integration
 - Bluetooth input
-- DSP
+- DSP — including automatic speaker and room calibration with a
+  measurement microphone, proposed in `ROOM-CALIBRATION.md`
 - more hardware profiles
 - alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode,
   a PC Consumer application, a Raspberry Pi Consumer (see decision 8)
