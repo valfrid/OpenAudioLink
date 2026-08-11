@@ -510,8 +510,8 @@ public sealed class LibrespotService : BackgroundService
          * Derived from the streamer, so it cannot wedge — when the other
          * stream stops, this one is free to take over on the next tick.
          */
-        var status = _streamer.Status;
-        if (status.Running && status.Source?.StartsWith(SourcePrefix, StringComparison.Ordinal) != true)
+        var sender = _streamer.Status;
+        if (sender.Running && sender.Source?.StartsWith(SourcePrefix, StringComparison.Ordinal) != true)
         {
             return;
         }
