@@ -121,7 +121,11 @@ public sealed class RadioSource : IAudioSource
                  * playing quietly — the stream is running, packets are
                  * going out, and they are all silence.
                  */
-                Description = $"Internet radio: {_url} — {ex.Message}";
+                // The type as well as the message. "Specified method is not
+                // supported." is NotSupportedException's default text and
+                // says nothing about where it came from; the type name is
+                // what turned that into a diagnosis.
+                Description = $"Internet radio: {_url} — {ex.GetType().Name}: {ex.Message}";
             }
 
             // Silence rather than a stalled stream while reconnecting. The
@@ -142,10 +146,10 @@ public sealed class RadioSource : IAudioSource
          * indistinguishable from a corrupt stream. Worth adding once the
          * GUI has somewhere to show a title, and not before.
          */
-        using var response = _http.Send(
+        using var response = _http.SendAsync(
             new HttpRequestMessage(HttpMethod.Get, stream),
             HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
+            cancellationToken).GetAwaiter().GetResult();
         response.EnsureSuccessStatusCode();
 
         var name = response.Headers.TryGetValues("icy-name", out var values)
@@ -158,7 +162,8 @@ public sealed class RadioSource : IAudioSource
 
         _logger.LogInformation("Radio playing {Description} from {Url}", Description, stream);
 
-        using var body = response.Content.ReadAsStream(cancellationToken);
+        using var body = response.Content
+            .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult();
         Decode(body, cancellationToken);
     }
 
@@ -171,10 +176,10 @@ public sealed class RadioSource : IAudioSource
     /// </remarks>
     private string Resolve(string url, CancellationToken cancellationToken)
     {
-        using var head = _http.Send(
+        using var head = _http.SendAsync(
             new HttpRequestMessage(HttpMethod.Get, url),
             HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
+            cancellationToken).GetAwaiter().GetResult();
         head.EnsureSuccessStatusCode();
 
         var type = head.Content.Headers.ContentType?.ToString();
@@ -199,7 +204,8 @@ public sealed class RadioSource : IAudioSource
          */
         var buffer = new byte[MaxPlaylistBytes];
         int read;
-        using (var body = head.Content.ReadAsStream(cancellationToken))
+        using (var body = head.Content
+            .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult())
         {
             read = body.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
         }
