@@ -21,7 +21,19 @@ public sealed record StreamStatus(
     /// <summary>Iterations that woke to find more than one packet already due.</summary>
     long LateWakes = 0,
     /// <summary>The longest the loop was ever away, in milliseconds.</summary>
-    long WorstStallMs = 0);
+    long WorstStallMs = 0,
+    /// <summary>
+    /// The longest a single packet's sending took, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Read against <see cref="WorstStallMs"/>. Both large means the send
+    /// blocked — the network stack, which on a Wi-Fi host is usually a
+    /// background scan or adapter power management. A large stall with a
+    /// small send means the thread was not scheduled: garbage collection, a
+    /// busy machine, or something else taking the CPU. They need opposite
+    /// fixes and used to be indistinguishable.
+    /// </remarks>
+    long WorstSendMs = 0);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -315,6 +327,7 @@ public sealed class RtpStreamer : IAsyncDisposable
         long sendErrors = 0;
         long lateWakes = 0;
         long worstStallMs = 0;
+        long worstSendMs = 0;
         long reportedUnderrun = 0;
         long lastUnderrunReportMs = 0;
         double packetMs = format.PacketMilliseconds;
@@ -369,6 +382,24 @@ public sealed class RtpStreamer : IAsyncDisposable
                     source.ReadFrames(samples);
                     int length = packetizer.WritePacket(samples, packet);
 
+                    /*
+                     * How long the sending itself took, which is the one
+                     * thing that separates two very different faults with
+                     * the same symptom.
+                     *
+                     * A stall shows up as packets due and unsent, and that
+                     * happens either because this thread was not scheduled —
+                     * GC, a busy machine, a power-management stall — or
+                     * because it was sitting inside SendTo waiting for the
+                     * network stack. On a Wi-Fi host the second is ordinary:
+                     * a background scan blocks the adapter for hundreds of
+                     * milliseconds and every send behind it queues up.
+                     *
+                     * Fixing the wrong one wastes an evening, and until now
+                     * the counters could not tell them apart.
+                     */
+                    long sendStartMs = clock.ElapsedMilliseconds;
+
                     // Every destination gets the identical packet — same
                     // SSRC, sequence and timestamp — so receivers applying the
                     // same playout delay stay aligned with each other.
@@ -392,6 +423,12 @@ public sealed class RtpStreamer : IAsyncDisposable
                                 _logger.LogWarning(ex, "Send to {Endpoint} failed; continuing", endpoint);
                             }
                         }
+                    }
+
+                    long sendMs = clock.ElapsedMilliseconds - sendStartMs;
+                    if (sendMs > worstSendMs)
+                    {
+                        worstSendMs = sendMs;
                     }
 
                     packetsSent++;
@@ -433,6 +470,7 @@ public sealed class RtpStreamer : IAsyncDisposable
                     SendErrors = sendErrors,
                     LateWakes = lateWakes,
                     WorstStallMs = worstStallMs,
+                    WorstSendMs = worstSendMs,
                 };
                 Thread.Sleep(1);
             }
