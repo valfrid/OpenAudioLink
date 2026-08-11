@@ -35,6 +35,23 @@ public sealed record CastPointPlayback
     public required DateTimeOffset StartedAt { get; init; }
 
     /// <summary>
+    /// Identifies this playback, and no other. Rises with every start.
+    /// </summary>
+    /// <remarks>
+    /// A cast point id is not enough to clean up by. Two sources can own the
+    /// same room one after the other within a tick, and a service tidying up
+    /// after its own stream would then delete the record belonging to
+    /// whatever replaced it — the stream is still running and the Hub has
+    /// forgotten it exists, so the interface shows nothing playing while the
+    /// speaker plays, and Stop has nothing to aim at.
+    ///
+    /// That is not hypothetical: switching from Spotify to Vinyl did exactly
+    /// this. Whoever started a playback holds its token and can only end
+    /// that one.
+    /// </remarks>
+    public long Token { get; init; }
+
+    /// <summary>
     /// What the producer was asked for — "capture", "tone", "pattern" — so
     /// a stream that stopped can be started again as the same thing.
     /// </summary>
@@ -75,6 +92,9 @@ public sealed class CastPointStore
     private List<CastPoint> _points = [];
 
     private CastPointPlayback? _playing;
+
+    /// <summary>Rises with every start, so no two playbacks share a token.</summary>
+    private long _token;
 
     public CastPointStore(string dataDirectory, TimeProvider? time = null)
     {
@@ -260,7 +280,11 @@ public sealed class CastPointStore
         }
     }
 
-    public void MarkPlaying(
+    /// <summary>
+    /// Records what is playing, and returns it so the caller keeps the token
+    /// it needs to end this playback and only this one.
+    /// </summary>
+    public CastPointPlayback MarkPlaying(
         string castPointId, string producerId, string? source = null, int? toneHz = null)
     {
         lock (_gate)
@@ -272,7 +296,32 @@ public sealed class CastPointStore
                 StartedAt = _time.GetUtcNow(),
                 Source = source,
                 ToneHz = toneHz,
+                Token = ++_token,
             };
+            return _playing;
+        }
+    }
+
+    /// <summary>
+    /// Ends a playback the caller started, and does nothing if something
+    /// else has taken the room since.
+    /// </summary>
+    /// <remarks>
+    /// For a service cleaning up after itself. A person pressing Stop wants
+    /// <see cref="MarkStopped(string)"/> instead: they mean "silence that
+    /// room", whoever turns out to be playing in it.
+    /// </remarks>
+    /// <returns>Whether this playback was the one still recorded.</returns>
+    public bool MarkStoppedIfCurrent(long token)
+    {
+        lock (_gate)
+        {
+            if (_playing?.Token != token)
+            {
+                return false;
+            }
+            _playing = null;
+            return true;
         }
     }
 

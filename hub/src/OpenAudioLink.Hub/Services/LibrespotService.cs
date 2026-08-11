@@ -77,6 +77,12 @@ public sealed class LibrespotService : BackgroundService
     private readonly HashSet<string> _surrendered = [];
 
     private string? _streaming;
+
+    /// <summary>
+    /// The token of the playback this service started, so ending it cannot
+    /// delete a record that now belongs to another source.
+    /// </summary>
+    private long _streamingToken;
     private string? _lastComplaint;
     private string _executablePath = "librespot";
 
@@ -437,7 +443,11 @@ public sealed class LibrespotService : BackgroundService
             if (!status.Running || status.Source != SourceKind(_streaming))
             {
                 _logger.LogInformation("Stream for {CastPoint} was taken over; standing down", _streaming);
-                _castPoints.MarkStopped(_streaming);
+                // Only if the record is still ours. Being taken over means
+                // something else has already claimed this room, and clearing
+                // by cast point id would delete *its* record — leaving a
+                // stream running that the Hub no longer knows about.
+                _castPoints.MarkStoppedIfCurrent(_streamingToken);
                 /*
                  * And stay stood down.
                  *
@@ -528,7 +538,7 @@ public sealed class LibrespotService : BackgroundService
 
         if (_streaming is not null && _streaming != castPointId)
         {
-            _castPoints.MarkStopped(_streaming);
+            _castPoints.MarkStoppedIfCurrent(_streamingToken);
         }
 
         try
@@ -545,7 +555,9 @@ public sealed class LibrespotService : BackgroundService
 
         _streaming = castPointId;
         _lastComplaint = null;
-        _castPoints.MarkPlaying(castPointId, _config.Id);
+        // Keep the token: it is what lets this service end its own playback
+        // later without touching one that replaced it.
+        _streamingToken = _castPoints.MarkPlaying(castPointId, _config.Id, "spotify").Token;
         _logger.LogInformation("{CastPoint} is playing from Spotify to {Count} speaker(s)",
             point.Name, addresses.Count);
     }
@@ -553,7 +565,7 @@ public sealed class LibrespotService : BackgroundService
     private async Task EndStreamAsync(string castPointId, List<LibrespotInstance> instances)
     {
         await _streamer.StopAsync();
-        _castPoints.MarkStopped(castPointId);
+        _castPoints.MarkStoppedIfCurrent(_streamingToken);
 
         // The buffered tail belongs to the track that just ended; carrying
         // it into the next one would open every song with the last second of

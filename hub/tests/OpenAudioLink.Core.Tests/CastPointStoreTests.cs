@@ -262,6 +262,71 @@ public class CastPointStoreTests : IDisposable
         Assert.Equal(kitchen.Id, conflict!.CastPointId);
     }
 
+    /// <summary>
+    /// The failure this exists to stop: switching from Spotify to Vinyl left
+    /// the record player audible with the Hub believing nothing was playing,
+    /// because Spotify's tidy-up ran a moment later and cleared the room by
+    /// id — a room Vinyl had already claimed.
+    /// </summary>
+    [Fact]
+    public void Cleaning_up_a_finished_playback_does_not_clear_the_one_that_replaced_it()
+    {
+        var store = NewStore();
+        store.Create("Kitchen", ["a"], out var kitchen);
+
+        var spotify = store.MarkPlaying(kitchen.Id, "hub-01");
+        var vinyl = store.MarkPlaying(kitchen.Id, "node-vinyl", "capture");
+
+        Assert.False(store.MarkStoppedIfCurrent(spotify.Token));
+
+        var playing = store.Playing;
+        Assert.NotNull(playing);
+        Assert.Equal("node-vinyl", playing!.ProducerId);
+        Assert.Equal(vinyl.Token, playing.Token);
+    }
+
+    [Fact]
+    public void Cleaning_up_the_current_playback_clears_it()
+    {
+        var store = NewStore();
+        store.Create("Kitchen", ["a"], out var kitchen);
+        var playback = store.MarkPlaying(kitchen.Id, "hub-01");
+
+        Assert.True(store.MarkStoppedIfCurrent(playback.Token));
+        Assert.Null(store.Playing);
+    }
+
+    /// <summary>
+    /// Pressing Stop means "silence that room", whoever is playing in it, so
+    /// it stays keyed by cast point rather than by token.
+    /// </summary>
+    [Fact]
+    public void Stopping_a_room_stops_whoever_holds_it()
+    {
+        var store = NewStore();
+        store.Create("Kitchen", ["a"], out var kitchen);
+        store.MarkPlaying(kitchen.Id, "hub-01");
+        store.MarkPlaying(kitchen.Id, "node-vinyl", "capture");
+
+        store.MarkStopped(kitchen.Id);
+
+        Assert.Null(store.Playing);
+    }
+
+    [Fact]
+    public void Every_playback_gets_its_own_token()
+    {
+        var store = NewStore();
+        store.Create("Kitchen", ["a"], out var kitchen);
+        store.Create("Garage", ["b"], out var garage);
+
+        var first = store.MarkPlaying(kitchen.Id, "hub-01");
+        var second = store.MarkPlaying(garage.Id, "hub-01");
+        var third = store.MarkPlaying(kitchen.Id, "hub-01");
+
+        Assert.Equal(3, new[] { first.Token, second.Token, third.Token }.Distinct().Count());
+    }
+
     [Fact]
     public void NothingConflictsWhenNothingIsPlaying()
     {
