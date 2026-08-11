@@ -164,7 +164,10 @@ public sealed class RadioSource : IAudioSource
 
         using var body = response.Content
             .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult();
-        Decode(body, cancellationToken);
+
+        // Wrapped, because the decoder asks a live stream where it is.
+        using var counted = new CountingStream(body);
+        Decode(counted, cancellationToken);
     }
 
     /// <summary>
@@ -398,4 +401,88 @@ public sealed class RadioSource : IAudioSource
             decompressor?.Dispose();
         }
     }
+
+    /// <summary>
+    /// A read-only stream that knows how far it has got.
+    /// </summary>
+    /// <remarks>
+    /// This is what made internet radio silent from the day it was written,
+    /// on every station, at the first frame.
+    ///
+    /// <c>Mp3Frame.LoadFromStream</c> opens with
+    /// <c>frame.FileOffset = input.Position</c> — before any
+    /// <c>CanSeek</c> check — and an HTTP response body cannot answer that.
+    /// A non-seekable stream throws <c>NotSupportedException</c> from the
+    /// <c>Position</c> getter, whose default message is "Specified method is
+    /// not supported.": no mention of position, of seeking, or of the
+    /// decoder. Read from the outside it looked like an unsupported audio
+    /// format, which cost several wrong diagnoses.
+    ///
+    /// Counting bytes as they pass answers the question honestly. CanSeek
+    /// stays false, which is true and which makes the decoder skip its
+    /// seek-based frame lookahead; the position setter moves forward only,
+    /// by reading and discarding, because a live stream cannot rewind.
+    /// </remarks>
+    private sealed class CountingStream : Stream
+    {
+        private readonly Stream _inner;
+        private long _position;
+
+        public CountingStream(Stream inner) => _inner = inner;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => _position;
+            set
+            {
+                if (value < _position)
+                {
+                    throw new NotSupportedException("A live stream cannot be rewound.");
+                }
+                Skip(value - _position);
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = _inner.Read(buffer, offset, count);
+            _position += read;
+            return read;
+        }
+
+        /// <summary>Consumes bytes, since seeking forward is not possible.</summary>
+        private void Skip(long count)
+        {
+            var scratch = new byte[8192];
+            while (count > 0)
+            {
+                int read = Read(scratch, 0, (int)Math.Min(scratch.Length, count));
+                if (read <= 0)
+                {
+                    throw new EndOfStreamException("The station ended before the frame did.");
+                }
+                count -= read;
+            }
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
+
+        // The response stream is owned by the caller's using statement.
+        protected override void Dispose(bool disposing) => base.Dispose(disposing);
+    }
+
 }
