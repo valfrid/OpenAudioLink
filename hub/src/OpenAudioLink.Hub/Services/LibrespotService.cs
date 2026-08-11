@@ -64,6 +64,18 @@ public sealed class LibrespotService : BackgroundService
     /// </summary>
     private readonly Dictionary<string, long> _playingSince = [];
 
+    /// <summary>
+    /// Cast points this service has given up to another source, and must
+    /// not take back while librespot carries on playing to itself.
+    /// </summary>
+    /// <remarks>
+    /// A Spotify receiver has no idea it lost the speakers — the phone still
+    /// says it is playing, and librespot keeps producing audio. Without this
+    /// the supervisor sees "playing" and re-acquires the sender immediately,
+    /// which is how choosing Vinyl produced two streams into one speaker.
+    /// </remarks>
+    private readonly HashSet<string> _surrendered = [];
+
     private string? _streaming;
     private string? _lastComplaint;
     private string _executablePath = "librespot";
@@ -195,6 +207,7 @@ public sealed class LibrespotService : BackgroundService
                 _instances[gone].Dispose();
                 _instances.Remove(gone);
                 _playingSince.Remove(gone);
+                _surrendered.Remove(gone);
             }
 
             foreach (var point in points)
@@ -222,6 +235,7 @@ public sealed class LibrespotService : BackgroundService
                     existing.Dispose();
                     _instances.Remove(point.Id);
                     _playingSince.Remove(point.Id);
+                    _surrendered.Remove(point.Id);
                 }
 
                 // Each cast point is a separate Spotify device with its own
@@ -407,6 +421,10 @@ public sealed class LibrespotService : BackgroundService
             else
             {
                 _playingSince.Remove(instance.CastPointId);
+                // Paused or stopped on the phone, which releases the claim
+                // below: pressing play again is a fresh request for the
+                // speakers, and should be honoured like any other.
+                _surrendered.Remove(instance.CastPointId);
             }
         }
 
@@ -420,11 +438,34 @@ public sealed class LibrespotService : BackgroundService
             {
                 _logger.LogInformation("Stream for {CastPoint} was taken over; standing down", _streaming);
                 _castPoints.MarkStopped(_streaming);
+                /*
+                 * And stay stood down.
+                 *
+                 * Clearing _streaming was the whole of "standing down", and
+                 * it lasted microseconds: librespot is still playing, so the
+                 * next few lines picked the same cast point straight back up
+                 * and restarted the sender on the same tick.
+                 *
+                 * That is what made switching to Vinyl sound broken. The
+                 * node began sending to the speaker, this service began
+                 * sending Spotify to the same speaker, and the consumer got
+                 * two RTP streams with different SSRCs interleaved. Stopping
+                 * Spotify on the phone cleared it, which is the tell — the
+                 * Hub was never going to let go on its own.
+                 *
+                 * The claim is released when the phone pauses or stops, so
+                 * pressing play again works normally. It is deliberately not
+                 * released when the other source stops: somebody chose the
+                 * turntable, and ending a record should leave the room quiet
+                 * rather than resuming Spotify at them.
+                 */
+                _surrendered.Add(_streaming);
                 _streaming = null;
             }
         }
 
         var wanted = _playingSince
+            .Where(entry => !_surrendered.Contains(entry.Key))
             .OrderByDescending(entry => entry.Value)
             .Select(entry => entry.Key)
             .FirstOrDefault();
