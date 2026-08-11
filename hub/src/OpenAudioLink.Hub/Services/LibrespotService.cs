@@ -95,7 +95,14 @@ public sealed class LibrespotService : BackgroundService
     /// feature and the cast point, so this service can tell a stream it
     /// started from one a test tone replaced it with.
     /// </summary>
-    public static string SourceKind(string castPointId) => $"librespot:{castPointId}";
+    public static string SourceKind(string castPointId) => SourcePrefix + castPointId;
+
+    /// <summary>
+    /// What every source name this service starts begins with, so a stream
+    /// on the sender can be recognised as this service's without knowing
+    /// which cast point it belongs to.
+    /// </summary>
+    private const string SourcePrefix = "librespot:";
 
     /// <summary>The cast point this service is currently streaming, if any.</summary>
     public string? StreamingCastPointId => _streaming;
@@ -487,6 +494,34 @@ public sealed class LibrespotService : BackgroundService
          * stops, since the phone still believes it is playing. That is a
          * little surprising and enormously better than a room nothing can
          * play to.
+         */
+        /*
+         * Stand aside while the sender is carrying somebody else's stream.
+         *
+         * The stand-down above has always said "it wins; this service is not
+         * going to fight a person for the sender" — and then did fight,
+         * because clearing _streaming was all it did and the next few lines
+         * took the sender straight back. A test tone lasted one tick.
+         *
+         * Any librespot source counts as this service's, whichever cast
+         * point it names: moving playback from one room to another on the
+         * phone has to be allowed to replace its own stream.
+         *
+         * Derived from the streamer, so it cannot wedge — when the other
+         * stream stops, this one is free to take over on the next tick.
+         */
+        var status = _streamer.Status;
+        if (status.Running && status.Source?.StartsWith(SourcePrefix, StringComparison.Ordinal) != true)
+        {
+            return;
+        }
+
+        /*
+         * And stand aside while another source owns the room, which is the
+         * same question asked of the cast point store rather than of the
+         * sender. Both are needed: a node producer streams without touching
+         * the Hub's sender at all, and the Hub's own raw stream endpoints
+         * take the sender without recording a cast point.
          */
         var owner = _castPoints.Playing;
         if (owner is not null && owner.Token != _streamingToken)
