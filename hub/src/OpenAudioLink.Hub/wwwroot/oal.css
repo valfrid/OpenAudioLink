@@ -25,6 +25,21 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * The hidden attribute has to win.
+ *
+ * It works by way of `display: none` in the browser's own stylesheet, and
+ * any author rule that sets display beats it. So `.banner { display: flex }`
+ * quietly made `element.hidden = true` do nothing, and the now-playing bar
+ * stayed on screen with no text in it and a live Stop button — offering to
+ * stop something that was not playing.
+ *
+ * Global and !important, because the failure is silent: the JS looks right,
+ * the attribute is really set, and the only symptom is a thing that will
+ * not go away.
+ */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;

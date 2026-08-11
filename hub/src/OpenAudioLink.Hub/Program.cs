@@ -454,9 +454,29 @@ static int? RoomVolume(IReadOnlyList<string> destinations, DeviceRegistry regist
     return loudest;
 }
 
-app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry, LibrespotService spotify) =>
+app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry,
+                               LibrespotService spotify, RtpStreamer streamer, HubConfig hubConfig) =>
 {
     var playing = store.Playing;
+
+    /*
+     * A stream the Hub produces is only playing if the Hub is sending it.
+     *
+     * The store records what was *asked for*, and it stays recorded until
+     * somebody stops it — which is right for a node producer, since the Hub
+     * cannot see a node's sender directly and StreamSupervisor is what
+     * reconciles that. But when the Hub itself is the producer it has the
+     * answer in hand, and a radio station that ended, failed to reconnect,
+     * or was stopped some other way left the record saying "playing" with
+     * nothing on the wire.
+     *
+     * The switchboard believed it, and offered Stop for something that was
+     * not making a sound.
+     */
+    if (playing is not null && playing.ProducerId == hubConfig.Id && !streamer.Status.Running)
+    {
+        playing = null;
+    }
     var receivers = spotify.Snapshot().ToDictionary(r => r.CastPointId);
     // Decorated with the devices' current names and liveness, so a room
     // whose speaker is unplugged says so instead of looking ready.
