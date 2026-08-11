@@ -448,11 +448,42 @@ public sealed class RadioSource : IAudioSource
             }
         }
 
+        /// <summary>
+        /// Reads until the buffer is full or the station really has ended.
+        /// </summary>
+        /// <remarks>
+        /// A Stream may return fewer bytes than asked for, and a network
+        /// stream routinely does — one read stops at whatever the last TCP
+        /// segment carried. A file almost never does, which is why code
+        /// written against files gets away with assuming otherwise.
+        ///
+        /// Mp3Frame.LoadFromStream assumes otherwise:
+        ///
+        ///     bytesRead = input.Read(frame.RawData, 4, bytesRequired);
+        ///     if (bytesRead &lt; bytesRequired) throw new EndOfStreamException(
+        ///         "Unexpected end of stream before frame complete");
+        ///
+        /// So any frame that happened to straddle a segment boundary — most
+        /// of them — read as a truncated file. The station was fine; the
+        /// reading of it was not. Looping here gives the decoder the
+        /// file-like stream it expects, and is the whole difference between
+        /// noise every few seconds and music.
+        /// </remarks>
         public override int Read(byte[] buffer, int offset, int count)
         {
-            int read = _inner.Read(buffer, offset, count);
-            _position += read;
-            return read;
+            int total = 0;
+            while (total < count)
+            {
+                int read = _inner.Read(buffer, offset + total, count - total);
+                if (read <= 0)
+                {
+                    break;
+                }
+                total += read;
+            }
+
+            _position += total;
+            return total;
         }
 
         /// <summary>Consumes bytes, since seeking forward is not possible.</summary>
