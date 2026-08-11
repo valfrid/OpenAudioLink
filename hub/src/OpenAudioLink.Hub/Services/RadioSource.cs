@@ -185,6 +185,54 @@ public sealed class RadioSource : IAudioSource
         };
     }
 
+    /// <summary>
+    /// An MP3 decoder that works in this process.
+    /// </summary>
+    /// <remarks>
+    /// DMO first, and this is the whole reason internet radio was silent
+    /// from the day it was written.
+    ///
+    /// <c>AcmMp3FrameDecompressor</c> uses Audio Compression Manager, and
+    /// Microsoft's MP3 ACM codec — <c>l3codeca.acm</c> — has only ever
+    /// existed as a 32-bit binary. A 64-bit process cannot load it, and the
+    /// Hub publishes win-x64 self-contained. So constructing it threw on the
+    /// first frame of every station, every time; the worker caught it,
+    /// waited three seconds and tried again forever, and the stream ran
+    /// perfectly while carrying nothing but silence.
+    ///
+    /// The DMO decoder ships with Windows in both architectures and is what
+    /// NAudio recommends on x64. ACM is kept as a fallback rather than
+    /// deleted: it costs one catch, and it is the one that works on a 32-bit
+    /// host if this is ever built for one.
+    /// </remarks>
+    private IMp3FrameDecompressor CreateDecompressor(Mp3WaveFormat format)
+    {
+        try
+        {
+            var dmo = new DmoMp3FrameDecompressor(format);
+            _logger.LogDebug("Radio decoding through the DMO MP3 decoder");
+            return dmo;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No DMO MP3 decoder; falling back to ACM");
+        }
+
+        try
+        {
+            return new AcmMp3FrameDecompressor(format);
+        }
+        catch (Exception ex)
+        {
+            // Said plainly, because the symptom is silence and the cause is
+            // not something anybody guesses from listening.
+            throw new NotSupportedException(
+                "This Windows install has no MP3 decoder this Hub can use — neither the DMO "
+                + "decoder nor an ACM codec. N and KN editions ship without the media features; "
+                + "installing the Media Feature Pack provides them.", ex);
+        }
+    }
+
     private void Decode(Stream body, CancellationToken cancellationToken)
     {
         IMp3FrameDecompressor? decompressor = null;
@@ -196,6 +244,7 @@ public sealed class RadioSource : IAudioSource
         var pcm = new byte[16384];
         float[]? decoded = null;
         float[]? resampled = null;
+        var outputChannels = 2;
 
         try
         {
@@ -217,9 +266,15 @@ public sealed class RadioSource : IAudioSource
                      * none of them reach the wire.
                      */
                     var channels = frame.ChannelMode == ChannelMode.Mono ? 1 : 2;
-                    decompressor = new AcmMp3FrameDecompressor(
-                        new Mp3WaveFormat(
-                            frame.SampleRate, channels, frame.FrameLength, frame.BitRate));
+                    decompressor = CreateDecompressor(new Mp3WaveFormat(
+                        frame.SampleRate, channels, frame.FrameLength, frame.BitRate));
+
+                    // What the decoder actually produces, not what the frame
+                    // header implies. A decoder is free to hand back stereo
+                    // for a mono source, and duplicating channels that were
+                    // already duplicated writes twice as many samples as the
+                    // buffer expects — which is a speed change, not a click.
+                    outputChannels = decompressor.OutputFormat.Channels;
 
                     if (frame.SampleRate != _format.SampleRate)
                     {
@@ -241,7 +296,7 @@ public sealed class RadioSource : IAudioSource
 
                 // 16-bit signed PCM out of the decoder, interleaved.
                 var samples = bytes / 2;
-                var mono = frame.ChannelMode == ChannelMode.Mono;
+                var mono = outputChannels == 1;
                 var wanted = mono ? samples * 2 : samples;
 
                 if (decoded is null || decoded.Length < wanted)
