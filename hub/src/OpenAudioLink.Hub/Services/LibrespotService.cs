@@ -64,18 +64,6 @@ public sealed class LibrespotService : BackgroundService
     /// </summary>
     private readonly Dictionary<string, long> _playingSince = [];
 
-    /// <summary>
-    /// Cast points this service has given up to another source, and must
-    /// not take back while librespot carries on playing to itself.
-    /// </summary>
-    /// <remarks>
-    /// A Spotify receiver has no idea it lost the speakers — the phone still
-    /// says it is playing, and librespot keeps producing audio. Without this
-    /// the supervisor sees "playing" and re-acquires the sender immediately,
-    /// which is how choosing Vinyl produced two streams into one speaker.
-    /// </remarks>
-    private readonly HashSet<string> _surrendered = [];
-
     private string? _streaming;
 
     /// <summary>
@@ -213,7 +201,6 @@ public sealed class LibrespotService : BackgroundService
                 _instances[gone].Dispose();
                 _instances.Remove(gone);
                 _playingSince.Remove(gone);
-                _surrendered.Remove(gone);
             }
 
             foreach (var point in points)
@@ -241,7 +228,6 @@ public sealed class LibrespotService : BackgroundService
                     existing.Dispose();
                     _instances.Remove(point.Id);
                     _playingSince.Remove(point.Id);
-                    _surrendered.Remove(point.Id);
                 }
 
                 // Each cast point is a separate Spotify device with its own
@@ -427,10 +413,6 @@ public sealed class LibrespotService : BackgroundService
             else
             {
                 _playingSince.Remove(instance.CastPointId);
-                // Paused or stopped on the phone, which releases the claim
-                // below: pressing play again is a fresh request for the
-                // speakers, and should be honoured like any other.
-                _surrendered.Remove(instance.CastPointId);
             }
         }
 
@@ -463,19 +445,19 @@ public sealed class LibrespotService : BackgroundService
                  * Spotify on the phone cleared it, which is the tell — the
                  * Hub was never going to let go on its own.
                  *
-                 * The claim is released when the phone pauses or stops, so
-                 * pressing play again works normally. It is deliberately not
-                 * released when the other source stops: somebody chose the
-                 * turntable, and ending a record should leave the room quiet
-                 * rather than resuming Spotify at them.
+                 * Standing aside is decided below, from who owns the room
+                 * right now, rather than remembered here. Remembering it was
+                 * the first attempt and it deadlocked: the claim was only
+                 * released when librespot stopped playing, librespot went on
+                 * playing to itself indefinitely, and the room stayed barred
+                 * for good — audible, unstoppable, and impossible to hand to
+                 * another speaker from the phone.
                  */
-                _surrendered.Add(_streaming);
                 _streaming = null;
             }
         }
 
         var wanted = _playingSince
-            .Where(entry => !_surrendered.Contains(entry.Key))
             .OrderByDescending(entry => entry.Value)
             .Select(entry => entry.Key)
             .FirstOrDefault();
@@ -486,6 +468,29 @@ public sealed class LibrespotService : BackgroundService
             {
                 await EndStreamAsync(_streaming, instances);
             }
+            return;
+        }
+
+        /*
+         * Stand aside while another source owns the room.
+         *
+         * Derived, not remembered. The question "may this service take the
+         * sender" has an answer in the cast point store at every instant —
+         * whether somebody else's playback is recorded — so asking it each
+         * tick cannot get stuck the way a remembered claim did.
+         *
+         * Returning without touching the streamer is the point: the stream
+         * running belongs to whoever owns the room, and stopping it here
+         * would silence a record player on Spotify's behalf.
+         *
+         * The consequence is that Spotify resumes when the other source
+         * stops, since the phone still believes it is playing. That is a
+         * little surprising and enormously better than a room nothing can
+         * play to.
+         */
+        var owner = _castPoints.Playing;
+        if (owner is not null && owner.Token != _streamingToken)
+        {
             return;
         }
 

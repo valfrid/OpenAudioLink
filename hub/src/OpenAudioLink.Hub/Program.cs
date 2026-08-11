@@ -947,6 +947,27 @@ app.MapPost("/api/castpoints/{id}/stop",
             await commands.StopStreamAsync(producer, cancellationToken);
         }
     }
+    else if (playing is null && streamer.Status.Running)
+    {
+        /*
+         * Stop means stop, including when the Hub has lost track.
+         *
+         * Nothing claims the sender and yet it is sending — an orphan. It
+         * has happened: a service cleared its own bookkeeping while its
+         * stream carried on, so the room was audible, the record said
+         * nothing was playing, and Stop had no branch that applied. The
+         * only cure was restarting the Hub.
+         *
+         * Somebody pressing Stop while sound is coming out is not making a
+         * subtle request, so an orphan is stopped rather than reasoned
+         * about. Only when nothing claims it: a stream another room owns is
+         * that room's to stop.
+         */
+        app.Logger.LogWarning(
+            "Stop on {CastPoint} found a stream nothing claims ({Source}); stopping it",
+            id, streamer.Status.Source);
+        await streamer.StopAsync();
+    }
     store.MarkStopped(id);
     return Results.Ok(new { status = "stopped" });
 });
