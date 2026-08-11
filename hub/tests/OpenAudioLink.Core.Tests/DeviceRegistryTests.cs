@@ -170,4 +170,70 @@ public class DeviceStatusTests
 
         Assert.Empty(registry.Snapshot());
     }
+
+    private static DeviceAnnouncement Hub() => new()
+    {
+        ProtocolVersion = ProtocolSuite.Version,
+        Id = "hub-01",
+        Name = "Vardagsrum",
+        Roles = DeviceRole.HubRoles,
+        HardwareProfile = "windows-hub",
+        FirmwareVersion = "0.9.4",
+        ControlPort = ProtocolSuite.DefaultHubPort,
+    };
+
+    /// <summary>
+    /// The Hub is a producer — it is what plays internet radio, system audio
+    /// and the test tone — and every one of those is chosen by naming a
+    /// producer from this list.
+    /// </summary>
+    [Fact]
+    public void The_hub_is_in_its_own_inventory()
+    {
+        var registry = new DeviceRegistry(new FakeTimeProvider());
+
+        registry.UpsertSelf(Hub(), IPAddress.Parse("192.168.0.201"));
+
+        var hub = Assert.Single(registry.Snapshot());
+        Assert.Equal("windows-hub", hub.HardwareProfile);
+        Assert.Contains(DeviceRole.Producer, hub.Roles);
+        Assert.True(registry.TryGet("hub-01", out _));
+    }
+
+    /// <summary>
+    /// Nothing announces to the Hub on the Hub's behalf, so ageing its record
+    /// out the way a silent node is aged out would take the radio away after
+    /// thirty seconds of running perfectly.
+    /// </summary>
+    [Fact]
+    public void The_hub_does_not_go_offline_by_saying_nothing()
+    {
+        var time = new FakeTimeProvider();
+        var registry = new DeviceRegistry(time);
+        registry.UpsertSelf(Hub(), IPAddress.Parse("192.168.0.201"));
+
+        time.Advance(DeviceRegistry.OfflineAfter * 10);
+
+        Assert.True(Assert.Single(registry.Snapshot()).Online);
+    }
+
+    /// <summary>
+    /// Only the Hub gets that exemption. A node that stopped announcing is a
+    /// node that is gone, and saying otherwise would send a stream into the
+    /// dark.
+    /// </summary>
+    [Fact]
+    public void A_node_still_goes_offline_when_the_hub_does_not()
+    {
+        var time = new FakeTimeProvider();
+        var registry = new DeviceRegistry(time);
+        registry.UpsertSelf(Hub(), IPAddress.Parse("192.168.0.201"));
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.235"));
+
+        time.Advance(DeviceRegistry.OfflineAfter * 10);
+
+        var devices = registry.Snapshot();
+        Assert.True(devices.Single(d => d.Id == "hub-01").Online);
+        Assert.False(devices.Single(d => d.Id == "mac-a0b1c2d3e4f5").Online);
+    }
 }

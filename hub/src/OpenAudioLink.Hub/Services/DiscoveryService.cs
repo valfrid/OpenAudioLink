@@ -78,6 +78,23 @@ public sealed class DiscoveryService : BackgroundService
 
         _interfaces = JoinOnEveryInterface(client.Client, _logger);
 
+        /*
+         * The Hub is a device too, and until now the only one missing from
+         * its own inventory — it announces to nodes and ignores its own
+         * announce, so nothing ever put it in the registry. That made the
+         * one producer that is always present the one producer nothing could
+         * select: internet radio, system audio and the test tone all name it
+         * as the producer, and all three were rejected or silently skipped.
+         *
+         * Registered before the loops start, so it is there for the first
+         * request rather than the first announce.
+         */
+        var self = _registry.UpsertSelf(
+            BuildAnnounce(),
+            _interfaces.FirstOrDefault() ?? IPAddress.Loopback);
+        _logger.LogInformation(
+            "Registered this Hub as {Id} ({Name}) at {Address}", self.Id, self.Name, self.Address);
+
         var groupEndpoint = new IPEndPoint(ProtocolSuite.DiscoveryMulticastGroup, ProtocolSuite.DiscoveryPort);
         await SendToGroupAsync(
             client, new DiscoveryProbe { ProtocolVersion = ProtocolSuite.Version }.Serialize(),

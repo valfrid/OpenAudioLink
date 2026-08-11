@@ -56,6 +56,7 @@ configuration — never audio.
   "fw": "0.1.0",
   "uptimeS": 1234,
   "heapFree": 206936,
+  "httpdStackFreeB": 2456,
   "wifi": {
     "joined": true,
     "ssid": "valfrid-n",
@@ -69,6 +70,14 @@ configuration — never audio.
 
 `audio.state` is `"idle"` or `"playing"`; stream details are added in
 Phase 3.
+
+`httpdStackFreeB` is the smallest the control server's stack has ever been,
+in bytes — the FreeRTOS high-water mark. It is here because the control
+server overflowed its stack on a producer and rebooted the node mid-record,
+and nothing reported a margin until it was gone. Watch it, not just the
+uptime: a node whose margin is shrinking under load is a node that will
+reboot later, and `uptimeS` says everything is fine right up until it
+resets. Below about 1000 there is a problem to fix.
 
 When the device is not associated, `wifi` is `{ "joined": false }` and the
 remaining fields are absent rather than zero — a missing reading and a

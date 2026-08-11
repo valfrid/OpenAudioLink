@@ -108,31 +108,64 @@ static int format_controller(char *out, size_t out_size)
     }
 }
 
+/*
+ * Response buffers live here rather than on the stack.
+ *
+ * They total about 1.6 kB, and the httpd task's whole stack was 4 kB — the
+ * esp_http_server default. Parsing a request, running a handler and sending
+ * a reply all happen on that one stack, and an interrupt taken at the
+ * deepest point pushes its frame onto it too. It overflowed on the vinyl
+ * node:
+ *
+ *     ***ERROR*** A stack overflow in task httpd has been detected.
+ *
+ * with the backtrace corrupted, which is what an overflow looks like once
+ * the frame that would have explained it has been written over.
+ *
+ * Static is safe because esp_http_server runs exactly one task per
+ * instance and multiplexes every session onto it with select(), so two
+ * handlers never run at once. peers_handler already relies on this for its
+ * peer array. **The invariant is one httpd task per instance** — a second
+ * control server in this process would need these per-instance instead.
+ * The provisioning portal in oal_wifi.c is a separate instance with its own
+ * handlers and does not touch these.
+ */
+static char s_roles[OAL_ROLES_STR_MAX];
+static char s_wifi[192];
+static char s_controller[160];
+static char s_join[96];
+static char s_input[112];
+static char s_body[1024];
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
-    char roles[OAL_ROLES_STR_MAX];
-    if (oal_roles_to_json(s_config.roles, roles, sizeof(roles)) < 0) {
+    char *roles = s_roles;
+    if (oal_roles_to_json(s_config.roles, roles, sizeof(s_roles)) < 0) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "roles too large");
         return ESP_FAIL;
     }
 
-    char wifi[192];
-    int wifi_len = format_wifi(wifi, sizeof(wifi));
-    if (wifi_len <= 0 || wifi_len >= (int)sizeof(wifi)) {
+    char *wifi = s_wifi;
+    int wifi_len = format_wifi(wifi, sizeof(s_wifi));
+    if (wifi_len <= 0 || wifi_len >= (int)sizeof(s_wifi)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "wifi status too large");
         return ESP_FAIL;
     }
 
-    char controller[160];
-    if (format_controller(controller, sizeof(controller)) >= (int)sizeof(controller)) {
-        snprintf(controller, sizeof(controller), "{\"who\":\"none\"}");
+    char *controller = s_controller;
+    if (format_controller(controller, sizeof(s_controller)) >= (int)sizeof(s_controller)) {
+        snprintf(controller, sizeof(s_controller), "{\"who\":\"none\"}");
     }
 
     /* Only a Consumer joins, so only a Consumer has anything to report
-     * about it. A producer saying "not asked" would read as a failure. */
-    char join[96] = "null";
+     * about it. A producer saying "not asked" would read as a failure.
+     *
+     * Reset explicitly: a static buffer keeps the last request's answer,
+     * where the initialiser on a local ran every time. */
+    char *join = s_join;
+    snprintf(join, sizeof(s_join), "null");
     if ((s_config.roles & OAL_ROLE_CONSUMER) != 0) {
-        snprintf(join, sizeof(join), "{\"asked\":%s,\"status\":\"%s\"}",
+        snprintf(join, sizeof(s_join), "{\"asked\":%s,\"status\":\"%s\"}",
                  oal_join_acknowledged() ? "true" : "false", oal_join_last_status());
     }
 
@@ -145,23 +178,34 @@ static esp_err_t status_handler(httpd_req_t *req)
      * nothing playing. /stream only says anything while a stream runs, which
      * is exactly the wrong time.
      */
-    char input[112] = "null";
+    char *input = s_input;
+    snprintf(input, sizeof(s_input), "null");
     if (oal_capture_running()) {
         oal_capture_state_t capture;
         oal_capture_get(&capture);
-        snprintf(input, sizeof(input),
+        snprintf(input, sizeof(s_input),
                  "{\"leftDb\":%d,\"rightDb\":%d,\"hz\":%" PRIu32 ",\"readErrors\":%" PRIu32 "}",
                  capture.peak_left_dbfs, capture.peak_right_dbfs,
                  capture.measured_hz, capture.read_errors);
     }
 
-    char body[1024];
-    int len = snprintf(body, sizeof(body),
+    /*
+     * How much of the httpd task's stack has never been used, in bytes
+     * (ESP-IDF's port reports this in bytes, not words). Reported because
+     * the overflow that made these buffers static was invisible until it
+     * was fatal: the node ran for eighty seconds and then rebooted with a
+     * corrupted backtrace. A number in /status turns "it seems stable now"
+     * into a margin somebody can watch, and the Hub already polls this
+     * every five seconds.
+     */
+    char *body = s_body;
+    int len = snprintf(body, sizeof(s_body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
                        "\"roles\":%s,\"channel\":\"%s\",\"volume\":%u,"
                        "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"controller\":%s,\"join\":%s,"
+                       "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        oal_channel_name(oal_config_get_channel()),
@@ -172,8 +216,9 @@ static esp_err_t status_handler(httpd_req_t *req)
                        input, s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
-                       controller, join);
-    if (len <= 0 || len >= (int)sizeof(body)) {
+                       controller, join,
+                       (unsigned)uxTaskGetStackHighWaterMark(NULL));
+    if (len <= 0 || len >= (int)sizeof(s_body)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status too large");
         return ESP_FAIL;
     }
@@ -338,9 +383,19 @@ static esp_err_t volume_handler(httpd_req_t *req)
  * to read a result: loss at the consumer means nothing without knowing the
  * producer actually kept its rate.
  */
+/*
+ * Off the stack for the reason the /status buffers are, and more urgently:
+ * this is the deepest handler in the file, and it went from occasional to
+ * every five seconds when the Hub grew a supervisor that watches a running
+ * stream. The crash showed up on a producer, which is the branch below
+ * that carries both a destination list and the counters.
+ */
+static char s_stream_body[832];
+
 static esp_err_t stream_get_handler(httpd_req_t *req)
 {
-    char body[832];
+    char *body = s_stream_body;
+    const size_t body_size = sizeof(s_stream_body);
     int len;
 
     if ((s_config.roles & OAL_ROLE_PRODUCER) != 0) {
@@ -369,7 +424,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
             }
         }
 
-        len = snprintf(body, sizeof(body),
+        len = snprintf(body, body_size,
                        "{\"role\":\"producer\",\"running\":%s,\"port\":%u,"
                        "\"destinations\":%u,\"destinationList\":%s,\"source\":\"%s\","
                        "\"packetsSent\":%u,\"datagramsSent\":%u,"
@@ -399,7 +454,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
         oal_playout_state_t audio;
         oal_playout_get(&audio);
 
-        len = snprintf(body, sizeof(body),
+        len = snprintf(body, body_size,
                        "{\"role\":\"consumer\",\"listening\":%s,\"port\":%u,"
                        "\"payloadErrors\":%u,\"foreignPackets\":%u,"
                        "\"lastSsrc\":\"%08x\","
@@ -425,7 +480,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        stats);
     }
 
-    if (len <= 0 || len >= (int)sizeof(body)) {
+    if (len <= 0 || len >= (int)body_size) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stream status too large");
         return ESP_FAIL;
     }
@@ -842,6 +897,22 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
     server_config.max_uri_handlers = 12; /* ten registered; the default of eight leaves no room */
+
+    /*
+     * Belt as well as braces, after the handlers stopped putting their
+     * response buffers here.
+     *
+     * The default is 4096, and one stack carries the request parser, the
+     * handler and the reply — plus an interrupt frame if one lands at the
+     * deepest moment. That is what overflowed on the vinyl node. Moving
+     * ~2.4 kB of buffers to .bss is the fix; this is the margin, because
+     * the thing that overflows a stack is rarely the thing you measured.
+     *
+     * It costs 2 kB of RAM once, against a reboot mid-record. /status now
+     * reports httpdStackFreeB so this number can be checked rather than
+     * believed.
+     */
+    server_config.stack_size = 6144;
 
     /*
      * Close the oldest connection rather than refusing the newest.

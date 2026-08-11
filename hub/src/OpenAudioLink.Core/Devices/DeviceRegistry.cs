@@ -145,6 +145,13 @@ public sealed class DeviceRegistry
 
     private readonly TimeProvider _time;
 
+    /// <summary>
+    /// The Hub's own id, once it has registered itself, so its record is
+    /// never aged out. Everything else goes offline by falling silent; this
+    /// one cannot, because the code deciding is the thing being asked about.
+    /// </summary>
+    private string? _self;
+
     public DeviceRegistry(TimeProvider? time = null)
     {
         _time = time ?? TimeProvider.System;
@@ -168,6 +175,34 @@ public sealed class DeviceRegistry
         };
         _devices[record.Id] = record;
         return record;
+    }
+
+    /// <summary>
+    /// Puts the Hub in its own inventory, as the device it is.
+    /// </summary>
+    /// <remarks>
+    /// The Hub holds the Producer role — it is what sends internet radio,
+    /// system audio and the test tone — but it learned about devices only by
+    /// hearing them announce, and it skips its own announce to avoid
+    /// answering itself. So it was the one producer in the house that was
+    /// never in the list.
+    ///
+    /// Everything downstream reads the registry, so everything downstream
+    /// agreed it did not exist: <c>POST /castpoints/{id}/play</c> rejected
+    /// it as an unknown producer, and the switchboard looked for a
+    /// windows-hub device, found none, and quietly disabled every control
+    /// that needed one. Pressing a radio station did nothing at all — no
+    /// sound, no error, because the branch that would have complained was
+    /// the branch that never ran.
+    ///
+    /// Registering it here rather than special-casing it at each call site
+    /// is the point: a producer is a producer, and the Hub differs only in
+    /// being reached by calling a method instead of opening a socket.
+    /// </remarks>
+    public DeviceRecord UpsertSelf(DeviceAnnouncement announcement, IPAddress address)
+    {
+        _self = announcement.Id;
+        return Upsert(announcement, address);
     }
 
     /// <summary>Records a /status reading for a device the Hub polled.</summary>
@@ -199,7 +234,9 @@ public sealed class DeviceRegistry
 
     private DeviceRecord Decorate(DeviceRecord device, DateTimeOffset now) => device with
     {
-        Online = now - device.LastSeen < OfflineAfter,
+        // The Hub does not announce to itself, so ageing its own record out
+        // would mark it offline after thirty seconds of running perfectly.
+        Online = device.Id == _self || now - device.LastSeen < OfflineAfter,
         Status = _status.GetValueOrDefault(device.Id),
     };
 }

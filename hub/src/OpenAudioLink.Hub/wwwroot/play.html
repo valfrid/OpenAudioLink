@@ -955,8 +955,20 @@
         return;
       }
 
+      /*
+       * `&& hub` used to be part of the condition, which meant a page that
+       * could not find the Hub did nothing at all when a station was
+       * pressed — no sound, no message, no way to tell a broken station
+       * from a broken page. That is the third time a silent guard has
+       * turned a bug into "nothing happens", after Stop and the source
+       * list. A branch that cannot do its job says so.
+       */
       const station = hit('data-station');
-      if (station && hub) {
+      if (station) {
+        if (!hub) {
+          say('No Hub in the device list, and the Hub is what plays radio.', true);
+          return;
+        }
         const chosen = stations.find(s => s.id === station.dataset.station);
         await play(
           { producer: hub.id, source: 'radio', stationId: chosen.id }, chosen.name);
@@ -974,7 +986,11 @@
       }
 
       const own = hit('data-hub');
-      if (own && hub) {
+      if (own) {
+        if (!hub) {
+          say('No Hub in the device list.', true);
+          return;
+        }
         const source = own.dataset.hub;
         await play(
           { producer: hub.id, source },
