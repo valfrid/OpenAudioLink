@@ -1,3 +1,4 @@
+using NAudio.FileFormats.Mp3;
 using NAudio.Wave;
 using NAudio.Wave.Compression;
 using OpenAudioLink.Core.Audio;
