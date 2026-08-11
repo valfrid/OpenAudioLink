@@ -330,6 +330,7 @@ public sealed class RtpStreamer : IAsyncDisposable
         long worstSendMs = 0;
         long reportedUnderrun = 0;
         long lastUnderrunReportMs = 0;
+        long lastStallReportMs = long.MinValue;
         double packetMs = format.PacketMilliseconds;
 
         // Without this the loop below sends in clumps; see the type's remarks.
@@ -359,10 +360,31 @@ public sealed class RtpStreamer : IAsyncDisposable
                         worstStallMs = stallMs;
                     }
 
-                    // Only the ones big enough to be heard, so a log line
-                    // means something rather than scrolling past.
-                    if (stallMs >= 20)
+                    /*
+                     * At most one line every five seconds, and only for
+                     * stalls big enough to hear.
+                     *
+                     * Logging from inside a 200 Hz loop is a hazard, not a
+                     * detail. This runs as a Windows service, where a
+                     * warning goes to the Event Log — genuinely slow, and
+                     * synchronous — and to a console provider whose queue
+                     * blocks the caller when it fills rather than dropping.
+                     * Nothing drains a service's console.
+                     *
+                     * So the unthrottled version had a feedback path: a
+                     * stall logged a warning, the warning blocked the send
+                     * thread, the block made the next stall longer, and that
+                     * logged again. A hiccup could ratchet itself into most
+                     * of a second, which is roughly what a stall of 800 ms
+                     * on an idle wired machine looks like.
+                     *
+                     * The counters carry the same information without
+                     * touching a log sink, and /api/stream is where anybody
+                     * reads them anyway.
+                     */
+                    if (stallMs >= 20 && clock.ElapsedMilliseconds - lastStallReportMs >= 5000)
                     {
+                        lastStallReportMs = clock.ElapsedMilliseconds;
                         _logger.LogWarning(
                             "Send loop was away {StallMs} ms ({Packets} packets due); worst so far {WorstMs} ms",
                             stallMs, behind, worstStallMs);
