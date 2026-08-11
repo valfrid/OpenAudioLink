@@ -166,12 +166,46 @@ Write-Host "Downloading $([math]::Round($asset.size / 1MB, 1)) MB"
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $download `
                   -Headers @{ 'User-Agent' = 'OpenAudioLink-update' } -UseBasicParsing
 
-# The installer next to this script, not the one inside the download: an
-# upgrade is applied by the installer already on the machine, so a broken
-# script in a new package cannot leave the Hub half-installed.
+# Which installer runs the upgrade, in order of preference.
+#
+# 1. The one beside this script. An upgrade should be applied by the
+#    installer already on the machine, so a broken script in a new package
+#    cannot leave the Hub half-installed.
+# 2. The installed copy under $InstallPath. Same reasoning; this is here
+#    because a copy of *this* script fetched to a temp directory has no
+#    sibling, and refusing at that point is unhelpful when a perfectly good
+#    installer is sitting in Program Files.
+# 3. The one inside the download. The only option on a machine with no Hub
+#    on it yet, and strictly better than failing — the alternative is not
+#    "a safer install", it is "no install".
+#
+# It used to be 1 or nothing, which turned fetching this script on its own
+# into a dead end: it downloaded 41 MB and then refused, with an error
+# naming the temp directory and no way forward.
+$unpacked  = $null
 $installer = Join-Path $PSScriptRoot 'install-service.ps1'
+
 if (-not (Test-Path $installer)) {
-    throw "install-service.ps1 is not beside this script ($PSScriptRoot)."
+    $installed = Join-Path $InstallPath 'scripts\install-service.ps1'
+    if (Test-Path $installed) {
+        Write-Host "Using the installer already on this machine ($installed)"
+        $installer = $installed
+    }
+    else {
+        Write-Host "No installer on this machine; using the one in the download"
+        $unpacked = Join-Path ([IO.Path]::GetTempPath()) ("oal-update-" + [guid]::NewGuid().ToString('N'))
+        Expand-Archive -Path $download -DestinationPath $unpacked -Force
+
+        # Everything here came off the internet, so it carries the mark of
+        # the web and PowerShell refuses to run it until that is cleared.
+        Get-ChildItem -Path $unpacked -Recurse -Include *.ps1 |
+            Unblock-File -ErrorAction SilentlyContinue
+
+        $installer = Join-Path $unpacked 'scripts\install-service.ps1'
+        if (-not (Test-Path $installer)) {
+            throw "The package $($asset.name) has no scripts\install-service.ps1 in it."
+        }
+    }
 }
 
 try {
@@ -179,4 +213,7 @@ try {
 }
 finally {
     Remove-Item -Path $download -Force -ErrorAction SilentlyContinue
+    if ($unpacked) {
+        Remove-Item -Path $unpacked -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

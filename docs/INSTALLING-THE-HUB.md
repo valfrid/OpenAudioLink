@@ -113,6 +113,28 @@ and otherwise downloads and installs. No login, no browser, no unzipping
 come from releases rather than from CI artifacts, which need a token and
 expire after ninety days.
 
+Run it from an **elevated** prompt. It refuses with a plain sentence
+rather than half-installing.
+
+### When the script itself is missing or stale
+
+Fetching it on its own works, from any directory:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+$u = 'https://github.com/valfrid/OpenAudioLink/raw/main/hub/scripts/update-hub.ps1'
+$p = "$env:ProgramFiles\OpenAudioLink\scripts\update-hub.ps1"
+New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null
+Invoke-WebRequest $u -OutFile $p
+& $p
+```
+
+Saving it into the install directory rather than `%TEMP%` is the point:
+the updater looks for `install-service.ps1` beside itself first. It now
+falls back to the installed copy and then to the one inside the download,
+so a temp copy no longer dead-ends — but putting it where it belongs means
+the next upgrade is the one-liner above again.
+
 ### Two kinds of build
 
 | | |
