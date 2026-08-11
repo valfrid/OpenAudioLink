@@ -487,6 +487,22 @@ public sealed class RtpStreamer : IAsyncDisposable
 
                 _status = _status with
                 {
+                    /*
+                     * Re-read every iteration, because a source can change
+                     * what it calls itself while it runs and the interesting
+                     * changes are the bad ones.
+                     *
+                     * RadioSource writes a station's real name here once it
+                     * connects, and writes the failure here when it cannot —
+                     * on the stated reasoning that the description "is what
+                     * /api/stream returns and what the switchboard shows".
+                     * It was not: this was captured once at StartAsync and
+                     * never refreshed, so a station that could not be
+                     * decoded reported the name it was given, forever, while
+                     * sending silence. The one place designed to explain the
+                     * failure was showing a stale success.
+                     */
+                    Description = source.Description,
                     PacketsSent = packetsSent,
                     UnderrunSamples = underrun,
                     SendErrors = sendErrors,
