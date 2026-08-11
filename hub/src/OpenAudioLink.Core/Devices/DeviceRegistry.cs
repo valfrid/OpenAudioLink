@@ -205,6 +205,38 @@ public sealed class DeviceRegistry
         return Upsert(announcement, address);
     }
 
+    /// <summary>Devices that must not be polled, and until when.</summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _quiet = new();
+
+    /// <summary>
+    /// Stops the Hub polling a device for a while, because it is busy with
+    /// something that polling can ruin.
+    /// </summary>
+    /// <remarks>
+    /// Written for OTA. A node downloading an image is running an HTTP
+    /// client, writing flash, and serving the Hub's /status every ten
+    /// seconds and /stream every five — all on one small control server.
+    /// That is peak load at the worst possible moment: if the node dies
+    /// mid-download the write is abandoned, the boot slot never changes,
+    /// and it comes back running exactly what it was running before.
+    ///
+    /// Which is what happened. Firmware 0.14.0 fixes a control-server stack
+    /// overflow, and on 0.13.0 that overflow is reliably triggered by the
+    /// polling that accompanies an update — so the fix could not install
+    /// itself. The update looked like it did nothing.
+    ///
+    /// Polling is a convenience here, not a mechanism; nothing depends on a
+    /// reading arriving during the ninety seconds an update takes. Liveness
+    /// still comes from announces, so a node that dies while quiet is still
+    /// noticed on the usual timer.
+    /// </remarks>
+    public void Hush(string id, TimeSpan duration) =>
+        _quiet[id] = _time.GetUtcNow() + duration;
+
+    /// <summary>Whether this device is inside a quiet period.</summary>
+    public bool IsHushed(string id) =>
+        _quiet.TryGetValue(id, out var until) && _time.GetUtcNow() < until;
+
     /// <summary>Records a /status reading for a device the Hub polled.</summary>
     public void UpdateStatus(string id, DeviceStatus status)
     {

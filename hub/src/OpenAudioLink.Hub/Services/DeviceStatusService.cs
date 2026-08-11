@@ -53,8 +53,13 @@ public sealed class DeviceStatusService : BackgroundService
                 // the Hub, and since a node can claim the role (decision 9)
                 // it no longer does — filtering on the role made a turntable
                 // that took charge stop being watched at all.
+                //
+                // A device under OTA is skipped entirely. Polling it is
+                // useless — it is writing flash and about to reboot — and on
+                // a node whose control server is short of stack it is worse
+                // than useless: it is the load that kills the download.
                 var targets = _registry.Snapshot()
-                    .Where(d => d.Online && d.Id != _config.Id)
+                    .Where(d => d.Online && d.Id != _config.Id && !_registry.IsHushed(d.Id))
                     .ToList();
 
                 // In parallel: one slow node must not delay the readings of

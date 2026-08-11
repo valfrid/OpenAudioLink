@@ -118,6 +118,16 @@ public sealed class StreamSupervisor : BackgroundService
             return;
         }
 
+        // Not while it is being updated. A node under OTA is about to reboot
+        // by design, so a supervisor that reads "the stream stopped" and
+        // restarts it is fighting the update — and the poll itself is load
+        // the node can do without while it writes flash.
+        if (_registry.IsHushed(producer.Id))
+        {
+            _unreachableSince = null;
+            return;
+        }
+
         // Where the stream should be going, as the registry knows it now
         // rather than as it was when play was pressed. A consumer that
         // rejoined on a new address is the case this exists for.

@@ -171,6 +171,59 @@ public class DeviceStatusTests
         Assert.Empty(registry.Snapshot());
     }
 
+    /// <summary>
+    /// The Hub must leave a node alone while it installs firmware. Polling
+    /// during a download is the load that kills the download.
+    /// </summary>
+    [Fact]
+    public void A_hushed_device_is_not_to_be_polled()
+    {
+        var time = new FakeTimeProvider();
+        var registry = new DeviceRegistry(time);
+        registry.Upsert(Announce(), IPAddress.Parse("192.168.0.235"));
+
+        registry.Hush("mac-a0b1c2d3e4f5", TimeSpan.FromSeconds(90));
+
+        Assert.True(registry.IsHushed("mac-a0b1c2d3e4f5"));
+    }
+
+    /// <summary>
+    /// And it expires on its own: an update that failed must not leave a
+    /// device unwatched forever.
+    /// </summary>
+    [Fact]
+    public void The_quiet_period_ends_by_itself()
+    {
+        var time = new FakeTimeProvider();
+        var registry = new DeviceRegistry(time);
+        registry.Hush("mac-a0b1c2d3e4f5", TimeSpan.FromSeconds(90));
+
+        time.Advance(TimeSpan.FromSeconds(91));
+
+        Assert.False(registry.IsHushed("mac-a0b1c2d3e4f5"));
+    }
+
+    [Fact]
+    public void A_device_that_was_never_hushed_is_polled()
+    {
+        Assert.False(new DeviceRegistry().IsHushed("mac-a0b1c2d3e4f5"));
+    }
+
+    /// <summary>
+    /// Hushing for no time at all is how a failed update cancels the quiet
+    /// period it opened a moment earlier.
+    /// </summary>
+    [Fact]
+    public void A_zero_length_hush_is_already_over()
+    {
+        var registry = new DeviceRegistry(new FakeTimeProvider());
+        registry.Hush("mac-a0b1c2d3e4f5", TimeSpan.FromSeconds(90));
+
+        registry.Hush("mac-a0b1c2d3e4f5", TimeSpan.Zero);
+
+        Assert.False(registry.IsHushed("mac-a0b1c2d3e4f5"));
+    }
+
     private static DeviceAnnouncement Hub() => new()
     {
         ProtocolVersion = ProtocolSuite.Version,

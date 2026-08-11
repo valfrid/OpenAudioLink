@@ -213,8 +213,28 @@ app.MapPost("/api/devices/{id}/ota",
     {
         return Results.BadRequest(new { error = "unknown firmware file" });
     }
+    /*
+     * Quiet first, then start.
+     *
+     * The node has to download an image, write it to flash and reboot,
+     * and it serves the Hub's polling from the same small control server
+     * the whole time. Ordering matters: hushing after the POST leaves a
+     * window where a poll lands on a node that has already begun.
+     *
+     * Ninety seconds covers a ~1 MB download over Wi-Fi with room to
+     * spare, and expires on its own — a failed update must not leave a
+     * device permanently unwatched.
+     */
+    registry.Hush(device.Id, TimeSpan.FromSeconds(90));
+
     var ok = await commands.StartOtaAsync(device, request.File, cancellationToken);
-    return ok ? Results.Ok(new { status = "accepted" }) : Results.StatusCode(502);
+    if (!ok)
+    {
+        // It never started, so there is nothing to be quiet for.
+        registry.Hush(device.Id, TimeSpan.Zero);
+        return Results.StatusCode(502);
+    }
+    return Results.Ok(new { status = "accepted" });
 });
 
 app.MapPost("/api/devices/{id}/roles",
