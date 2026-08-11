@@ -103,6 +103,19 @@ Upgrades keep it — it is one of two files the installer never replaces.
 
 ## Upgrading
 
+**From the Hub's own page.** Open `http://<hub>:41080/`, and if something
+newer is published the "This Hub" section offers an Update button. It runs
+the same script as below — the service stops, the files are replaced, the
+service starts, and the page waits for it to come back and says what
+version it came back as.
+
+It refuses while something is playing, because updating stops the music,
+and it refuses if the Hub was not installed by `install-service.ps1` and so
+has no updater beside it.
+
+**From PowerShell**, which is what the button runs and the only option on a
+machine with no browser on it:
+
 ```powershell
 & "$env:ProgramFiles\OpenAudioLink\scripts\update-hub.ps1"
 ```

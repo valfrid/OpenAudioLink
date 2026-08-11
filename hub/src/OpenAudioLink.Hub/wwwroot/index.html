@@ -76,6 +76,16 @@
     <a id="switchboard" href="/play">Play →</a>
   </header>
 
+  <!-- Updating the Hub was a PowerShell one-liner that needed an elevated
+       prompt, the right path, and knowing the path was right. Getting any
+       of the three wrong produced an error about something else. -->
+  <h2>This Hub</h2>
+  <p id="hub-version">Checking for updates…</p>
+  <p>
+    <button id="hub-update" hidden>Update</button>
+    <span id="hub-update-note" class="empty"></span>
+  </p>
+
   <h2>Devices</h2>
   <table id="devices" hidden>
     <thead>
@@ -291,6 +301,88 @@
       return `<span class="rssi ${level}">${esc(input.leftDb)} / ${esc(input.rightDb)} dB</span>` +
         (input.readErrors > 0
           ? `<br><span class="rssi poor">${esc(input.readErrors)} read err</span>` : '');
+    }
+
+    /*
+     * Whether a newer Hub is published, and the button that installs it.
+     *
+     * The update stops this service, so there is no reply to wait for —
+     * the page loses the server it is talking to and gets it back on a new
+     * version. That is the progress indicator: poll /api/health until it
+     * answers again, then say what it came back as.
+     */
+    async function refreshHubUpdate() {
+      const line = document.getElementById('hub-version');
+      const button = document.getElementById('hub-update');
+      const note = document.getElementById('hub-update-note');
+      try {
+        const check = await (await fetch('/api/hub/update', { cache: 'no-store' })).json();
+        line.textContent = check.newer
+          ? `Version ${check.installed} — ${check.available} is available`
+          : `Version ${check.installed}` + (check.available ? ' — up to date' : '');
+        button.hidden = !check.newer || !check.canUpdate;
+        // A reason worth reading is one that explains why the button is
+        // not there. "Up to date" is not a problem, so it is not shown.
+        note.textContent = check.newer && !check.canUpdate ? check.reason ?? '' : '';
+      } catch {
+        line.textContent = 'Could not check for updates';
+      }
+    }
+
+    document.getElementById('hub-update').addEventListener('click', async () => {
+      const button = document.getElementById('hub-update');
+      const note = document.getElementById('hub-update-note');
+      if (!confirm('Update the Hub? The service restarts, and anything playing stops.')) return;
+
+      button.disabled = true;
+      note.textContent = 'Starting the updater…';
+      try {
+        const response = await fetch('/api/hub/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          note.textContent = payload.error ?? 'Could not start the update';
+          button.disabled = false;
+          return;
+        }
+        note.textContent = `Installing ${payload.to}. The Hub will restart…`;
+        waitForHub(payload.to);
+      } catch (error) {
+        note.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+
+    /*
+     * Waits for the Hub to come back, and says what it came back as.
+     *
+     * Deliberately patient: stopping the service, unpacking 40 MB and
+     * starting it again takes the better part of a minute, and every failed
+     * fetch in the middle of that is expected rather than a problem to
+     * report. Only running out of attempts is worth telling somebody about,
+     * because by then the thing that would have shown an error is gone.
+     */
+    async function waitForHub(expected) {
+      const note = document.getElementById('hub-update-note');
+      for (let attempt = 0; attempt < 90; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        try {
+          const health = await (await fetch('/api/health', { cache: 'no-store' })).json();
+          if (!expected || health.version === expected) {
+            note.textContent = `Now on ${health.version}.`;
+            await refreshHubUpdate();
+            document.getElementById('hub-update').disabled = false;
+            return;
+          }
+        } catch {
+          // Down, which is what updating looks like from here.
+        }
+      }
+      note.textContent =
+        'The Hub has not come back. Check the service, or run update-hub.ps1 from PowerShell.';
     }
 
     async function refreshHealth() {
@@ -1044,6 +1136,7 @@
     });
 
     refreshHealth();
+    refreshHubUpdate();
     refreshDevices();
     refreshFirmware();
     refreshCastPoints();
@@ -1053,6 +1146,8 @@
     setInterval(refreshTone, 2000);
     setInterval(refreshFirmware, 10000);
     setInterval(refreshCastPoints, 3000);
+    // Rarely: this asks GitHub, and a release does not appear twice a minute.
+    setInterval(refreshHubUpdate, 15 * 60 * 1000);
 
     // Browsers throttle timers in background tabs, often to once a minute, so
     // the counters appear frozen after switching away even though the stream

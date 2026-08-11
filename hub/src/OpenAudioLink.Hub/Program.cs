@@ -70,6 +70,7 @@ builder.Services.AddHttpClient(nameof(FirmwareFetcher), client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenAudioLink-Hub");
 });
 builder.Services.AddSingleton<FirmwareFetcher>();
+builder.Services.AddSingleton<HubUpdater>();
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
 // Puts a node-to-node stream back after a roam takes it away. Only node
@@ -130,6 +131,62 @@ app.MapGet("/api/health", (HubConfig config) => Results.Ok(new
     version = HubInfo.Version,
     protocol = ProtocolSuite.Version,
 }));
+
+/*
+ * What updating would do, and whether it can be done from here.
+ *
+ * Separate from starting it, because the answer to "is there anything
+ * newer" is worth having on screen without arming a button that stops the
+ * service.
+ */
+app.MapGet("/api/hub/update", async (HubUpdater updater, CancellationToken cancellationToken) =>
+{
+    var check = await updater.CheckAsync(cancellationToken);
+    return Results.Ok(new
+    {
+        check.Installed, check.Available, check.Asset,
+        check.CanUpdate, check.Reason, newer = check.Newer,
+    });
+});
+
+/*
+ * Starts the update. There is no success response worth waiting for: the
+ * script's first act is to stop this service, so the honest answer is
+ * "accepted" and the real one is the Hub coming back on a new version.
+ * The page polls /api/health for that.
+ */
+app.MapPost("/api/hub/update", async (
+    HubUpdateRequest? request, HubUpdater updater, CastPointStore castPoints,
+    CancellationToken cancellationToken) =>
+{
+    var check = await updater.CheckAsync(cancellationToken);
+    if (!check.CanUpdate)
+    {
+        return Results.BadRequest(new { error = check.Reason ?? "this Hub cannot update itself" });
+    }
+    if (!check.Newer && request?.Force != true)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"already on {check.Installed}"
+                + (check.Available is null ? "" : $"; {check.Available} is what is published"),
+        });
+    }
+
+    // Updating stops the service, which stops the music. Worth refusing by
+    // default rather than explaining afterwards why a record cut out.
+    if (castPoints.Playing is not null && request?.Force != true)
+    {
+        return Results.BadRequest(new
+        {
+            error = "something is playing, and updating stops it. Stop it first, or force the update.",
+        });
+    }
+
+    return updater.Start(out var error)
+        ? Results.Ok(new { status = "updating", from = check.Installed, to = check.Available })
+        : Results.StatusCode(502);
+});
 
 app.MapGet("/api/devices", (DeviceRegistry registry) => Results.Ok(registry.Snapshot()));
 
@@ -1152,6 +1209,9 @@ internal sealed record CastPointPlayRequest(
     // url is for anything driving the API without saving one first.
     string? Url = null,
     string? StationId = null);
+
+/// <summary>Force skips the "already up to date" and "something is playing" refusals.</summary>
+internal sealed record HubUpdateRequest(bool? Force = null);
 
 internal sealed record StationRequest(string? Name, string? Url);
 
