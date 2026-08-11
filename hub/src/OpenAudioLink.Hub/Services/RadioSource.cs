@@ -1,3 +1,4 @@
+using System.Text;
 using NAudio.FileFormats.Mp3;
 using NAudio.Wave;
 using NAudio.Wave.Compression;
@@ -40,6 +41,13 @@ public sealed class RadioSource : IAudioSource
     /// ten-second outage into a two-minute one.
     /// </summary>
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The most of a playlist worth reading. Past this it is not one, and
+    /// reading further is how a stream got mistaken for a file and consumed
+    /// forever.
+    /// </summary>
+    private const int MaxPlaylistBytes = 64 * 1024;
 
     private readonly AudioRingBuffer _buffer;
     private readonly AudioStreamFormat _format;
@@ -175,7 +183,28 @@ public sealed class RadioSource : IAudioSource
             return url;
         }
 
-        var target = StationPlaylist.Parse(head.Content.ReadAsStringAsync(cancellationToken).Result);
+        /*
+         * Bounded, because this read had no limit and no timeout.
+         *
+         * The client is configured with an infinite timeout — right for an
+         * endless station, fatal here. Anything that looked like a playlist
+         * but was actually a stream would be read forever: no audio, no
+         * exception, no log line, the worker thread simply gone. A station
+         * stuck exactly like that is indistinguishable from one playing
+         * silence, which is what "no sound and nothing in the description"
+         * turned out to mean.
+         *
+         * A playlist is a few hundred bytes. Sixty-four kilobytes of it is
+         * already not a playlist, and Parse will say so.
+         */
+        var buffer = new byte[MaxPlaylistBytes];
+        int read;
+        using (var body = head.Content.ReadAsStream(cancellationToken))
+        {
+            read = body.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+        }
+
+        var target = StationPlaylist.Parse(Encoding.UTF8.GetString(buffer, 0, read));
         return target.Kind switch
         {
             StationKind.Stream => target.Urls[0],
@@ -246,6 +275,7 @@ public sealed class RadioSource : IAudioSource
         float[]? decoded = null;
         float[]? resampled = null;
         var outputChannels = 2;
+        long frames = 0;
 
         try
         {
@@ -254,8 +284,28 @@ public sealed class RadioSource : IAudioSource
                 var frame = Mp3Frame.LoadFromStream(body);
                 if (frame is null)
                 {
-                    return; // The station closed the connection.
+                    /*
+                     * No frame at all means this was never MP3 — an HTML
+                     * error page, an AAC or FLAC stream, a playlist that
+                     * resolved to the wrong thing. Said out loud, because
+                     * returning quietly here is a three-second retry loop
+                     * that runs all evening reporting nothing: the stream
+                     * runs, packets flow, and every one is silence.
+                     *
+                     * After the first frame it means the station closed the
+                     * connection, which is ordinary and worth no more than
+                     * a reconnect.
+                     */
+                    if (frames == 0)
+                    {
+                        throw new NotSupportedException(
+                            "no MP3 frames in this stream — it is not MP3, or the playlist "
+                            + "pointed somewhere else. AAC and FLAC are not decoded yet.");
+                    }
+                    return;
                 }
+
+                frames++;
 
                 if (decompressor is null)
                 {
