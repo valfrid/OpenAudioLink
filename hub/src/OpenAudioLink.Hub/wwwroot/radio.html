@@ -86,6 +86,14 @@
                placeholder="https://… .pls, .m3u or a stream" autocomplete="off">
         <button type="submit">Add</button>
       </form>
+      <!--
+        Beside the form, not in the other card.
+        say() writes to the now-playing card's footer, which on a phone is a
+        column away and well off screen — so "a station with that name
+        already exists" was being rendered somewhere nobody was looking, and
+        pressing Add read as doing nothing for the second time.
+      -->
+      <div class="footer-note" id="add-status"></div>
       <div class="footer-note">
         MP3 streams and the playlists that point at them. AAC and FLAC are
         not decoded yet, so a station that stays silent is probably one of
@@ -108,6 +116,12 @@
   function say(text, bad) {
     $('state-text').textContent = text;
     $('state-text').classList.toggle('bad', !!bad);
+  }
+
+  /** For the station form, whose own card is where its answers belong. */
+  function sayAdd(text, bad) {
+    $('add-status').textContent = text;
+    $('add-status').classList.toggle('bad', !!bad);
   }
 
   function setHealth(text, bad) {
@@ -259,16 +273,38 @@
 
   $('add-station').addEventListener('submit', async event => {
     event.preventDefault();
+
+    /*
+     * Checked here so a refusal is visible, and reported beside the form
+     * rather than in the other card.
+     *
+     * The scheme is what people leave off, because an address copied from a
+     * page is usually bare. It is deliberately not guessed at: http and
+     * https are different addresses, and prepending the wrong one produces a
+     * station that fails later with an error that no longer mentions
+     * schemes.
+     */
+    const url = $('station-url').value.trim();
+    if (!url) {
+      sayAdd('Paste the station address first.', true);
+      return;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      sayAdd('The address has to start with http:// or https://', true);
+      return;
+    }
+
+    sayAdd('Adding…');
     try {
       await OAL.api('POST', '/api/stations', {
         name: $('station-name').value.trim() || null,
-        url: $('station-url').value.trim(),
+        url,
       });
       $('station-name').value = '';
       $('station-url').value = '';
-      say('Station saved.');
+      sayAdd('Station saved.');
     } catch (error) {
-      say(error.message, true);
+      sayAdd(error.message, true);
     }
     await refresh();
   });
