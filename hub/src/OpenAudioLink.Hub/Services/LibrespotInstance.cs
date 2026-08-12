@@ -28,8 +28,22 @@ public sealed class LibrespotInstance : IDisposable
     /// back-pressure a sound card would have applied. What is held here
     /// also becomes the stream's cushion against scheduling hiccups, so it
     /// is worth having, and it is the latency this adds.
+    ///
+    /// **Sized against the sender, not against taste.** At 100 ms it was
+    /// smaller than the send loop's own worst stall, and the difference is
+    /// measurable as silence: when the loop wakes 255 ms late it catches up
+    /// by reading 255 ms of audio at once, this cushion holds 100 ms of it,
+    /// and the remainder is underrun. An hour of Spotify sent 6.5 seconds
+    /// of silence that way, while internet radio — two seconds of ring and
+    /// no throttle at all — sent none in six and a half hours, on the same
+    /// machine, through the same sender, over the same network.
+    ///
+    /// Half a second is about double the worst stall measured over that
+    /// hour, and half a second of responsiveness is a cheap price on a
+    /// source that has nothing to stay in step with. If underruns survive
+    /// it, the number is still too small.
     /// </summary>
-    private static readonly TimeSpan HighWater = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan HighWater = TimeSpan.FromMilliseconds(500);
 
     /// <summary>Wait before restarting a process that exited.</summary>
     private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(5);
@@ -70,7 +84,11 @@ public sealed class LibrespotInstance : IDisposable
         _options = options;
         _logger = logger;
 
-        _buffer = new AudioRingBuffer(format.SampleRate * format.Channels / 2);
+        // Four times the high-water mark, so the throttle has room to work
+        // in: a ring only as big as the mark cannot hold what the mark
+        // permits, and would wrap while the reader was still deciding to
+        // pause.
+        _buffer = new AudioRingBuffer(format.SampleRate * format.Channels * 2);
         _resampler = new RationalResampler(
             LibrespotOptions.SourceSampleRate, format.SampleRate, LibrespotOptions.SourceChannels);
         _highWaterSamples = (int)(format.SampleRate * format.Channels * HighWater.TotalSeconds);
