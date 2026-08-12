@@ -178,6 +178,86 @@ to send the ADC anywhere from it — and a vinyl test run on Pattern proves
 the network and says nothing about the turntable. Both selectors now offer
 Line in.
 
+## Run 19: internet radio, six hours, unattended
+
+**2026-08-12. The first overnight run, and the first with a wired mesh
+backhaul.** SomaFM Groove Salad through the Hub — fetch, MP3 decode,
+44.1→48 kHz resample, RTP — to one Consumer node. Hub 0.11.10, firmware
+0.14.0. Both access points now joined by Ethernet rather than a 5 GHz
+backhaul, and the Hub itself on the same switch.
+
+| | |
+| --- | --- |
+| Duration | 4 629 475 packets sent — 6 h 26 min |
+| Received | 4 621 493 of 4 624 326 |
+| Lost | 2 833 — **0.061 %** |
+| Loss shape | 1 684 gaps, 1.68 packets per gap, longest 8 |
+| Jitter | **1.31 ms** |
+| Duplicates / reorder | 0 / 0 |
+| Source underrun | 150 240 samples — **unchanged from the first minute** |
+| Send errors | 0 |
+| Late wakes | 89 437 — 1.93 % of iterations |
+| Worst stall / worst send | 90 ms / 36 ms |
+
+### What it establishes
+
+**The station never dropped.** `underrunSamples` is the same 150 240 it
+reached in the first two seconds — the ring filling from empty at startup
+— and did not move again in six and a half hours. The reconnect path was
+never exercised, which is the best thing a reconnect path can do.
+
+**The node did not reboot.** The consumer counted 4.6 million packets in
+one unbroken run. Before firmware 0.14.0 an ADC-enabled node overflowed
+its control server's stack and restarted roughly every ninety seconds
+under this exact load. Six hours of continuous reception is what closes
+that, and it closes it more convincingly than any uptime figure.
+
+**0.061 % loss, 1.31 ms jitter, no reordering.** Comparable with the best
+of runs 14-16 and achieved while crossing a wireless hop to the speaker.
+
+### A correction the long run forced
+
+A 64-second sample earlier the same evening showed **0.542 %** loss and
+prompted a theory: that the Hub's catch-up sender releases bursts where a
+node producer paces steadily, and bursts overflow an access point's
+per-client queue. The mechanism is real and the arithmetic was plausible.
+
+Six hours says 0.061 % — nearly ten times better, and better than the
+short vinyl samples in run 18. **The minute-long sample was noise, and the
+explanation built on it was an explanation of nothing.** Worth recording
+because it is the same mistake this document keeps catching: a number
+taken over a short window, believed, and reasoned from.
+
+The residual is still visible — 1.93 % of iterations wake late, and losses
+still arrive in clumps of 1.68 rather than singly, which is the signature
+the theory predicted. So the burst mechanism is probably real and small.
+It is not worth chasing at 0.061 %.
+
+### The week behind this run
+
+Everything the Hub produced was inaudible or broken until the day before,
+and four separate faults had to fall:
+
+- The send loop logged a warning on every stall over 20 ms, **from inside
+  a loop running 200 times a second**, into a Windows service's Event Log.
+  A stall logged, the log blocked the sender, the block lengthened the
+  next stall. It ratcheted a hiccup into 800 ms. The diagnostic caused the
+  fault it was measuring.
+- `Mp3Frame.LoadFromStream` reads `input.Position` before checking
+  `CanSeek`. A live HTTP body cannot answer, and the resulting
+  `NotSupportedException` says "Specified method is not supported." —
+  naming neither position, nor seeking, nor the decoder.
+- The same decoder assumes one `Read` fills the buffer. True of files,
+  false of sockets, so every frame straddling a segment boundary read as a
+  truncated file.
+- And the volume taper is cube-law: 50 % is −18 dB. With a turntable
+  running 15 dB hotter than everything else, vinyl sounded right while
+  Spotify sounded broken.
+
+None of the four was found by reading code. Each was found by a number or
+a message off the hardware — `underrunSamples: 0`, `worstStallMs: 800`,
+`NotSupportedException`, and a volume slider at 25 %.
+
 ## What the series established
 
 **Wi-Fi power save costs packets.** Run 1 → 2: loss halved and jitter fell
