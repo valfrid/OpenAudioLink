@@ -272,15 +272,26 @@ decibel from clipping.
 | | Both on one AP | Across two APs |
 | --- | --- | --- |
 | Consumer signal | −67 dBm | −53 dBm |
-| Duration | 23 min | 2.6 min |
-| Received | 275 928 of 276 927 | 31 093 of 31 145 |
-| Lost | 999 — **0.361 %** | 52 — **0.167 %** |
-| Loss shape | 384 gaps, 2.60/gap, longest 44 | 21 gaps, 2.47/gap, longest 4 |
-| Jitter | **0.88 ms** | 1.21 ms |
+| Duration | 23 min | 8.8 min |
+| Received | 275 928 of 276 927 | 105 636 of 105 788 |
+| Lost | 999 — **0.361 %** | 152 — **0.144 %** |
+| Loss shape | 384 gaps, 2.60/gap, **longest 44** | 73 gaps, 2.08/gap, **longest 4** |
+| Jitter | **0.88 ms** | 1.38 ms |
 | Reorder | 0 | 0 |
 
-Producer, over the same period: **41 282 packets, 0 late, 0 send errors,
+Producer, over the same period: **114 128 packets, 0 late, 0 send errors,
 0 retries.**
+
+### The gap length matters more than the percentage
+
+A consumer holds about 200 ms of playout. The cross-AP runs never lost more
+than **4 packets in a row — 20 ms**, which the buffer absorbs completely and
+nobody hears. The same-AP run lost **44 in a row — 220 ms**, past what the
+buffer can cover, and that one is an audible dropout rather than a
+statistic.
+
+Two configurations differing by a factor of two in loss can differ by
+everything in how they sound, and the loss shape is where that shows.
 
 ### Vinyl has the best timing and the worst delivery
 
@@ -297,13 +308,19 @@ this is not avoidable by moving the nodes to another band.
 Against internet radio's 0.061 % to the same speaker, six times the loss
 for one extra contended hop is about the right order.
 
-### The cross-AP column proves less than it looks
+### The cross-AP column is confounded, though no longer short
 
-It is confounded and short. The consumer moved 14 dB closer to its access
-point at the same time as it changed access point, and 14 dB of margin
-removes retries on its own. **Both access points are on channel 7**, so
-the mechanism that would make cross-AP genuinely better — two hops on
-different channels, joined by wire — was not in play at all.
+The consumer moved 14 dB closer to its access point at the same time as it
+changed access point, and 14 dB of margin removes retries on its own.
+**Both access points are on channel 7**, so the mechanism that would make
+cross-AP genuinely better — two hops on different channels, joined by wire
+— was not in play at all. Signal strength is the likelier cause of the
+improvement, and it is the lever worth reaching for first: choose an access
+point for signal, not for separation.
+
+The result did hold as the window grew, 0.167 % at 2.6 minutes settling to
+0.144 % at 8.8, so it is a real difference rather than the sampling noise
+that caught this document twice already.
 
 The configuration worth testing is the access points on non-overlapping
 channels, 1 and 11. Until then run 18's advice is neither confirmed nor
