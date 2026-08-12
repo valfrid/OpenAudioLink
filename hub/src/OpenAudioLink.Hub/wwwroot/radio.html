@@ -72,7 +72,14 @@
       <div class="picker-grid" id="stations"></div>
 
       <form class="add" id="add-station">
-        <input id="station-name" type="text" placeholder="Name" autocomplete="off">
+        <!--
+          new-station-name, not station-name: the hero heading above already
+          owns that id. getElementById returns the first match in document
+          order, so this form was reading .value off a <div>, getting
+          undefined, and throwing on .trim() before the request was ever
+          made. That is the whole of "pressing Add does nothing".
+        -->
+        <input id="new-station-name" type="text" placeholder="Name" autocomplete="off">
         <!--
           Deliberately type="text" rather than type="url". The browser
           validates a url field *before* the submit event fires, so an
@@ -297,10 +304,10 @@
     sayAdd('Adding…');
     try {
       await OAL.api('POST', '/api/stations', {
-        name: $('station-name').value.trim() || null,
+        name: $('new-station-name').value.trim() || null,
         url,
       });
-      $('station-name').value = '';
+      $('new-station-name').value = '';
       $('station-url').value = '';
       sayAdd('Station saved.');
     } catch (error) {
