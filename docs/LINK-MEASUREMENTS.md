@@ -258,6 +258,78 @@ None of the four was found by reading code. Each was found by a number or
 a message off the hardware — `underrunSamples: 0`, `worstStallMs: 800`,
 `NotSupportedException`, and a volume slider at 25 %.
 
+## Run 20: a turntable, same access point and across two
+
+**2026-08-12. The measurement run 18 asked for.** A record, node to node,
+firmware 0.14.0 both ends, wired mesh backhaul. Run 18 established that
+vinyl works and said explicitly that it was "not a number worth quoting"
+because the nodes were on different access points over a wireless
+backhaul. These are the numbers.
+
+Input at **−5 / −7 dBFS** — healthy, after a session at −1 / −2 that was a
+decibel from clipping.
+
+| | Both on one AP | Across two APs |
+| --- | --- | --- |
+| Consumer signal | −67 dBm | −53 dBm |
+| Duration | 23 min | 2.6 min |
+| Received | 275 928 of 276 927 | 31 093 of 31 145 |
+| Lost | 999 — **0.361 %** | 52 — **0.167 %** |
+| Loss shape | 384 gaps, 2.60/gap, longest 44 | 21 gaps, 2.47/gap, longest 4 |
+| Jitter | **0.88 ms** | 1.21 ms |
+| Reorder | 0 | 0 |
+
+Producer, over the same period: **41 282 packets, 0 late, 0 send errors,
+0 retries.**
+
+### Vinyl has the best timing and the worst delivery
+
+Jitter of 0.88 ms is the lowest figure in this document — better than the
+Hub's own streams, because a node paces from its own timer where the Hub's
+loop catches up in bursts.
+
+The loss is structural. The Hub sits on Ethernet, so a Hub stream crosses
+the air once. Node to node crosses twice — producer to access point, access
+point to consumer — and **both nodes share one 2.4 GHz channel**, so those
+two hops compete for the same airtime. ESP32-S3 has no 5 GHz radio, so
+this is not avoidable by moving the nodes to another band.
+
+Against internet radio's 0.061 % to the same speaker, six times the loss
+for one extra contended hop is about the right order.
+
+### The cross-AP column proves less than it looks
+
+It is confounded and short. The consumer moved 14 dB closer to its access
+point at the same time as it changed access point, and 14 dB of margin
+removes retries on its own. **Both access points are on channel 7**, so
+the mechanism that would make cross-AP genuinely better — two hops on
+different channels, joined by wire — was not in play at all.
+
+The configuration worth testing is the access points on non-overlapping
+channels, 1 and 11. Until then run 18's advice is neither confirmed nor
+reversed.
+
+### Task 26 closes, and the diagnosis was wrong
+
+An ADC-enabled producer once reported **4384 packets sent, 4384 late** —
+every packet. The standing theory was task priority: capture at 7 starving
+the producer at 6.
+
+Those priorities are unchanged in 0.14.0 and the count is now zero. So the
+theory was wrong. The likeliest actual cause is that the original figure
+was measured on a node whose control server was overflowing its stack and
+restarting every ninety seconds — the producer's pacing was measured on a
+node that was not healthy, and read as a pacing fault.
+
+That is inference, not proof. The conditions no longer exist to reproduce
+it, which is the honest state to leave it in: fixed, cause probable,
+unproven.
+
+### Eleven hours
+
+Both nodes showed **11 h uptime** through this run. The same load restarted
+an ADC-enabled node every ninety seconds before 0.14.0.
+
 ## What the series established
 
 **Wi-Fi power save costs packets.** Run 1 → 2: loss halved and jitter fell
