@@ -239,7 +239,20 @@ public sealed class RtpStreamer : IAsyncDisposable
         _cancellation.Dispose();
         _cancellation = null;
         _worker = null;
-        _status = _status with { Running = false };
+        /*
+         * Forget what was being sent, not just that it stopped.
+         *
+         * This reports the Hub's own sender, which is idle whenever a node
+         * producer is the one streaming — vinyl goes node to node and the
+         * Hub only introduces the two ends. Leaving the last source and
+         * description in place meant an idle Hub announced "Spotify
+         * Connect: AOL-Matsal" while a record was playing, and the only
+         * field saying otherwise was a boolean further along the line.
+         *
+         * The counters stay: how much the last stream sent is worth reading
+         * after it ends, where what it was called is actively misleading.
+         */
+        _status = _status with { Running = false, Source = null, Description = null };
         _logger.LogInformation("Stream stopped after {Packets} packets", _status.PacketsSent);
     }
 
