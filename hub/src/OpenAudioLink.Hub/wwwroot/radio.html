@@ -73,7 +73,17 @@
 
       <form class="add" id="add-station">
         <input id="station-name" type="text" placeholder="Name" autocomplete="off">
-        <input id="station-url" type="url" placeholder="https://… .pls, .m3u or a stream" required>
+        <!--
+          Deliberately type="text" rather than type="url". The browser
+          validates a url field *before* the submit event fires, so an
+          address without a scheme was refused silently — a native tooltip
+          that is easy to miss on a phone, and no message anywhere. Pressing
+          Add appeared to do nothing.
+
+          Checked below instead, where a refusal can say what is wrong.
+        -->
+        <input id="station-url" type="text" inputmode="url"
+               placeholder="https://… .pls, .m3u or a stream" autocomplete="off">
         <button type="submit">Add</button>
       </form>
       <div class="footer-note">
