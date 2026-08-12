@@ -213,6 +213,151 @@ The feature remains optional and should not complicate the initial OpenAudioLink
 
 ---
 
+# Refined design
+
+**Status: still a proposal, and a strong one.** Nothing here is
+implemented; the hardware is on order. This section supersedes the shape
+sketched above where the two differ.
+
+## The measurement node stands where the listener does
+
+Not beside the speaker. A microphone at the speaker measures the speaker;
+a microphone where somebody's head goes measures the room, and the room is
+what this feature exists to correct.
+
+So the measurement node is a **temporary placement** — a chair, a tripod,
+roughly between the ears of an assumed listener — not a permanent fixture.
+It needs Wi-Fi where it stands, which is worth checking before wondering
+why a sweep never arrived.
+
+## One chip generates the sweep and captures it
+
+This is the decision the rest follows from.
+
+The measurement node **sends the sweep to the speaker as RTP** — it is an
+ordinary Producer, with a new source beside `tone`, `pattern` and
+`capture` — and captures the microphone on its own I²S at the same time.
+One ESP32-S3 does both, so both sit on **one clock**, and the offset
+between "the sweep started" and "the sound arrived" is a real measurement
+rather than the difference between two free-running oscillators.
+
+Splitting those across two nodes would give up absolute delay entirely.
+Keeping them together also avoids running I²S down a long cable to a
+distant microphone, which at a 3 MHz bit clock is not something to attempt
+past about half a metre.
+
+## What the delay actually measures, and why that is the right thing
+
+The path being timed is not purely acoustic. It runs: sweep generated →
+RTP across Wi-Fi → the consumer's jitter buffer → its DAC → the air → the
+microphone. The playout buffer alone is around 200 ms, dwarfing every
+acoustic distance in a house.
+
+That is **correct for this purpose**. Aligning several speakers means
+equalising total delay from "sample enters the system" to "sound reaches
+the listener", and the buffer is part of that path for every one of them.
+Measuring only the acoustic leg would align the wrong thing.
+
+One caveat follows: the playout buffer is adaptive — it walks its fill back
+towards a target rather than holding a fixed depth. So a delay measurement
+is only meaningful once the buffer has settled, and repeat runs will differ
+by whatever the buffer is doing. Measure after a stream has been running
+long enough to converge, and treat a single reading as approximate.
+
+## The measurement cycle
+
+Started by a person, from the setup page, against one cast point.
+
+1. The Hub tells the measurement node which speaker to sweep and on which
+   channel.
+2. The node streams the sweep to that speaker — **left only, then right
+   only**, because the two are different boxes in different corners and a
+   stereo pair's halves do not share a room response.
+3. It captures the microphone throughout, and hands the capture to the Hub.
+4. Repeated per channel and per frequency segment.
+5. The Hub deconvolves against the sweep it knows was sent, derives the
+   response, and proposes a conservative correction as biquads.
+6. The page shows measured, proposed and predicted-corrected. A person
+   presses Apply, and the filters are written to that speaker.
+
+Nothing is applied automatically. The same reasoning as OTA: fetching is a
+convenience, installing is a deliberate act.
+
+## Why it is segmented, and how the hardware decides that
+
+Segmentation is not tidiness. It is what makes the capture fit.
+
+Ten seconds at 48 kHz in 32-bit stereo is about 2 MB. The XIAO has 8 MB of
+PSRAM so it fits there, but the useful observation is that **the band that
+matters most is the cheapest to capture**.
+
+Room modes — the boom this feature exists to fix — live between roughly 30
+and 200 Hz, and low frequencies need *long* sweeps because a 30 Hz
+component takes many cycles to establish. They also need almost no
+bandwidth: analysing to 500 Hz needs a 1 kHz sample rate, not 48 kHz.
+
+So:
+
+| Segment | Sweep | Captured at | Buffer |
+| --- | --- | --- | --- |
+| 20-200 Hz | long, 10 s+ | decimated to ~1 kHz | ~40 KB — internal RAM |
+| 200 Hz-20 kHz | short, 2-3 s | 48 kHz | ~600 KB — PSRAM |
+
+Decimating on the node before storing is what turns the most valuable
+measurement into one that needs no PSRAM at all. It also means a future
+board without PSRAM can still measure the low band, which is most of the
+benefit.
+
+## Filters are a property of the speaker
+
+Exactly like `channel` — stereo, mono, left, right. Stored in the node's
+NVS, set with `POST /config`, surviving reboots and Hub reinstalls, and
+belonging to **this speaker in this room** so that moving it invalidates
+its filters and nothing else's.
+
+Held as **frequency, gain, Q and type** rather than as coefficients:
+
+```json
+{ "eq": { "left":  [ { "hz": 72,  "db": -5.5, "q": 1.2, "type": "peaking" } ],
+          "right": [ { "hz": 145, "db": -3.0, "q": 0.8, "type": "peaking" } ] } }
+```
+
+Coefficients are sample-rate specific and formulation specific — stored
+ones go quietly wrong if either changes. A frequency cannot. It is also the
+form a person can read, edit and sanity-check, which the manual half of
+"manual or assisted" depends on.
+
+Eight per channel, both channels independent.
+
+## Capability, not role
+
+The announce already carries `capabilities` beside `roles`, and the
+distinction has held: a role is what a node does in the audio graph, a
+capability is what hardware it has.
+
+A microphone is hardware — `capabilities: ["mic"]`. Sweeping and capturing
+is an operation the Hub asks for, and the node performing it is a Producer
+while it does so, which it already knows how to be. That avoids inventing a
+fifth role and inventing an answer to whether it replaces the others.
+
+## What this reuses
+
+Almost everything, which is the point:
+
+- **RTP** carries the sweep. A new source name beside `tone` and `capture`.
+- **The Producer role** is what the measurement node already is while
+  sweeping.
+- **`POST /config`** already writes per-speaker properties to NVS.
+- **The Hub** already orchestrates who sends to whom, and is the only
+  machine here with the memory and the floating point for deconvolution.
+- **The setup page** is where a deliberate, occasional, technical operation
+  belongs — beside firmware and roles, not in the switchboard.
+
+The genuinely new parts are the sweep source, the microphone capture, an
+upload path for the recording, the analysis on the Hub, and the biquads in
+the playout path. Five pieces, each small, on top of a system that already
+does the hard part.
+
 # Notes against this system
 
 Written when the proposal was filed. Nothing here is a change to the
