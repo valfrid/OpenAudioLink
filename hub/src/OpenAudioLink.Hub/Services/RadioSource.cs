@@ -16,12 +16,20 @@ namespace OpenAudioLink.Hub.Services;
 /// separate process, no account, no sign-in, no zeroconf — see
 /// <c>ROADMAP.md</c> for why it was chosen over the alternatives.
 ///
-/// MP3 only for now. That covers SomaFM, Sveriges Radio and most of what
-/// people actually listen to, and it decodes frame by frame off a live
-/// socket — which matters, because the usual .NET audio readers want a
-/// seekable stream and a radio station is the opposite of seekable. AAC
-/// and FLAC need either a Media Foundation reader or ffmpeg, and FLAC is
-/// the one that makes this the only lossless source available.
+/// **MP3 and AAC.** Between them they cover SomaFM, Radio Paradise,
+/// Sveriges Radio and most of what people actually listen to.
+///
+/// The two are decoded differently, for a reason worth knowing before
+/// adding a third. MP3 is read frame by frame off the live socket, because
+/// the usual .NET audio readers want a *seekable* stream and a radio
+/// station is the opposite of seekable — that assumption is what kept this
+/// class silent from the day it was written. AAC is handed to Media
+/// Foundation as a URL instead, so its own network source deals with the
+/// framing and the seeking, and this class never sees the socket.
+///
+/// FLAC is the one still open, and it is the one that would make this the
+/// only lossless source in the project. It usually arrives inside an Ogg
+/// container, so it needs a container parser as well as a decoder.
 /// </remarks>
 public sealed class RadioSource : IAudioSource
 {
@@ -165,9 +173,43 @@ public sealed class RadioSource : IAudioSource
         using var body = response.Content
             .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult();
 
+        /*
+         * Which codec, decided from the first bytes rather than the header.
+         *
+         * A station's Content-Type is frequently wrong — audio/mpeg is
+         * served for AAC by more than one broadcaster — and the frame sync
+         * at the start of the stream is not. So the bytes decide, and the
+         * header only breaks a tie when there is no sync to read.
+         */
+        var head = new byte[4];
+        int peeked = ReadFully(body, head);
+        var counted = new CountingStream(body, head.AsSpan(0, peeked).ToArray());
+
+        if (LooksLikeAac(response.Content.Headers.ContentType?.MediaType, head.AsSpan(0, peeked)))
+        {
+            /*
+             * Media Foundation fetches AAC itself.
+             *
+             * Handing it the URL rather than the socket already open here is
+             * deliberate: MF's own network source knows about ADTS framing
+             * and ICY responses, and the alternative is feeding frames to a
+             * decoder transform by hand — the same work again, for a codec
+             * whose framing this project has no reason to learn.
+             *
+             * The connection opened above is closed by the using; the second
+             * one costs a moment at the start of a station that then plays
+             * for hours.
+             */
+            counted.Dispose();
+            PlayAac(stream, cancellationToken);
+            return;
+        }
+
         // Wrapped, because the decoder asks a live stream where it is.
-        using var counted = new CountingStream(body);
-        Decode(counted, cancellationToken);
+        using (counted)
+        {
+            Decode(counted, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -269,6 +311,166 @@ public sealed class RadioSource : IAudioSource
                 "This Windows install has no MP3 decoder this Hub can use — neither the DMO "
                 + "decoder nor an ACM codec. N and KN editions ship without the media features; "
                 + "installing the Media Feature Pack provides them.", ex);
+        }
+    }
+
+
+    /// <summary>Reads as much as the buffer holds, or as much as there is.</summary>
+    private static int ReadFully(Stream source, byte[] buffer)
+    {
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            int read = source.Read(buffer, total, buffer.Length - total);
+            if (read <= 0)
+            {
+                break;
+            }
+            total += read;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Whether this stream is AAC rather than MP3.
+    /// </summary>
+    /// <remarks>
+    /// Both begin with a frame sync of eleven or twelve set bits, and the
+    /// two bits after it are what separate them: MPEG audio carries a layer
+    /// number there, and ADTS — which AAC uses — is required to leave it
+    /// zero. So one byte answers it, and answers it more honestly than the
+    /// Content-Type, which several broadcasters get wrong in both
+    /// directions.
+    ///
+    /// The header is consulted only when the stream does not begin with a
+    /// sync word at all, which usually means an ID3 tag is in the way.
+    /// </remarks>
+    private static bool LooksLikeAac(string? contentType, ReadOnlySpan<byte> head)
+    {
+        if (head.Length >= 2 && head[0] == 0xFF && (head[1] & 0xF0) == 0xF0)
+        {
+            return (head[1] & 0x06) == 0;
+        }
+
+        return contentType is not null
+            && contentType.Contains("aac", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Plays an AAC station through Media Foundation, which decodes it.
+    /// </summary>
+    /// <remarks>
+    /// Windows has had an AAC decoder since Windows 7, so this needs no
+    /// extra component and no extra licence. It is also the reason AAC is
+    /// worth adding before FLAC: more stations use it — Sveriges Radio and
+    /// most European broadcasters — and it costs a reader rather than a
+    /// container parser.
+    /// </remarks>
+    private void PlayAac(string url, CancellationToken cancellationToken)
+    {
+        using var reader = new MediaFoundationReader(url);
+        var source = reader.WaveFormat;
+
+        if (!TryPcmFormat(source, out var sampleFormat))
+        {
+            throw new NotSupportedException(
+                $"Media Foundation decoded this station to {source.Encoding} "
+                + $"{source.BitsPerSample}-bit, which this Hub does not read.");
+        }
+
+        Description = $"{Description} — AAC {source.SampleRate} Hz";
+        _logger.LogInformation(
+            "Radio decoding AAC at {Rate} Hz, {Channels} channel(s), as {Encoding} {Bits}-bit",
+            source.SampleRate, source.Channels, source.Encoding, source.BitsPerSample);
+
+        var resampler = source.SampleRate == _format.SampleRate
+            ? null
+            : new RationalResampler(source.SampleRate, _format.SampleRate, _format.Channels);
+
+        var raw = new byte[16384];
+        var width = PcmDecoder.BytesPerSample(sampleFormat);
+        float[]? decoded = null;
+        float[]? resampled = null;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            int read = reader.Read(raw, 0, raw.Length);
+            if (read <= 0)
+            {
+                return; // The station closed the connection.
+            }
+
+            // Whole samples only; a partial one carried into the next read
+            // would put the channels out of step for good.
+            read -= read % width;
+            if (read == 0)
+            {
+                continue;
+            }
+
+            int samples = read / width;
+            bool mono = source.Channels == 1;
+            int wanted = mono ? samples * 2 : samples;
+
+            if (decoded is null || decoded.Length < wanted)
+            {
+                decoded = new float[wanted];
+            }
+
+            if (mono)
+            {
+                // Into every other slot first, then duplicated, so a mono
+                // station fills a stereo profile rather than playing out of
+                // one speaker.
+                var scratch = new float[samples];
+                PcmDecoder.Decode(raw.AsSpan(0, read), scratch, sampleFormat);
+                for (int i = 0; i < samples; i++)
+                {
+                    decoded[i * 2] = scratch[i];
+                    decoded[i * 2 + 1] = scratch[i];
+                }
+            }
+            else
+            {
+                PcmDecoder.Decode(raw.AsSpan(0, read), decoded, sampleFormat);
+            }
+
+            if (resampler is null)
+            {
+                _buffer.Write(decoded.AsSpan(0, wanted));
+                continue;
+            }
+
+            int room = resampler.MaxOutputFrames(wanted / _format.Channels) * _format.Channels;
+            if (resampled is null || resampled.Length < room)
+            {
+                resampled = new float[room];
+            }
+
+            int produced = resampler.Process(decoded.AsSpan(0, wanted), resampled);
+            _buffer.Write(resampled.AsSpan(0, produced));
+        }
+    }
+
+    /// <summary>What Media Foundation handed back, as a format this reads.</summary>
+    private static bool TryPcmFormat(WaveFormat format, out PcmSampleFormat sampleFormat)
+    {
+        sampleFormat = PcmSampleFormat.S16;
+        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
+        {
+            sampleFormat = PcmSampleFormat.F32;
+            return true;
+        }
+        if (format.Encoding != WaveFormatEncoding.Pcm)
+        {
+            return false;
+        }
+        switch (format.BitsPerSample)
+        {
+            case 16: sampleFormat = PcmSampleFormat.S16; return true;
+            case 24: sampleFormat = PcmSampleFormat.S24_3; return true;
+            case 32: sampleFormat = PcmSampleFormat.S32; return true;
+            default: return false;
         }
     }
 
@@ -426,9 +628,20 @@ public sealed class RadioSource : IAudioSource
     private sealed class CountingStream : Stream
     {
         private readonly Stream _inner;
+        private readonly byte[] _prefix;
+        private int _prefixAt;
         private long _position;
 
-        public CountingStream(Stream inner) => _inner = inner;
+        /// <param name="prefix">
+        /// Bytes already taken from <paramref name="inner"/> to identify the
+        /// codec, served back before anything else. Sniffing a stream is
+        /// only free if what was sniffed is not thrown away.
+        /// </param>
+        public CountingStream(Stream inner, byte[]? prefix = null)
+        {
+            _inner = inner;
+            _prefix = prefix ?? [];
+        }
 
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -472,6 +685,12 @@ public sealed class RadioSource : IAudioSource
         public override int Read(byte[] buffer, int offset, int count)
         {
             int total = 0;
+
+            while (_prefixAt < _prefix.Length && total < count)
+            {
+                buffer[offset + total++] = _prefix[_prefixAt++];
+            }
+
             while (total < count)
             {
                 int read = _inner.Read(buffer, offset + total, count - total);
