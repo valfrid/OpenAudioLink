@@ -77,6 +77,13 @@ public sealed class RadioSource : IAudioSource
     /// <summary>How far to look for a first MP3 frame before giving up.</summary>
     private const int MaxSyncSearchBytes = 1024 * 1024;
 
+    /// <summary>
+    /// How long Media Foundation gets to open a station before this gives up
+    /// on it. Generous, because it is fetching from the far side of the
+    /// internet; finite, because it has no obligation to return at all.
+    /// </summary>
+    private static readonly TimeSpan OpenTimeout = TimeSpan.FromSeconds(20);
+
     private readonly AudioRingBuffer _buffer;
     private readonly AudioStreamFormat _format;
     private readonly HttpClient _http;
@@ -87,6 +94,9 @@ public sealed class RadioSource : IAudioSource
 
     private volatile bool _disposed;
 
+    /// <summary>The station's own name, once it has given one.</summary>
+    private string _station;
+
     public RadioSource(string url, AudioStreamFormat format, HttpClient http, ILogger logger)
     {
         _url = url;
@@ -96,7 +106,8 @@ public sealed class RadioSource : IAudioSource
         _buffer = new AudioRingBuffer(
             (int)(format.SampleRate * format.Channels * Buffer.TotalSeconds));
 
-        Description = $"Internet radio: {url}";
+        _station = $"Internet radio: {url}";
+        Description = _station;
 
         // A dedicated thread rather than the pool, for the reason the send
         // loop needed one: this reads a socket continuously and would
@@ -163,8 +174,24 @@ public sealed class RadioSource : IAudioSource
         }
     }
 
+    /// <summary>
+    /// Where this station has got to, written where a person can see it.
+    /// </summary>
+    /// <remarks>
+    /// Because "no sound" has three times now meant "blocked on a call that
+    /// never returned", and each time the description was the last thing set
+    /// before the blockage rather than a report of it. A stage marker turns
+    /// "stuck somewhere in here" into "stuck exactly here" without anybody
+    /// having to reason about which line runs next.
+    /// </remarks>
+    private void Stage(string what) => Description = $"{_station} — {what}";
+
+
     private void Play(CancellationToken cancellationToken)
     {
+        _station = $"Internet radio: {_url}";
+        Stage("connecting");
+
         var stream = Resolve(_url, cancellationToken);
 
         /*
@@ -185,13 +212,17 @@ public sealed class RadioSource : IAudioSource
             : null;
         if (!string.IsNullOrWhiteSpace(name))
         {
-            Description = $"Internet radio: {name}";
+            _station = $"Internet radio: {name}";
         }
 
-        _logger.LogInformation("Radio playing {Description} from {Url}", Description, stream);
+        _logger.LogInformation("Radio playing {Station} from {Url}", _station, stream);
 
         using var body = response.Content
             .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult();
+
+        // Reading the first bytes can block on a station that connects and
+        // then says nothing, which is its own diagnosis if it is visible.
+        Stage("reading the first bytes");
 
         /*
          * Which codec, decided from the first bytes rather than the header.
@@ -270,6 +301,7 @@ public sealed class RadioSource : IAudioSource
          * on the only thing that matters is the station staying up.
          */
         counted.SyncSearchLimit = MaxSyncSearchBytes;
+        Stage("decoding MP3");
 
         // Wrapped, because the decoder asks a live stream where it is.
         using (counted)
@@ -418,7 +450,9 @@ public sealed class RadioSource : IAudioSource
     private void PlayThroughMediaFoundation(
         string url, string codec, CancellationToken cancellationToken)
     {
-        using var reader = new MediaFoundationReader(url);
+        Stage($"opening with Media Foundation as {codec}");
+
+        using var reader = Open(url, codec);
         var source = reader.WaveFormat;
 
         if (!TryPcmFormat(source, out var sampleFormat))
@@ -433,9 +467,7 @@ public sealed class RadioSource : IAudioSource
          * it. Appending to Description in place read fine the first time and
          * grew a new "— FLAC 44100 Hz" on every reconnect after that.
          */
-        var station = Description;
-
-        Description = $"{station} — {codec} {source.SampleRate} Hz";
+        Description = $"{_station} — {codec} {source.SampleRate} Hz";
         _logger.LogInformation(
             "Radio decoding {Codec} at {Rate} Hz, {Channels} channel(s), as {Encoding} {Bits}-bit",
             codec, source.SampleRate, source.Channels, source.Encoding, source.BitsPerSample);
@@ -600,7 +632,7 @@ public sealed class RadioSource : IAudioSource
             {
                 lastReportMs = nowMs;
                 Description =
-                    $"{station} — {codec} {source.SampleRate} Hz, "
+                    $"{_station} — {codec} {source.SampleRate} Hz, "
                     + $"{framesDecoded / source.SampleRate} s, peak {Dbfs(peak)}";
 
                 // Reset, so the figure is the last couple of seconds rather
@@ -624,6 +656,72 @@ public sealed class RadioSource : IAudioSource
             int produced = resampler.Process(decoded.AsSpan(0, wanted), resampled);
             _buffer.Write(resampled.AsSpan(0, produced));
         }
+    }
+
+    /// <summary>
+    /// Opens a station through Media Foundation, or gives up saying so.
+    /// </summary>
+    /// <remarks>
+    /// On its own thread with a deadline, because the constructor is not
+    /// guaranteed to come back. It opens the URL, negotiates a media type and
+    /// asks the source for its duration — all against a live server, none of
+    /// it cancellable, and a station that answers slowly or streams without a
+    /// duration can leave it sitting there. A worker thread blocked forever
+    /// inside a COM call is the quietest failure this class can have: no
+    /// exception to catch, no log line, no reconnect, and a description
+    /// frozen at whatever was set before it.
+    ///
+    /// The abandoned thread is left to finish on its own. It is a background
+    /// thread so it cannot hold the Hub open, and there is no supported way
+    /// to interrupt the call it is stuck in; leaking one rather than blocking
+    /// the station forever is the better of the two.
+    /// </remarks>
+    private MediaFoundationReader Open(string url, string codec)
+    {
+        MediaFoundationReader? reader = null;
+        Exception? failure = null;
+        using var opened = new ManualResetEventSlim(false);
+
+        var opener = new Thread(() =>
+        {
+            try
+            {
+                reader = new MediaFoundationReader(url);
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+            finally
+            {
+                opened.Set();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "oal-radio-open",
+        };
+
+        opener.Start();
+
+        if (!opened.Wait(OpenTimeout))
+        {
+            throw new TimeoutException(
+                $"Media Foundation did not open this station within "
+                + $"{OpenTimeout.TotalSeconds:0} seconds. It was offered as {codec}; a stream "
+                + "it cannot make sense of can leave it waiting rather than refusing.");
+        }
+
+        if (failure is not null)
+        {
+            // Wrapped with the codec, because Media Foundation's own messages
+            // name an HRESULT and not the station it was given.
+            throw new NotSupportedException(
+                $"Media Foundation refused this station, offered as {codec}: {failure.Message}",
+                failure);
+        }
+
+        return reader!;
     }
 
     /// <summary>A sample magnitude as dBFS, for reading rather than for maths.</summary>
