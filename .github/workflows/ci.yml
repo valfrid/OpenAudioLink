@@ -40,6 +40,50 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
+
+      # ------------------------------------------------------------------
+      # libFLAC, and why the Hub carries a native library at all.
+      #
+      # Windows decodes FLAC in its own container and has no Ogg demuxer,
+      # and the FLAC that internet radio actually serves is Ogg-FLAC —
+      # Icecast encapsulates it that way. So Media Foundation cannot play
+      # the stations this was added for, and does not fail cleanly when
+      # asked to: it sits on the open until something times it out.
+      #
+      # libFLAC handles both containers and, unlike every reader tried
+      # before it, is built for a source that cannot seek: pass no seek
+      # callback and it stops asking. That is exactly what a live station
+      # is.
+      #
+      # Built here rather than committed, because a binary in a public
+      # repository is a thing nobody can review. BSD-3-Clause, so shipping
+      # it beside an MIT Hub is fine with the notice kept.
+      #
+      # This step is deliberately loud. Whether this particular build has
+      # Ogg support compiled in is the one fact the whole approach rests
+      # on, and it is not visible from the file name.
+      # ------------------------------------------------------------------
+      - name: Build libFLAC with Ogg support
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install libflac:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build libFLAC" }
+
+          $bin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
+          Write-Host "--- what was built ---"
+          Get-ChildItem $bin -Filter *.dll | Format-Table Name, Length
+
+          # The proof that matters. A libFLAC built without libogg still
+          # exports the Ogg entry points; it just refuses at runtime with
+          # UNSUPPORTED_CONTAINER. What it cannot fake is a dependency on
+          # ogg.dll, so that is what gets checked.
+          $dumpbin = Get-ChildItem `
+            "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
+            Select-Object -First 1
+          $flac = Get-ChildItem $bin -Filter "*FLAC*.dll" | Select-Object -First 1
+          Write-Host "--- $($flac.Name) depends on ---"
+          & $dumpbin.FullName /dependents $flac.FullName | Select-String -Pattern "\.dll"
+
       - name: Publish self-contained win-x64
         run: >
           dotnet publish src/OpenAudioLink.Hub --configuration Release
@@ -50,6 +94,24 @@ jobs:
       - name: Include the install and update scripts
         run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
         working-directory: hub
+
+      # Beside the executable, because that is where the runtime looks
+      # first and the Hub is published as a single file with nowhere else
+      # to put it. The licence travels with the binary — BSD asks for the
+      # notice to be kept, and a DLL nobody can trace the terms of is
+      # worse than no DLL.
+      - name: Include libFLAC beside the Hub
+        shell: pwsh
+        run: |
+          $bin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
+          Copy-Item "$bin\*FLAC*.dll" hub\publish
+          Copy-Item "$bin\ogg*.dll" hub\publish -ErrorAction SilentlyContinue
+          Copy-Item `
+            "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\share\libflac\copyright" `
+            hub\publish\libFLAC-LICENSE.txt -ErrorAction SilentlyContinue
+          Write-Host "--- shipped beside the Hub ---"
+          Get-ChildItem hub\publish -Filter *.dll | Format-Table Name, Length
+
       - uses: actions/upload-artifact@v5
         with:
           name: OpenAudioLink-Hub-win-x64
