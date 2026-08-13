@@ -33,12 +33,20 @@ namespace OpenAudioLink.Hub.Services;
 /// read fills the buffer. That end-of-file means end-of-stream. All three
 /// were met here in turn, and the next codec will meet them again.
 ///
-/// The fourth was the mirror of the third, and cost a station playing
-/// fifteen minutes of nothing: because a live stream never ends, the MP3
-/// reader can never reach the point where it would say "there are no
-/// frames here". Anything unrecognised is now refused with its first bytes
-/// quoted, rather than handed to a decoder that will search for a sync
-/// until the music stops.
+/// The fourth was the mirror of the third, and cost a station two silent
+/// evenings: because a live stream never ends, the MP3 reader can never
+/// reach the point where it would say "there are no frames here". Point it
+/// at something that is not MP3 and it searches for a sync until the music
+/// stops — no exception, no log line, nothing but a ring that stays empty.
+///
+/// So only a stream carrying a valid MPEG frame header goes to it, and the
+/// stream itself enforces a deadline for producing one. Everything else,
+/// recognised or not, goes to Media Foundation. That last part is the
+/// correction that mattered: an unidentifiable stream was briefly refused
+/// outright, which turned "I cannot tell" into "this will not play". Some
+/// stations genuinely cannot be identified from a peek — join an Icecast
+/// FLAC stream mid-broadcast and its header went out hours ago — and a
+/// real demuxer given the URL knows more than sixty-four bytes ever will.
 /// </remarks>
 public sealed class RadioSource : IAudioSource
 {
@@ -199,6 +207,34 @@ public sealed class RadioSource : IAudioSource
 
         var contentType = response.Content.Headers.ContentType?.MediaType;
         var codec = StationCodec.MediaFoundation(contentType, head.AsSpan(0, peeked));
+
+        /*
+         * Unrecognised goes to Media Foundation too, rather than being
+         * refused, and the difference matters more than it looks.
+         *
+         * Some stations cannot be identified from a peek at all. Join an
+         * Icecast FLAC stream mid-broadcast and the "fLaC" header went out
+         * hours ago; if the Content-Type is unhelpful as well, there is
+         * genuinely nothing here to read. Refusing on that basis turns "I
+         * cannot tell" into "this will not play", which is a worse answer
+         * than the one a real demuxer can give — Media Foundation fetches
+         * the stream itself, with its own container handling, and either
+         * decodes it or fails with a reason.
+         *
+         * So the only thing that stays on the MP3 path is a stream carrying
+         * a valid MPEG frame header. Everything else, known or not, goes to
+         * the decoder that can say no.
+         */
+        if (codec is null && !StationCodec.LooksLikeMp3(head.AsSpan(0, peeked)))
+        {
+            codec = StationCodec.FromUrl(stream) ?? "unrecognised";
+            _logger.LogInformation(
+                "Radio cannot identify {Url} from its first bytes ({Head}, served as {Type}); "
+                + "handing it to Media Foundation as {Codec}",
+                stream, StationCodec.Describe(head.AsSpan(0, peeked)),
+                contentType ?? "no content-type", codec);
+        }
+
         if (codec is not null)
         {
             /*
@@ -220,28 +256,20 @@ public sealed class RadioSource : IAudioSource
         }
 
         /*
-         * Refuse rather than assume MP3.
+         * A deadline for the first frame, enforced by the stream rather than
+         * by the decoder.
          *
-         * Anything unrecognised used to be handed to the MP3 frame reader on
-         * the theory that it would report "no frames in this stream". It
-         * cannot: Mp3Frame.LoadFromStream only gives up at the *end* of a
-         * stream, and a radio station does not end. Given a FLAC stream it
-         * scans for a sync it will never accept, for as long as the station
-         * plays — no exception, no log line, no change to the description,
-         * and a ring buffer that never receives a sample. Fifteen minutes of
-         * that looks exactly like a healthy stream carrying silence.
+         * The obvious place for this check is the decode loop, and that is
+         * where it was, and it never fired: Mp3Frame.LoadFromStream does its
+         * scanning inside a single call, so a loop that checks between calls
+         * checks nothing. Whatever the reader does with bytes it cannot
+         * parse, it has to keep asking for more — so the limit belongs on
+         * the hand that feeds it.
          *
-         * The bytes go in the message because they are the one thing nobody
-         * can see from outside, and the description is where a person will
-         * read them.
+         * It is lifted the moment a real frame is decoded, because from then
+         * on the only thing that matters is the station staying up.
          */
-        if (!StationCodec.LooksLikeMp3(head.AsSpan(0, peeked)))
-        {
-            counted.Dispose();
-            throw new NotSupportedException(
-                $"this stream is not MP3, AAC, FLAC or Ogg. It is served as "
-                + $"{contentType ?? "no content-type"} and starts with {StationCodec.Describe(head.AsSpan(0, peeked))}");
-        }
+        counted.SyncSearchLimit = MaxSyncSearchBytes;
 
         // Wrapped, because the decoder asks a live stream where it is.
         using (counted)
@@ -629,7 +657,7 @@ public sealed class RadioSource : IAudioSource
         }
     }
 
-    private void Decode(Stream body, CancellationToken cancellationToken)
+    private void Decode(CountingStream body, CancellationToken cancellationToken)
     {
         IMp3FrameDecompressor? decompressor = null;
         RationalResampler? resampler = null;
@@ -647,21 +675,6 @@ public sealed class RadioSource : IAudioSource
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                /*
-                 * A bound on the search for the first frame, because there
-                 * is no other one. LoadFromStream gives up at the end of a
-                 * stream and a station has no end, so a stream that merely
-                 * looks like MP3 could be scanned for hours. A megabyte is
-                 * thirty seconds of a 320 kbps station and far more than any
-                 * real preamble.
-                 */
-                if (frames == 0 && body.Position > MaxSyncSearchBytes)
-                {
-                    throw new NotSupportedException(
-                        $"no MP3 frame in the first {MaxSyncSearchBytes / 1024} kB — this "
-                        + "stream is not MP3, whatever it announced itself as.");
-                }
-
                 var frame = Mp3Frame.LoadFromStream(body);
                 if (frame is null)
                 {
@@ -688,6 +701,10 @@ public sealed class RadioSource : IAudioSource
                 }
 
                 frames++;
+
+                // A real frame: the stream is what it claimed to be, and the
+                // deadline for finding one has done its job.
+                body.SyncSearchLimit = long.MaxValue;
 
                 if (decompressor is null)
                 {
@@ -819,6 +836,23 @@ public sealed class RadioSource : IAudioSource
         public override bool CanWrite => false;
         public override long Length => throw new NotSupportedException();
 
+        /// <summary>
+        /// How many bytes the reader may consume before it has to show
+        /// something for them.
+        /// </summary>
+        /// <remarks>
+        /// Here rather than in the decode loop because the decode loop never
+        /// gets a turn. <c>Mp3Frame.LoadFromStream</c> hunts for a frame sync
+        /// inside a single call, so a check between calls is a check that
+        /// never runs — and on a stream that is not MP3 at all, that call
+        /// does not come back. What it must do is keep reading, which makes
+        /// this the one place the search can be stopped.
+        ///
+        /// Set to <see cref="long.MaxValue"/> once a real frame has been
+        /// decoded; from then on there is nothing left to prove.
+        /// </remarks>
+        public long SyncSearchLimit { get; set; } = long.MaxValue;
+
         public override long Position
         {
             get => _position;
@@ -873,6 +907,14 @@ public sealed class RadioSource : IAudioSource
             }
 
             _position += total;
+
+            if (_position > SyncSearchLimit)
+            {
+                throw new NotSupportedException(
+                    $"read {_position / 1024} kB of this station without finding a single MP3 "
+                    + "frame, so it is not MP3 — whatever its first bytes suggested.");
+            }
+
             return total;
         }
 

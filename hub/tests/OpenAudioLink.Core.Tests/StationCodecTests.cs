@@ -114,16 +114,65 @@ public class StationCodecTests
     }
 
     /// <summary>
-    /// A listener joined mid-frame still gets to play, which is why the sync
+    /// A listener joined mid-frame still gets to play, which is why a header
     /// is searched for rather than demanded at byte zero.
     /// </summary>
     [Fact]
-    public void AFrameSyncPartwayInStillLooksLikeMp3()
+    public void AFrameHeaderPartwayInStillLooksLikeMp3()
     {
         var head = new byte[StationCodec.SniffBytes];
         head[20] = 0xFF;
         head[21] = 0xFB;
+        head[22] = 0x90;
         Assert.True(StationCodec.LooksLikeMp3(head));
+    }
+
+    /// <summary>
+    /// The bug this whole class exists to prevent, and the one a sync-only
+    /// check could not catch: a FLAC frame header is eleven set bits too.
+    /// Its layer bits are 00, which MPEG reserves and no MP3 frame may use.
+    /// </summary>
+    [Theory]
+    [InlineData(0xF8)]
+    [InlineData(0xF9)]
+    public void AFlacFrameHeaderDoesNotLookLikeMp3(int second)
+    {
+        Assert.False(StationCodec.LooksLikeMp3(Stream(0xFF, (byte)second, 0x90)));
+    }
+
+    /// <summary>Free-format and invalid bitrates are not broadcast.</summary>
+    [Theory]
+    [InlineData(0x00)]
+    [InlineData(0xF0)]
+    public void AnImpossibleBitrateDoesNotLookLikeMp3(int third)
+    {
+        Assert.False(StationCodec.LooksLikeMp3(Stream(0xFF, 0xFB, (byte)third)));
+    }
+
+    [Fact]
+    public void AReservedSampleRateDoesNotLookLikeMp3()
+    {
+        Assert.False(StationCodec.LooksLikeMp3(Stream(0xFF, 0xFB, 0x9C)));
+    }
+
+    [Fact]
+    public void AReservedVersionDoesNotLookLikeMp3()
+    {
+        Assert.False(StationCodec.LooksLikeMp3(Stream(0xFF, 0xEB, 0x90)));
+    }
+
+    /// <summary>
+    /// A URL is never allowed to route a stream, only to name one — but it
+    /// has to name it, because some stations cannot be identified at all.
+    /// </summary>
+    [Theory]
+    [InlineData("http://stream.radioparadise.com/flac", "FLAC")]
+    [InlineData("http://live1.sr.se/p1-aac-320", "AAC")]
+    [InlineData("http://example.com/stream.ogg", "Ogg")]
+    [InlineData("http://http-live.sr.se/p3-mp3-192", null)]
+    public void TheUrlNamesAStreamOfLastResort(string url, string? expected)
+    {
+        Assert.Equal(expected, StationCodec.FromUrl(url));
     }
 
     /// <summary>

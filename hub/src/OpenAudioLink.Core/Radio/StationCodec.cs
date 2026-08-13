@@ -86,16 +86,20 @@ public static class StationCodec
     /// Whether the MP3 frame reader is worth pointing at this stream.
     /// </summary>
     /// <remarks>
-    /// Permissive on purpose. It is not asking "is this MP3" — that is the
-    /// decoder's job — but "is there any reason to think so", and the cost
-    /// of a wrong "no" is a station that refuses to play when it could have.
-    /// So an ID3 tag counts, and so does a frame sync anywhere in the window
-    /// rather than only at the front: an Icecast server may start a listener
-    /// mid-frame, and demanding a sync in byte zero would turn a working
-    /// station into a broken one.
+    /// The sync alone is not enough, and assuming it was cost a FLAC station
+    /// two silent evenings. A FLAC frame header is <c>FF F8</c> or
+    /// <c>FF F9</c> — eleven set bits, exactly like MPEG audio — so a check
+    /// that stopped at the sync called every FLAC frame an MP3 frame. Join
+    /// an Icecast FLAC stream mid-broadcast, where the <c>fLaC</c> header is
+    /// long gone, and there is nothing else to go on.
     ///
-    /// The cost of a wrong "yes" is bounded elsewhere, by a limit on how far
-    /// the decoder may search before it admits there is nothing there.
+    /// So the whole header is validated. The layer bits are what settle it:
+    /// MPEG reserves <c>00</c> and FLAC always has zeroes there.
+    ///
+    /// Still permissive about *where*: an Icecast server may start a listener
+    /// mid-frame, so a valid header anywhere in the window counts. It is not
+    /// asking "is this MP3" — that is the decoder's job — but "is there a
+    /// real MPEG frame header here", which is a question with an answer.
     /// </remarks>
     public static bool LooksLikeMp3(ReadOnlySpan<byte> head)
     {
@@ -104,17 +108,76 @@ public static class StationCodec
             return true;
         }
 
-        for (int i = 0; i + 1 < head.Length; i++)
+        for (int i = 0; i + 2 < head.Length; i++)
         {
-            // Eleven set bits: the sync every MPEG audio frame opens with,
-            // and the only part of the header this needs to recognise.
-            if (head[i] == 0xFF && (head[i + 1] & 0xE0) == 0xE0)
+            if (IsFrameHeader(head[i], head[i + 1], head[i + 2]))
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>Whether three bytes are a valid MPEG audio frame header.</summary>
+    /// <remarks>
+    /// Every field with a reserved value is checked, because the reserved
+    /// values are precisely what separates a real header from a coincidence.
+    /// Three bytes of a FLAC frame, of AAC, or of compressed audio that
+    /// happens to contain <c>FF</c> will fail at least one of them.
+    /// </remarks>
+    private static bool IsFrameHeader(byte first, byte second, byte third)
+    {
+        // Eleven set bits: the sync every MPEG audio frame opens with.
+        if (first != 0xFF || (second & 0xE0) != 0xE0)
+        {
+            return false;
+        }
+
+        // Version 01 is reserved. Layer 00 is reserved — and is what FLAC
+        // has, every frame, which is the whole reason this method exists.
+        if ((second & 0x18) == 0x08 || (second & 0x06) == 0x00)
+        {
+            return false;
+        }
+
+        // Bitrate index 1111 is invalid, 0000 is "free format" and not
+        // something a broadcaster serves.
+        int bitrate = (third & 0xF0) >> 4;
+        if (bitrate is 0 or 0xF)
+        {
+            return false;
+        }
+
+        // Sample rate index 11 is reserved.
+        return (third & 0x0C) != 0x0C;
+    }
+
+    /// <summary>
+    /// What the URL suggests, used only to name a stream, never to route it.
+    /// </summary>
+    /// <remarks>
+    /// A last resort, and deliberately a weak one. When neither the bytes nor
+    /// the Content-Type identify a stream it still has to be called
+    /// something in the description, and "Radio Paradise — FLAC 44100 Hz"
+    /// tells a person more than "— unrecognised 44100 Hz" while being just
+    /// as true when the path says <c>/flac</c>.
+    ///
+    /// It decides nothing. By the time this is asked, the stream is already
+    /// on its way to a decoder that will succeed or fail on the actual
+    /// bytes, and a URL that lies changes only a label.
+    /// </remarks>
+    public static string? FromUrl(string url)
+    {
+        if (url.Contains("flac", StringComparison.OrdinalIgnoreCase))
+        {
+            return "FLAC";
+        }
+        if (url.Contains("aac", StringComparison.OrdinalIgnoreCase))
+        {
+            return "AAC";
+        }
+        return url.Contains("ogg", StringComparison.OrdinalIgnoreCase) ? "Ogg" : null;
     }
 
     /// <summary>The start of a stream, as something a person can read.</summary>
