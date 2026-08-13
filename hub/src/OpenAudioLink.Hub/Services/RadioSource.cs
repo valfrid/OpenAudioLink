@@ -32,6 +32,13 @@ namespace OpenAudioLink.Hub.Services;
 /// files assumes things a live stream cannot provide. Position. That one
 /// read fills the buffer. That end-of-file means end-of-stream. All three
 /// were met here in turn, and the next codec will meet them again.
+///
+/// The fourth was the mirror of the third, and cost a station playing
+/// fifteen minutes of nothing: because a live stream never ends, the MP3
+/// reader can never reach the point where it would say "there are no
+/// frames here". Anything unrecognised is now refused with its first bytes
+/// quoted, rather than handed to a decoder that will search for a sync
+/// until the music stops.
 /// </remarks>
 public sealed class RadioSource : IAudioSource
 {
@@ -58,6 +65,9 @@ public sealed class RadioSource : IAudioSource
     /// forever.
     /// </summary>
     private const int MaxPlaylistBytes = 64 * 1024;
+
+    /// <summary>How far to look for a first MP3 frame before giving up.</summary>
+    private const int MaxSyncSearchBytes = 1024 * 1024;
 
     private readonly AudioRingBuffer _buffer;
     private readonly AudioStreamFormat _format;
@@ -183,12 +193,12 @@ public sealed class RadioSource : IAudioSource
          * at the start of the stream is not. So the bytes decide, and the
          * header only breaks a tie when there is no sync to read.
          */
-        var head = new byte[4];
+        var head = new byte[StationCodec.SniffBytes];
         int peeked = ReadFully(body, head);
         var counted = new CountingStream(body, head.AsSpan(0, peeked).ToArray());
 
-        var codec = MediaFoundationCodec(
-            response.Content.Headers.ContentType?.MediaType, head.AsSpan(0, peeked));
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        var codec = StationCodec.MediaFoundation(contentType, head.AsSpan(0, peeked));
         if (codec is not null)
         {
             /*
@@ -207,6 +217,30 @@ public sealed class RadioSource : IAudioSource
             counted.Dispose();
             PlayThroughMediaFoundation(stream, codec, cancellationToken);
             return;
+        }
+
+        /*
+         * Refuse rather than assume MP3.
+         *
+         * Anything unrecognised used to be handed to the MP3 frame reader on
+         * the theory that it would report "no frames in this stream". It
+         * cannot: Mp3Frame.LoadFromStream only gives up at the *end* of a
+         * stream, and a radio station does not end. Given a FLAC stream it
+         * scans for a sync it will never accept, for as long as the station
+         * plays — no exception, no log line, no change to the description,
+         * and a ring buffer that never receives a sample. Fifteen minutes of
+         * that looks exactly like a healthy stream carrying silence.
+         *
+         * The bytes go in the message because they are the one thing nobody
+         * can see from outside, and the description is where a person will
+         * read them.
+         */
+        if (!StationCodec.LooksLikeMp3(head.AsSpan(0, peeked)))
+        {
+            counted.Dispose();
+            throw new NotSupportedException(
+                $"this stream is not MP3, AAC, FLAC or Ogg. It is served as "
+                + $"{contentType ?? "no content-type"} and starts with {StationCodec.Describe(head.AsSpan(0, peeked))}");
         }
 
         // Wrapped, because the decoder asks a live stream where it is.
@@ -333,61 +367,6 @@ public sealed class RadioSource : IAudioSource
             total += read;
         }
         return total;
-    }
-
-    /// <summary>
-    /// Which codec this stream is, when it is one Media Foundation decodes.
-    /// </summary>
-    /// <remarks>
-    /// Null means MP3 — or something unrecognised, which is handed to the
-    /// MP3 frame reader because that is the one decoder here that can say
-    /// "no frames in this stream" rather than failing obscurely.
-    ///
-    /// Read from the first bytes, not the Content-Type, which several
-    /// broadcasters get wrong in both directions: audio/mpeg is served for
-    /// AAC by more than one of them. The header is consulted only when the
-    /// stream does not begin with a recognisable signature at all, which
-    /// usually means an ID3 tag is in the way.
-    ///
-    /// MP3 and ADTS both open with a frame sync of set bits, and the two
-    /// bits after it separate them: MPEG audio carries a layer number there
-    /// and ADTS is required to leave it zero.
-    /// </remarks>
-    private static string? MediaFoundationCodec(string? contentType, ReadOnlySpan<byte> head)
-    {
-        // A native FLAC stream announces itself, which is a kindness.
-        if (head.StartsWith("fLaC"u8))
-        {
-            return "FLAC";
-        }
-
-        // Ogg, which on a radio server is nearly always FLAC and
-        // occasionally Vorbis. Named for what the container says, because
-        // what is inside it is Media Foundation's problem rather than this
-        // method's.
-        if (head.StartsWith("OggS"u8))
-        {
-            return "Ogg";
-        }
-
-        if (head.Length >= 2 && head[0] == 0xFF && (head[1] & 0xF0) == 0xF0)
-        {
-            return (head[1] & 0x06) == 0 ? "AAC" : null;
-        }
-
-        if (contentType is null)
-        {
-            return null;
-        }
-        if (contentType.Contains("aac", StringComparison.OrdinalIgnoreCase))
-        {
-            return "AAC";
-        }
-        if (contentType.Contains("flac", StringComparison.OrdinalIgnoreCase))
-        {
-            return "FLAC";
-        }
-        return contentType.Contains("ogg", StringComparison.OrdinalIgnoreCase) ? "Ogg" : null;
     }
 
     /// <summary>
@@ -668,6 +647,21 @@ public sealed class RadioSource : IAudioSource
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                /*
+                 * A bound on the search for the first frame, because there
+                 * is no other one. LoadFromStream gives up at the end of a
+                 * stream and a station has no end, so a stream that merely
+                 * looks like MP3 could be scanned for hours. A megabyte is
+                 * thirty seconds of a 320 kbps station and far more than any
+                 * real preamble.
+                 */
+                if (frames == 0 && body.Position > MaxSyncSearchBytes)
+                {
+                    throw new NotSupportedException(
+                        $"no MP3 frame in the first {MaxSyncSearchBytes / 1024} kB — this "
+                        + "stream is not MP3, whatever it announced itself as.");
+                }
+
                 var frame = Mp3Frame.LoadFromStream(body);
                 if (frame is null)
                 {
@@ -686,9 +680,9 @@ public sealed class RadioSource : IAudioSource
                     if (frames == 0)
                     {
                         throw new NotSupportedException(
-                            "no MP3 frames in this stream, and it does not begin with an AAC, "
-                            + "FLAC or Ogg signature either — so it is some other format, or "
-                            + "the playlist pointed somewhere that is not audio at all.");
+                            "the station closed the connection before sending a single MP3 "
+                            + "frame. It is not MP3, or the playlist pointed somewhere that "
+                            + "is not audio at all.");
                     }
                     return;
                 }
