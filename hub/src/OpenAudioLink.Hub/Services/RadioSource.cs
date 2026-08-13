@@ -421,7 +421,14 @@ public sealed class RadioSource : IAudioSource
                 + $"{source.BitsPerSample}-bit, which this Hub does not read.");
         }
 
-        Description = $"{Description} — {codec} {source.SampleRate} Hz";
+        /*
+         * The station's own name, kept aside before anything is appended to
+         * it. Appending to Description in place read fine the first time and
+         * grew a new "— FLAC 44100 Hz" on every reconnect after that.
+         */
+        var station = Description;
+
+        Description = $"{station} — {codec} {source.SampleRate} Hz";
         _logger.LogInformation(
             "Radio decoding {Codec} at {Rate} Hz, {Channels} channel(s), as {Encoding} {Bits}-bit",
             codec, source.SampleRate, source.Channels, source.Encoding, source.BitsPerSample);
@@ -435,6 +442,30 @@ public sealed class RadioSource : IAudioSource
         float[]? decoded = null;
         float[]? resampled = null;
         int idleReads = 0;
+
+        /*
+         * How much came out of the decoder, and how loud it was.
+         *
+         * "The link is up, no packets lost, and no sound" has now been three
+         * different faults, and from the outside all three looked identical:
+         * the sender runs, the node receives, and every sample is zero. The
+         * stream description could not tell them apart, so each one cost a
+         * round of guessing.
+         *
+         * These two numbers separate them at a glance. No seconds at all
+         * means the decoder is not producing — the format was refused, or
+         * the reader is handing back nothing. Seconds climbing with a peak
+         * of −∞ means it is producing silence, which is a different fault in
+         * a different place. Seconds climbing with a real peak means the
+         * decode is fine and the problem is downstream of here.
+         *
+         * Cheap enough to leave on: one comparison per sample on a thread
+         * that is already touching every one of them.
+         */
+        long framesDecoded = 0;
+        float peak = 0f;
+        long lastReportMs = Environment.TickCount64;
+        bool announced = false;
 
         /*
          * Stop reading while there is already enough audio waiting.
@@ -478,7 +509,25 @@ public sealed class RadioSource : IAudioSource
                  */
                 if (++idleReads > 50)
                 {
-                    return;
+                    /*
+                     * Loudly, because returning quietly here is invisible.
+                     *
+                     * Play() returns without throwing, so Run() logs nothing,
+                     * changes nothing, waits three seconds and reconnects —
+                     * forever. From outside, a station that never produced a
+                     * sample and one that is playing quietly look the same:
+                     * the stream runs, packets flow, no loss is reported.
+                     *
+                     * Thrown rather than logged so it reaches the description,
+                     * which is the one thing about a running stream that a
+                     * person can see.
+                     */
+                    throw new EndOfStreamException(
+                        framesDecoded == 0
+                            ? $"Media Foundation opened this station as {codec} but handed back "
+                                + "no audio at all within a second. The format was accepted and "
+                                + "the decoder produced nothing."
+                            : "the station stopped sending");
                 }
                 Thread.Sleep(20);
                 continue;
@@ -521,6 +570,38 @@ public sealed class RadioSource : IAudioSource
                 PcmDecoder.Decode(raw.AsSpan(0, read), decoded, sampleFormat);
             }
 
+            for (int i = 0; i < wanted; i++)
+            {
+                float magnitude = Math.Abs(decoded[i]);
+                if (magnitude > peak)
+                {
+                    peak = magnitude;
+                }
+            }
+
+            framesDecoded += wanted / _format.Channels;
+
+            if (!announced)
+            {
+                announced = true;
+                _logger.LogInformation(
+                    "Radio {Codec} produced its first samples", codec);
+            }
+
+            long nowMs = Environment.TickCount64;
+            if (nowMs - lastReportMs >= 2000)
+            {
+                lastReportMs = nowMs;
+                Description =
+                    $"{station} — {codec} {source.SampleRate} Hz, "
+                    + $"{framesDecoded / source.SampleRate} s, peak {Dbfs(peak)}";
+
+                // Reset, so the figure is the last couple of seconds rather
+                // than the loudest moment since the station started. A peak
+                // that never falls cannot show a stream going quiet.
+                peak = 0f;
+            }
+
             if (resampler is null)
             {
                 _buffer.Write(decoded.AsSpan(0, wanted));
@@ -537,6 +618,15 @@ public sealed class RadioSource : IAudioSource
             _buffer.Write(resampled.AsSpan(0, produced));
         }
     }
+
+    /// <summary>A sample magnitude as dBFS, for reading rather than for maths.</summary>
+    /// <remarks>
+    /// Exactly zero is reported as −∞ rather than as a very large negative
+    /// number, because "−∞" is what a person recognises as *nothing at all*
+    /// and −144 dB reads like a quiet stream.
+    /// </remarks>
+    private static string Dbfs(float magnitude) =>
+        magnitude <= 0f ? "−∞ dB" : $"{20 * Math.Log10(magnitude):0.0} dB";
 
     /// <summary>What Media Foundation handed back, as a format this reads.</summary>
     private static bool TryPcmFormat(WaveFormat format, out PcmSampleFormat sampleFormat)
