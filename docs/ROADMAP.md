@@ -350,6 +350,11 @@ Done:
   the MP3 decoder: a FLAC frame header is `FF F8`, which satisfies an
   eleven-bit sync check and cost two evenings of silence.
   21 tests in `StationCodec`.
+
+**All three codecs verified by ear on 0.14.0** — MP3, AAC and Ogg-FLAC,
+each on a real station. Worth stating as its own line because for most of
+this feature's life the build was green and the speakers were silent, and
+a passing test suite never once caught that.
 - **A lossless path end to end.** The transport has always carried
   uncompressed L24; with a FLAC station the source is no longer the lossy
   link. This was the reason radio was chosen as a source at all.
