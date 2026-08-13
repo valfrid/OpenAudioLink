@@ -215,7 +215,32 @@ public sealed class RadioSource : IAudioSource
             _station = $"Internet radio: {name}";
         }
 
-        _logger.LogInformation("Radio playing {Station} from {Url}", _station, stream);
+        /*
+         * Where the station actually turned out to be, after redirects.
+         *
+         * HttpClient follows them silently, so everything above — the
+         * icy-name, the first bytes, the codec — describes the final URL
+         * while the variable still holds the first one. Handing that first
+         * one to Media Foundation makes MF repeat the redirect itself, and
+         * it is not obliged to be as good at it: a plain http:// address
+         * that answers 301 to https:// is a different job for its network
+         * source than for HttpClient, and one it can sit on rather than
+         * refuse.
+         *
+         * The station that would not play redirects across schemes. The ones
+         * that play do not. That is not proof, but handing over the address
+         * the audio really came from is right whether or not it is the
+         * cause — the alternative is asking a second client to rediscover
+         * something already known.
+         */
+        var resolved = response.RequestMessage?.RequestUri?.ToString() ?? stream;
+        if (!string.Equals(resolved, stream, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Radio {Url} redirected to {Resolved}", stream, resolved);
+        }
+
+        _logger.LogInformation("Radio playing {Station} from {Url}", _station, resolved);
 
         using var body = response.Content
             .ReadAsStreamAsync(cancellationToken).GetAwaiter().GetResult();
@@ -258,11 +283,11 @@ public sealed class RadioSource : IAudioSource
          */
         if (codec is null && !StationCodec.LooksLikeMp3(head.AsSpan(0, peeked)))
         {
-            codec = StationCodec.FromUrl(stream) ?? "unrecognised";
+            codec = StationCodec.FromUrl(resolved) ?? "unrecognised";
             _logger.LogInformation(
                 "Radio cannot identify {Url} from its first bytes ({Head}, served as {Type}); "
                 + "handing it to Media Foundation as {Codec}",
-                stream, StationCodec.Describe(head.AsSpan(0, peeked)),
+                resolved, StationCodec.Describe(head.AsSpan(0, peeked)),
                 contentType ?? "no content-type", codec);
         }
 
@@ -282,7 +307,7 @@ public sealed class RadioSource : IAudioSource
              * for hours.
              */
             counted.Dispose();
-            PlayThroughMediaFoundation(stream, codec, cancellationToken);
+            PlayThroughMediaFoundation(resolved, codec, cancellationToken);
             return;
         }
 
