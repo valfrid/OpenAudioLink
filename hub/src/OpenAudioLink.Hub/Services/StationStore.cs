@@ -175,6 +175,50 @@ public sealed class StationStore
         }
     }
 
+    /// <summary>
+    /// Puts the stations in the order given.
+    /// </summary>
+    /// <remarks>
+    /// The order is the operator's arrangement of their own buttons, which
+    /// is theirs — the same reasoning as cast points being a list rather
+    /// than a dictionary. Somebody who listens to one station daily wants
+    /// it first, and no amount of sorting by name or by date added will
+    /// work that out.
+    ///
+    /// Ids not named are kept, in their existing order, after the ones that
+    /// were. A reorder sent from a page that has since gone stale then
+    /// loses nobody's station — it just leaves the ones it did not know
+    /// about at the end.
+    /// </remarks>
+    /// <returns>False when an id names no station, so a typo is refused
+    /// rather than silently dropping the entry.</returns>
+    public bool Reorder(IReadOnlyList<string>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            var wanted = new List<Station>(_stations.Count);
+            foreach (var id in ids)
+            {
+                var station = _stations.FirstOrDefault(s => s.Id == id);
+                if (station is null || wanted.Contains(station))
+                {
+                    return false;
+                }
+                wanted.Add(station);
+            }
+
+            wanted.AddRange(_stations.Where(s => !wanted.Contains(s)));
+            _stations = wanted;
+            Save();
+            return true;
+        }
+    }
+
     public bool Delete(string id)
     {
         lock (_gate)

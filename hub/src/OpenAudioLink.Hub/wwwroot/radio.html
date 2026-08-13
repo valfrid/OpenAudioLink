@@ -69,7 +69,9 @@
 
     <section class="card picker">
       <h2>Stations</h2>
-      <div class="picker-grid" id="stations"></div>
+      <!-- One column: a drag then only ever means up or down, which is
+           the gesture that was asked for and the one a thumb can do. -->
+      <div class="picker-grid" id="stations" style="grid-template-columns:1fr"></div>
 
       <form class="add" id="add-station">
         <!--
@@ -117,6 +119,7 @@
   let state = null;
   let chosen = null;   // Station id the user has selected, not necessarily playing.
   let busy = false;
+  let dragging = null;   // The row being carried, if any.
 
   const sendVolume = OAL.volumeSender(() => $('room').value, message => say(message, true));
 
@@ -148,16 +151,27 @@
   }
 
   function renderStations() {
+    // Not while a card is in the hand: a refresh lands every four seconds
+    // and rebuilding the list mid-drag drops whatever is being carried.
+    if (dragging) return;
+
     $('stations').innerHTML = state.stations.map(station => `
-      <button class="choice${station.id === chosen ? ' active' : ''}"
-              data-station="${OAL.esc(station.id)}">
-        <div class="mini-logo">${OAL.esc(initials(station.name))}</div>
-        <div style="min-width:0">
-          <div class="choice-title">${OAL.esc(station.name)}</div>
-          <div class="choice-sub" style="overflow:hidden;text-overflow:ellipsis">
-            ${OAL.esc(station.url)}</div>
-        </div>
-      </button>`).join('')
+      <div class="station-row" data-row="${OAL.esc(station.id)}">
+        <div class="grip" data-grip="${OAL.esc(station.id)}"
+             title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</div>
+        <button class="choice${station.id === chosen ? ' active' : ''}"
+                data-station="${OAL.esc(station.id)}">
+          <div class="mini-logo">${OAL.esc(initials(station.name))}</div>
+          <div style="min-width:0">
+            <div class="choice-title">${OAL.esc(station.name)}</div>
+            <div class="choice-sub" style="overflow:hidden;text-overflow:ellipsis">
+              ${OAL.esc(station.url)}</div>
+          </div>
+        </button>
+        <button class="forget" data-forget="${OAL.esc(station.id)}"
+                title="Forget ${OAL.esc(station.name)}"
+                aria-label="Forget ${OAL.esc(station.name)}">×</button>
+      </div>`).join('')
       || '<div class="footer-note">No stations yet. Add one below — SomaFM and '
          + 'Radio Paradise both publish plain MP3 streams.</div>';
   }
@@ -259,13 +273,119 @@
     }
   }
 
-  $('stations').addEventListener('click', event => {
+  $('stations').addEventListener('click', async event => {
+    const forget = event.target.closest('[data-forget]');
+    if (forget) {
+      const station = state.stations.find(s => s.id === forget.dataset.forget);
+      if (!station || !confirm(`Forget ${station.name}?`)) return;
+      try {
+        await OAL.api('DELETE', `/api/stations/${encodeURIComponent(station.id)}`);
+        if (chosen === station.id) chosen = null;
+        sayAdd(`Forgot ${station.name}.`);
+      } catch (error) {
+        sayAdd(error.message, true);
+      }
+      await refresh();
+      return;
+    }
+
     const tile = event.target.closest('[data-station]');
     if (!tile) return;
     chosen = tile.dataset.station;
     renderStations();
     renderHero();
   });
+
+  /*
+   * Dragging a card, with pointer events rather than HTML5 drag-and-drop.
+   *
+   * The HTML5 API does not fire on touch on either mobile platform, and a
+   * feature described as "drag the cards up and down" that only works with
+   * a mouse is not the feature. Pointer events cover both, and the grip has
+   * touch-action: none so the browser moves the card instead of scrolling
+   * the page.
+   *
+   * The rows are measured once when the drag starts. Reading positions
+   * during a drag would read the ones this drag is busy changing.
+   */
+  $('stations').addEventListener('pointerdown', event => {
+    const grip = event.target.closest('[data-grip]');
+    if (!grip || busy) return;
+
+    const row = grip.closest('.station-row');
+    const rows = [...$('stations').querySelectorAll('.station-row')];
+    dragging = {
+      row,
+      rows,
+      from: rows.indexOf(row),
+      startY: event.clientY,
+      height: row.getBoundingClientRect().height + 12,   // card plus the gap
+      offset: 0,
+    };
+
+    grip.setPointerCapture(event.pointerId);
+    row.classList.add('lifted');
+    rows.forEach(other => other !== row && other.classList.add('shifted'));
+    event.preventDefault();
+  });
+
+  $('stations').addEventListener('pointermove', event => {
+    if (!dragging) return;
+
+    const moved = event.clientY - dragging.startY;
+    dragging.row.style.transform = `translateY(${moved}px)`;
+
+    // How many places it has travelled, rounded to the nearest card.
+    const places = Math.round(moved / dragging.height);
+    const to = Math.max(0, Math.min(dragging.rows.length - 1, dragging.from + places));
+    dragging.offset = to - dragging.from;
+
+    // Everything between origin and destination steps out of the way.
+    dragging.rows.forEach((other, at) => {
+      if (other === dragging.row) return;
+      let shift = 0;
+      if (dragging.offset > 0 && at > dragging.from && at <= to) shift = -dragging.height;
+      if (dragging.offset < 0 && at < dragging.from && at >= to) shift = dragging.height;
+      other.style.transform = `translateY(${shift}px)`;
+    });
+  });
+
+  async function dropCard() {
+    if (!dragging) return;
+    const { row, rows, from, offset } = dragging;
+
+    row.classList.remove('lifted');
+    rows.forEach(other => {
+      other.classList.remove('shifted');
+      other.style.transform = '';
+    });
+    dragging = null;
+
+    if (offset === 0) {
+      renderStations();
+      return;
+    }
+
+    // The whole arrangement in one request. Two swaps racing a refresh can
+    // end half applied; one list cannot.
+    const ids = state.stations.map(s => s.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(from + offset, 0, moved);
+
+    try {
+      state.stations = await OAL.api('PUT', '/api/stations/order', { ids });
+      renderStations();
+      sayAdd('Order saved.');
+    } catch (error) {
+      sayAdd(error.message, true);
+      await refresh();
+    }
+  }
+
+  $('stations').addEventListener('pointerup', dropCard);
+  // A cancelled pointer — a phone call, a gesture the OS took over — must
+  // put the card down rather than leave the list frozen mid-drag.
+  $('stations').addEventListener('pointercancel', dropCard);
 
   $('play').addEventListener('click', toggle);
   $('prev').addEventListener('click', () => step(-1));

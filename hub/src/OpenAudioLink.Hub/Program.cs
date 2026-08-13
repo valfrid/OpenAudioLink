@@ -642,6 +642,18 @@ app.MapPut("/api/stations/{id}", (string id, StationRequest request, StationStor
     return stations.TryGet(id, out var updated) ? Results.Ok(updated) : Results.NotFound();
 });
 
+/*
+ * The order of the buttons, which belongs to whoever presses them.
+ *
+ * A whole list rather than a move-up/move-down, because a drag produces one
+ * final arrangement and sending it once cannot end half applied — two
+ * separate swaps racing a refresh can.
+ */
+app.MapPut("/api/stations/order", (StationOrderRequest request, StationStore stations) =>
+    stations.Reorder(request.Ids)
+        ? Results.Ok(stations.Snapshot())
+        : Results.BadRequest(new { error = "that is not this Hub's list of stations" }));
+
 app.MapDelete("/api/stations/{id}", (string id, StationStore stations) =>
     stations.Delete(id) ? Results.Ok(new { status = "deleted" }) : Results.NotFound());
 
@@ -1233,6 +1245,9 @@ internal sealed record CastPointPlayRequest(
 
 /// <summary>Force skips the "already up to date" and "something is playing" refusals.</summary>
 internal sealed record HubUpdateRequest(bool? Force = null);
+
+/// <summary>Every station id, in the order they should appear.</summary>
+internal sealed record StationOrderRequest(IReadOnlyList<string>? Ids = null);
 
 internal sealed record StationRequest(string? Name, string? Url);
 

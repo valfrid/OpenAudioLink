@@ -241,3 +241,53 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .logo { width: 90px; height: 90px; font-size: 22px; }
   .now { min-height: 0; }
 }
+
+/*
+ * Reorderable station cards.
+ *
+ * Pointer events rather than HTML5 drag-and-drop, which does not fire on
+ * touch on either mobile platform — a "drag the cards" feature that only
+ * works with a mouse is not the feature that was asked for.
+ */
+.station-row { display: flex; gap: 0.5rem; align-items: stretch; }
+.station-row .choice { flex: 1; min-width: 0; }
+
+.grip {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  border-radius: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: grab;
+  /* Or the browser scrolls the page instead of moving the card. */
+  touch-action: none;
+  user-select: none;
+}
+
+.grip:active { cursor: grabbing; }
+
+.forget {
+  flex: 0 0 auto;
+  width: 2.6rem;
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 1.1rem;
+  padding: 0;
+}
+
+.forget:hover { color: var(--danger); border-color: var(--danger); }
+
+/* The card being carried, and the space it came from. */
+.station-row.lifted {
+  opacity: .9;
+  transform: scale(1.02);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+  position: relative;
+  z-index: 2;
+}
+
+.station-row.shifted { transition: transform .12s ease; }
