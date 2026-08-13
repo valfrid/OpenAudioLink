@@ -241,13 +241,35 @@ answer:
 Start with Media Foundation, because a source that needs no extra download
 is a source that works the first time. FLAC follows once the path is proven.
 
-**What happened instead, and it is worth recording because the premise was
-wrong.** Media Foundation has decoded FLAC natively since Windows 10, so
-the sentence above — "FLAC needs a separate library" — was simply out of
-date, and the whole ffmpeg question never had to be answered. Adding FLAC
-cost a four-byte signature check and a rename. The lesson is not about
-codecs: the option that looked expensive was priced from an assumption
-nobody had rechecked in the years since it was true.
+**What happened instead — and this paragraph has been wrong once already,
+which is the most useful thing about it.**
+
+The first attempt read: Media Foundation has decoded FLAC natively since
+Windows 10, so "FLAC needs a separate library" was out of date and the
+ffmpeg question never had to be answered. Adding FLAC cost a signature
+check and a rename. That was written after a green build and before a
+single FLAC frame had been decoded, and it was wrong.
+
+Media Foundation does decode FLAC — **in FLAC's own container**. The FLAC
+that internet radio actually serves is **Ogg-FLAC**, because that is how
+Icecast encapsulates it, and Windows ships no Ogg demuxer at all. So the
+one thing needed was the one thing missing. Worse, asked for it anyway,
+Media Foundation does not refuse: it never returns from opening the
+stream. Six releases went out against that silence, each fixing something
+real and none of them the cause.
+
+The original sentence was right. FLAC needed a separate library, and the
+library is **libFLAC** — Xiph's own, BSD-licensed, 261 kB beside a 30 kB
+libogg, built in CI and shipped with the Hub. It reads both containers,
+and it is the only decoder tried here that was designed for a source that
+cannot seek: supply no seek callback and it stops asking. Every other
+reader in this file had to be tricked into accepting a live stream.
+
+Two lessons, and neither is about codecs. An assumption nobody has
+rechecked is worth rechecking — but *the recheck has to be a measurement*,
+and "it compiled" is not one. And when a component fails by hanging
+rather than by refusing, every diagnosis downstream of it is a guess until
+something makes the hang visible.
 
 ### Two things that will bite before any decoder does
 
@@ -276,7 +298,7 @@ maintain. These are test cases, not a collection:
 | --- | --- |
 | SomaFM | Plain Icecast, MP3 and AAC. If this fails nothing works |
 | Sveriges Radio | Local, has an open API for channel URLs, and P2 is a real quality test |
-| Radio Paradise | FLAC — the lossless path |
+| Radio Paradise | FLAC — the lossless path, and Ogg-FLAC specifically, which is what broke the assumption that Windows could decode it |
 | Linn Radio | FLAC again, different implementation, so the handling is not shaped around one station |
 
 Check current URLs at the source rather than hardcoding a list; they rotate
@@ -312,11 +334,22 @@ Done:
   station in the 64-bit Hub. That was the silence.)
 - **Reconnect** on a fixed three-second retry, sending silence meanwhile
   rather than stalling the sender.
-- **AAC and FLAC**, through Media Foundation, chosen from the stream's
-  first bytes rather than its `Content-Type` — several broadcasters serve
-  `audio/mpeg` for AAC, and a frame sync does not lie. Media Foundation is
-  handed the URL rather than the socket already open, so its own network
-  source deals with ADTS framing and Ogg pages.
+- **AAC**, through Media Foundation, chosen from the stream's first bytes
+  rather than its `Content-Type` — several broadcasters serve `audio/mpeg`
+  for AAC, and a frame sync does not lie. Media Foundation is handed the
+  URL rather than the socket already open, so its own network source deals
+  with ADTS framing.
+- **FLAC and Ogg-FLAC**, through libFLAC on the socket already open.
+  Verified on hardware against Radio Paradise: 20,409 of 20,410 packets,
+  0.005% loss, one isolated gap, 1.27 ms jitter.
+- **A sniff that knows what it cannot tell.** The container is read at the
+  routing decision rather than trusted from a signature search, because
+  the Ogg-FLAC mapping embeds the native `fLaC` signature inside its first
+  page — a window search finds FLAC inside what is really Ogg, exactly
+  backwards. Only a stream carrying a *valid* MPEG frame header reaches
+  the MP3 decoder: a FLAC frame header is `FF F8`, which satisfies an
+  eleven-bit sync check and cost two evenings of silence.
+  21 tests in `StationCodec`.
 - **A lossless path end to end.** The transport has always carried
   uncompressed L24; with a FLAC station the source is no longer the lossy
   link. This was the reason radio was chosen as a source at all.
@@ -327,12 +360,9 @@ Done:
 
 Open, in the order they are worth doing:
 
-- **Ogg-wrapped FLAC and Vorbis.** Recognised and routed, but whether they
-  decode depends on what the machine has installed — Media Foundation
-  reads native FLAC without help and Ogg only sometimes. It fails with a
-  type name in the stream description rather than silently, which is
-  enough to act on, and no station worth having has been found that only
-  offers Ogg.
+- **Ogg Vorbis.** Recognised and sent to libFLAC, which will refuse it —
+  the Ogg stations worth having carry FLAC, and Vorbis has not come up.
+  It fails with a reason in the stream description rather than silently.
 - **ICY metadata** for track titles. Skipped on purpose so far: asking for
   it means stripping a block every `icy-metaint` bytes, and getting that
   arithmetic wrong is indistinguishable from a corrupt stream. Worth doing

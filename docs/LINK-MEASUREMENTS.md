@@ -515,6 +515,62 @@ speaker. Wired, the Hub's own transmission leaves the air entirely,
 halving the airtime each stream costs — the same third-hop arithmetic as
 above, applied to the hop that carries all of the audio.
 
+## Run 21: lossless internet radio, end to end
+
+The first lossless *source* this project has had. The transport has
+carried uncompressed L24 since the first packet, so the station was the
+only lossy link left in the chain; with Ogg-FLAC decoded through libFLAC
+it no longer is.
+
+| | |
+| --- | --- |
+| Source | Radio Paradise, `http://stream.radioparadise.com/flac` |
+| Container | Ogg-FLAC, 44.1 kHz, resampled 147:160 to 48 kHz |
+| Hub | 0.14.0, wired |
+| Consumer | PartySpeaker |
+| Packets | 20 409 of 20 410 |
+| Loss | 0.005%, one gap, isolated |
+| Jitter | 1.27 ms |
+
+Comparable with run 19's six hours of MP3 radio (0.061%, 1.31 ms), which
+is the point: **the decoder changed and the link did not.** Nothing about
+carrying lossless audio costs the network anything, because the wire
+format never varied — 48 kHz L24 whatever the source. The only thing that
+improved is what went into it.
+
+### What this run actually cost
+
+Eight Hub releases, and the measurement that mattered was not taken until
+the seventh. The station was silent from 0.13.3 to 0.13.8 while every
+counter reported health: the stream ran, packets flowed, loss was zero,
+and all of it was silence. Each release fixed something genuinely broken —
+a four-byte signature check that could not see past a preamble, an MP3
+decoder that can never report failure on a stream that never ends, a
+sync-only header test that read every FLAC frame as an MP3 frame — and
+none of them was the cause.
+
+The cause was that **Windows ships no Ogg demuxer**, and Media Foundation,
+asked to open Ogg-FLAC anyway, does not refuse. It never returns. A
+component that hangs rather than failing makes every diagnosis downstream
+of it a guess.
+
+Three things ended it, and all three were measurements:
+
+1. **Underrun arithmetic.** 90 103 680 underrun samples ÷ 96 000 = 938 s,
+   and 187 717 packets × 240 frames = 938 s. Identical, so *every sample
+   ever sent* had been an underrun. That ruled out "playing quietly".
+2. **A stage marker in the stream description** — connecting, reading the
+   first bytes, opening with Media Foundation, decoding. It reported
+   `opening with Media Foundation as FLAC` and stayed there, which located
+   the hang in one reading instead of by inference.
+3. **Thirty-two bytes of the stream**, fetched by hand: `Content-Type:
+   application/ogg`, first bytes `OggS`, and no redirect. That named the
+   container and killed two of my theories at once.
+
+The generalisable part is in `ROADMAP.md`: a green build is not a
+measurement, and neither is a plausible chain of reasoning. Nothing here
+was known until something was counted.
+
 ## Method
 
 1. Put both nodes on the same access point. They pick by signal strength,
