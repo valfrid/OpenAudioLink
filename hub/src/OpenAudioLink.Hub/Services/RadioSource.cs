@@ -391,14 +391,57 @@ public sealed class RadioSource : IAudioSource
         var width = PcmDecoder.BytesPerSample(sampleFormat);
         float[]? decoded = null;
         float[]? resampled = null;
+        int idleReads = 0;
+
+        /*
+         * Stop reading while there is already enough audio waiting.
+         *
+         * The MP3 path needs no throttle because the station itself paces
+         * it — bytes arrive in real time. Media Foundation buffers ahead and
+         * hands over as fast as it is asked, so this loop can outrun real
+         * time, fill a two-second ring, and start overwriting audio that has
+         * not been sent yet. The ring drops the oldest samples when it
+         * overflows, which is heard as skipping rather than as a gap.
+         *
+         * This is the same flow control LibrespotInstance applies to a pipe,
+         * and for the same reason: whatever is upstream has to be told to
+         * wait, and there is no other way to tell it.
+         */
+        int highWater = _format.SampleRate * _format.Channels * 3 / 2;
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            while (_buffer.Available >= highWater && !cancellationToken.IsCancellationRequested)
+            {
+                Thread.Sleep(5);
+            }
+
             int read = reader.Read(raw, 0, raw.Length);
             if (read <= 0)
             {
-                return; // The station closed the connection.
+                /*
+                 * Nothing right now is not the same as nothing ever.
+                 *
+                 * A file reader returns zero at the end of the file, and this
+                 * loop treated that as the station hanging up: it returned,
+                 * the worker waited three seconds and reconnected. On a live
+                 * stream that produced two seconds of music and four of
+                 * silence, over and over, with not a single packet lost —
+                 * the sender was faithfully sending an empty ring.
+                 *
+                 * A live reader can simply be between buffers. So wait a
+                 * little and ask again, and only treat a second of continuous
+                 * nothing as the end.
+                 */
+                if (++idleReads > 50)
+                {
+                    return;
+                }
+                Thread.Sleep(20);
+                continue;
             }
+
+            idleReads = 0;
 
             // Whole samples only; a partial one carried into the next read
             // would put the channels out of step for good.
