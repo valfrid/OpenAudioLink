@@ -208,9 +208,9 @@ Still open on this path:
 
 ## Internet radio, the next source
 
-**Built as far as MP3, plus the switchboard that makes it usable.** The
-sections below are the plan as written; what actually landed, and what is
-still open, is at the end under "Where radio stands".
+**Built, through MP3, AAC and FLAC, plus the switchboard that makes it
+usable.** The sections below are the plan as written; what actually landed,
+and what is still open, is at the end under "Where radio stands".
 
 Chosen because it is the cheapest strong source left and the only one that
 can be **lossless**. Radio Paradise, Linn and Naim serve FLAC over HTTP, so
@@ -240,6 +240,14 @@ answer:
 
 Start with Media Foundation, because a source that needs no extra download
 is a source that works the first time. FLAC follows once the path is proven.
+
+**What happened instead, and it is worth recording because the premise was
+wrong.** Media Foundation has decoded FLAC natively since Windows 10, so
+the sentence above — "FLAC needs a separate library" — was simply out of
+date, and the whole ffmpeg question never had to be answered. Adding FLAC
+cost a four-byte signature check and a rename. The lesson is not about
+codecs: the option that looked expensive was priced from an assumption
+nobody had rechecked in the years since it was true.
 
 ### Two things that will bite before any decoder does
 
@@ -296,24 +304,35 @@ Done:
   which looks like a decoder fault rather than an unsupported protocol.
   20 tests.
 - **MP3 decoding off a live socket**, frame by frame through Windows' own
-  ACM codec, at whatever rate the station's first frame declares.
+  DMO decoder, at whatever rate the station's first frame declares.
   Deliberately not a reader: the usual .NET audio readers want a seekable
-  stream, and a radio station is the opposite of seekable.
+  stream, and a radio station is the opposite of seekable. (ACM was the
+  first choice and is kept only as a fallback — Microsoft's MP3 ACM codec
+  exists as a 32-bit binary only, so it threw on the first frame of every
+  station in the 64-bit Hub. That was the silence.)
 - **Reconnect** on a fixed three-second retry, sending silence meanwhile
   rather than stalling the sender.
+- **AAC and FLAC**, through Media Foundation, chosen from the stream's
+  first bytes rather than its `Content-Type` — several broadcasters serve
+  `audio/mpeg` for AAC, and a frame sync does not lie. Media Foundation is
+  handed the URL rather than the socket already open, so its own network
+  source deals with ADTS framing and Ogg pages.
+- **A lossless path end to end.** The transport has always carried
+  uncompressed L24; with a FLAC station the source is no longer the lossy
+  link. This was the reason radio was chosen as a source at all.
 - **Saved stations**, on the Hub rather than in a browser, with four
-  seeded on first run.
+  seeded on first run, reorderable by dragging and removable.
 - **The switchboard**, `/play`, room-scoped by `#room=`. See
   `CONTROL-SURFACE.md` for what building it changed.
 
 Open, in the order they are worth doing:
 
-- **FLAC.** The reason radio was chosen — it is the only lossless source
-  this project can have — and the one thing still missing. Needs either a
-  decoder library or the ffmpeg dependency the section above weighed.
-- **AAC**, which some SomaFM channels and most European broadcasters use.
-  Media Foundation can do it; the awkwardness is that its readers want a
-  seekable stream for the same reason the MP3 readers did.
+- **Ogg-wrapped FLAC and Vorbis.** Recognised and routed, but whether they
+  decode depends on what the machine has installed — Media Foundation
+  reads native FLAC without help and Ogg only sometimes. It fails with a
+  type name in the stream description rather than silently, which is
+  enough to act on, and no station worth having has been found that only
+  offers Ogg.
 - **ICY metadata** for track titles. Skipped on purpose so far: asking for
   it means stripping a block every `icy-metaint` bytes, and getting that
   arithmetic wrong is indistinguishable from a corrupt stream. Worth doing
@@ -338,7 +357,7 @@ Priority is intentionally not fixed:
   keeping the Cast front end that already works and is account-free while
   OpenAudioLink distributes to speakers. Analog through the PCM1808 first,
   because it needs no new parts and no sample-rate conversion
-- ~~internet radio~~ — MP3 done, FLAC and AAC open, see above
+- ~~internet radio~~ — done, MP3, AAC and FLAC, see above
 - Home Assistant integration
 - Bluetooth input
 - DSP — including automatic speaker and room calibration with a

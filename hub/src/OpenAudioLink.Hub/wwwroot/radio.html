@@ -104,9 +104,10 @@
       -->
       <div class="footer-note" id="add-status"></div>
       <div class="footer-note">
-        MP3 and AAC streams, and the playlists that point at them. FLAC is
-        not decoded yet, so a station that stays silent is probably one of
-        those — the line above says which, in the station's own words.
+        MP3, AAC and FLAC streams, and the playlists that point at them.
+        A FLAC station reaches the speakers lossless end to end, since the
+        link itself has always carried uncompressed audio. If a station
+        stays silent, the line above says why in its own words.
       </div>
     </section>
   </div>
@@ -172,8 +173,9 @@
                 title="Forget ${OAL.esc(station.name)}"
                 aria-label="Forget ${OAL.esc(station.name)}">×</button>
       </div>`).join('')
-      || '<div class="footer-note">No stations yet. Add one below — SomaFM and '
-         + 'Radio Paradise both publish plain MP3 streams.</div>';
+      || '<div class="footer-note">No stations yet. Add one below — SomaFM '
+         + 'publishes plain MP3 streams, and Radio Paradise publishes FLAC '
+         + 'at http://stream.radioparadise.com/flac.</div>';
   }
 
   function renderHero() {

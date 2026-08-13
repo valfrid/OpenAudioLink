@@ -16,20 +16,22 @@ namespace OpenAudioLink.Hub.Services;
 /// separate process, no account, no sign-in, no zeroconf — see
 /// <c>ROADMAP.md</c> for why it was chosen over the alternatives.
 ///
-/// **MP3 and AAC.** Between them they cover SomaFM, Radio Paradise,
-/// Sveriges Radio and most of what people actually listen to.
+/// **MP3, AAC and FLAC.** With FLAC this became the only lossless path in
+/// the project: the transport has always been uncompressed L24, so the
+/// source was the lossy link, and now it need not be.
 ///
-/// The two are decoded differently, for a reason worth knowing before
-/// adding a third. MP3 is read frame by frame off the live socket, because
-/// the usual .NET audio readers want a *seekable* stream and a radio
-/// station is the opposite of seekable — that assumption is what kept this
-/// class silent from the day it was written. AAC is handed to Media
-/// Foundation as a URL instead, so its own network source deals with the
-/// framing and the seeking, and this class never sees the socket.
+/// Two decoders, for a reason worth knowing before adding a third. MP3 is
+/// read frame by frame off the live socket, because the usual .NET audio
+/// readers want a *seekable* stream and a radio station is the opposite of
+/// seekable — that assumption is what kept this class silent from the day
+/// it was written. Everything else is handed to Media Foundation as a URL,
+/// so its own network source deals with framing and seeking and this class
+/// never touches the socket.
 ///
-/// FLAC is the one still open, and it is the one that would make this the
-/// only lossless source in the project. It usually arrives inside an Ogg
-/// container, so it needs a container parser as well as a decoder.
+/// The lesson behind that split, which cost a week: a decoder written for
+/// files assumes things a live stream cannot provide. Position. That one
+/// read fills the buffer. That end-of-file means end-of-stream. All three
+/// were met here in turn, and the next codec will meet them again.
 /// </remarks>
 public sealed class RadioSource : IAudioSource
 {
@@ -185,23 +187,25 @@ public sealed class RadioSource : IAudioSource
         int peeked = ReadFully(body, head);
         var counted = new CountingStream(body, head.AsSpan(0, peeked).ToArray());
 
-        if (LooksLikeAac(response.Content.Headers.ContentType?.MediaType, head.AsSpan(0, peeked)))
+        var codec = MediaFoundationCodec(
+            response.Content.Headers.ContentType?.MediaType, head.AsSpan(0, peeked));
+        if (codec is not null)
         {
             /*
-             * Media Foundation fetches AAC itself.
+             * Media Foundation fetches the stream itself.
              *
              * Handing it the URL rather than the socket already open here is
-             * deliberate: MF's own network source knows about ADTS framing
-             * and ICY responses, and the alternative is feeding frames to a
-             * decoder transform by hand — the same work again, for a codec
-             * whose framing this project has no reason to learn.
+             * deliberate: MF's own network source knows about ADTS framing,
+             * Ogg pages and ICY responses, and the alternative is feeding
+             * frames to a decoder transform by hand — the same work again,
+             * for containers this project has no reason to learn.
              *
              * The connection opened above is closed by the using; the second
              * one costs a moment at the start of a station that then plays
              * for hours.
              */
             counted.Dispose();
-            PlayAac(stream, cancellationToken);
+            PlayThroughMediaFoundation(stream, codec, cancellationToken);
             return;
         }
 
@@ -332,41 +336,80 @@ public sealed class RadioSource : IAudioSource
     }
 
     /// <summary>
-    /// Whether this stream is AAC rather than MP3.
+    /// Which codec this stream is, when it is one Media Foundation decodes.
     /// </summary>
     /// <remarks>
-    /// Both begin with a frame sync of eleven or twelve set bits, and the
-    /// two bits after it are what separate them: MPEG audio carries a layer
-    /// number there, and ADTS — which AAC uses — is required to leave it
-    /// zero. So one byte answers it, and answers it more honestly than the
-    /// Content-Type, which several broadcasters get wrong in both
-    /// directions.
+    /// Null means MP3 — or something unrecognised, which is handed to the
+    /// MP3 frame reader because that is the one decoder here that can say
+    /// "no frames in this stream" rather than failing obscurely.
     ///
-    /// The header is consulted only when the stream does not begin with a
-    /// sync word at all, which usually means an ID3 tag is in the way.
+    /// Read from the first bytes, not the Content-Type, which several
+    /// broadcasters get wrong in both directions: audio/mpeg is served for
+    /// AAC by more than one of them. The header is consulted only when the
+    /// stream does not begin with a recognisable signature at all, which
+    /// usually means an ID3 tag is in the way.
+    ///
+    /// MP3 and ADTS both open with a frame sync of set bits, and the two
+    /// bits after it separate them: MPEG audio carries a layer number there
+    /// and ADTS is required to leave it zero.
     /// </remarks>
-    private static bool LooksLikeAac(string? contentType, ReadOnlySpan<byte> head)
+    private static string? MediaFoundationCodec(string? contentType, ReadOnlySpan<byte> head)
     {
-        if (head.Length >= 2 && head[0] == 0xFF && (head[1] & 0xF0) == 0xF0)
+        // A native FLAC stream announces itself, which is a kindness.
+        if (head.StartsWith("fLaC"u8))
         {
-            return (head[1] & 0x06) == 0;
+            return "FLAC";
         }
 
-        return contentType is not null
-            && contentType.Contains("aac", StringComparison.OrdinalIgnoreCase);
+        // Ogg, which on a radio server is nearly always FLAC and
+        // occasionally Vorbis. Named for what the container says, because
+        // what is inside it is Media Foundation's problem rather than this
+        // method's.
+        if (head.StartsWith("OggS"u8))
+        {
+            return "Ogg";
+        }
+
+        if (head.Length >= 2 && head[0] == 0xFF && (head[1] & 0xF0) == 0xF0)
+        {
+            return (head[1] & 0x06) == 0 ? "AAC" : null;
+        }
+
+        if (contentType is null)
+        {
+            return null;
+        }
+        if (contentType.Contains("aac", StringComparison.OrdinalIgnoreCase))
+        {
+            return "AAC";
+        }
+        if (contentType.Contains("flac", StringComparison.OrdinalIgnoreCase))
+        {
+            return "FLAC";
+        }
+        return contentType.Contains("ogg", StringComparison.OrdinalIgnoreCase) ? "Ogg" : null;
     }
 
     /// <summary>
-    /// Plays an AAC station through Media Foundation, which decodes it.
+    /// Plays a station Media Foundation can decode: AAC, FLAC, or Ogg.
     /// </summary>
     /// <remarks>
-    /// Windows has had an AAC decoder since Windows 7, so this needs no
-    /// extra component and no extra licence. It is also the reason AAC is
-    /// worth adding before FLAC: more stations use it — Sveriges Radio and
-    /// most European broadcasters — and it costs a reader rather than a
-    /// container parser.
+    /// Windows has had an AAC decoder since 7 and a FLAC one since 10, so
+    /// none of this needs an extra component or an extra licence.
+    ///
+    /// FLAC cost almost nothing to add once AAC worked, and that ordering
+    /// was the point: AAC established that Media Foundation's network
+    /// source copes with an endless HTTP stream, which is the assumption
+    /// both rest on and the one worth testing with the cheaper of the two.
+    /// Adding FLAC was then a signature in the sniff and a rename here.
+    ///
+    /// Ogg is the one that may still refuse. Media Foundation reads FLAC in
+    /// its own container natively; Ogg-wrapped FLAC and Vorbis depend on
+    /// what the machine has installed. If it refuses, it says so with a
+    /// type name, which is enough to act on.
     /// </remarks>
-    private void PlayAac(string url, CancellationToken cancellationToken)
+    private void PlayThroughMediaFoundation(
+        string url, string codec, CancellationToken cancellationToken)
     {
         using var reader = new MediaFoundationReader(url);
         var source = reader.WaveFormat;
@@ -378,10 +421,10 @@ public sealed class RadioSource : IAudioSource
                 + $"{source.BitsPerSample}-bit, which this Hub does not read.");
         }
 
-        Description = $"{Description} — AAC {source.SampleRate} Hz";
+        Description = $"{Description} — {codec} {source.SampleRate} Hz";
         _logger.LogInformation(
-            "Radio decoding AAC at {Rate} Hz, {Channels} channel(s), as {Encoding} {Bits}-bit",
-            source.SampleRate, source.Channels, source.Encoding, source.BitsPerSample);
+            "Radio decoding {Codec} at {Rate} Hz, {Channels} channel(s), as {Encoding} {Bits}-bit",
+            codec, source.SampleRate, source.Channels, source.Encoding, source.BitsPerSample);
 
         var resampler = source.SampleRate == _format.SampleRate
             ? null
@@ -553,8 +596,9 @@ public sealed class RadioSource : IAudioSource
                     if (frames == 0)
                     {
                         throw new NotSupportedException(
-                            "no MP3 frames in this stream — it is not MP3, or the playlist "
-                            + "pointed somewhere else. AAC and FLAC are not decoded yet.");
+                            "no MP3 frames in this stream, and it does not begin with an AAC, "
+                            + "FLAC or Ogg signature either — so it is some other format, or "
+                            + "the playlist pointed somewhere that is not audio at all.");
                     }
                     return;
                 }
