@@ -20,13 +20,22 @@ namespace OpenAudioLink.Hub.Services;
 /// the project: the transport has always been uncompressed L24, so the
 /// source was the lossy link, and now it need not be.
 ///
-/// Two decoders, for a reason worth knowing before adding a third. MP3 is
-/// read frame by frame off the live socket, because the usual .NET audio
-/// readers want a *seekable* stream and a radio station is the opposite of
-/// seekable — that assumption is what kept this class silent from the day
-/// it was written. Everything else is handed to Media Foundation as a URL,
-/// so its own network source deals with framing and seeking and this class
-/// never touches the socket.
+/// Three decoders, and which one a station gets is the whole design.
+///
+/// **MP3** is read frame by frame off the live socket, because the usual
+/// .NET audio readers want a *seekable* stream and a radio station is the
+/// opposite of seekable — that assumption is what kept this class silent
+/// from the day it was written.
+///
+/// **FLAC**, in either container, goes to libFLAC on that same socket.
+/// Windows decodes FLAC only in its own container and ships no Ogg
+/// demuxer, and the FLAC internet radio serves is Ogg-FLAC, so Media
+/// Foundation cannot play these stations at all — and does not say so,
+/// it just never returns from the open.
+///
+/// **AAC and anything unrecognised** are handed to Media Foundation as a
+/// URL, so its own network source deals with framing and seeking and this
+/// class never touches the socket.
 ///
 /// The lesson behind that split, which cost a week: a decoder written for
 /// files assumes things a live stream cannot provide. Position. That one
@@ -93,6 +102,18 @@ public sealed class RadioSource : IAudioSource
     private readonly string _url;
 
     private volatile bool _disposed;
+
+    /// <summary>
+    /// Stop reading while this much audio is already waiting.
+    /// </summary>
+    /// <remarks>
+    /// The MP3 path needs no throttle because the station itself paces it —
+    /// bytes arrive in real time. A decoder that buffers ahead hands over as
+    /// fast as it is asked, so it can outrun real time, fill the ring and
+    /// start overwriting audio that has not been sent yet. That is heard as
+    /// skipping rather than as a gap, which makes it easy to misread.
+    /// </remarks>
+    private int HighWater => _format.SampleRate * _format.Channels * 3 / 2;
 
     /// <summary>The station's own name, once it has given one.</summary>
     private string _station;
@@ -289,6 +310,34 @@ public sealed class RadioSource : IAudioSource
                 + "handing it to Media Foundation as {Codec}",
                 resolved, StationCodec.Describe(head.AsSpan(0, peeked)),
                 contentType ?? "no content-type", codec);
+        }
+
+        /*
+         * FLAC and Ogg go to libFLAC, on the socket already open.
+         *
+         * Not to Media Foundation, which cannot play either of them here.
+         * Windows decodes FLAC in its own container and ships no Ogg
+         * demuxer at all, and the FLAC internet radio actually serves is
+         * Ogg-FLAC — Icecast encapsulates it that way. Asked for it anyway,
+         * MF does not refuse: it sits on the open until the deadline above
+         * fires, which is what six releases of silence looked like.
+         *
+         * Ogg is passed as Ogg even when the sniff called it FLAC. The
+         * Ogg-FLAC mapping embeds the native "fLaC" signature a few bytes
+         * into the first page, so a search of the window finds it and gets
+         * the container exactly backwards; the container is what decides
+         * which entry point libFLAC needs, so it is read again here from
+         * the front of the stream where it cannot be confused.
+         */
+        if (codec is "FLAC" or "Ogg")
+        {
+            bool ogg = head.AsSpan(0, peeked).StartsWith("OggS"u8);
+            Stage($"decoding {(ogg ? "Ogg FLAC" : "FLAC")}");
+            using (counted)
+            {
+                DecodeFlac(counted, ogg, cancellationToken);
+            }
+            return;
         }
 
         if (codec is not null)
@@ -545,11 +594,9 @@ public sealed class RadioSource : IAudioSource
          * and for the same reason: whatever is upstream has to be told to
          * wait, and there is no other way to tell it.
          */
-        int highWater = _format.SampleRate * _format.Channels * 3 / 2;
-
         while (!cancellationToken.IsCancellationRequested)
         {
-            while (_buffer.Available >= highWater && !cancellationToken.IsCancellationRequested)
+            while (_buffer.Available >= HighWater && !cancellationToken.IsCancellationRequested)
             {
                 Thread.Sleep(5);
             }
@@ -680,6 +727,106 @@ public sealed class RadioSource : IAudioSource
 
             int produced = resampler.Process(decoded.AsSpan(0, wanted), resampled);
             _buffer.Write(resampled.AsSpan(0, produced));
+        }
+    }
+
+    /// <summary>
+    /// Plays a FLAC station, in either container, through libFLAC.
+    /// </summary>
+    /// <remarks>
+    /// The simplest decode path in this class, and the reason is worth
+    /// noting after everything the other two needed: libFLAC was given no
+    /// seek callback, so it never asks where it is, never asks how long the
+    /// station is, and never decides the stream has ended because a read
+    /// came up short. Every workaround the MP3 and Media Foundation paths
+    /// carry exists to fake one of those answers.
+    ///
+    /// The resampler is built on the first frame rather than up front,
+    /// because the sample rate arrives with the audio.
+    /// </remarks>
+    private void DecodeFlac(Stream body, bool ogg, CancellationToken cancellationToken)
+    {
+        RationalResampler? resampler = null;
+        float[]? resampled = null;
+        long framesDecoded = 0;
+        float peak = 0f;
+        long lastReportMs = Environment.TickCount64;
+        int sourceRate = 0;
+        var label = ogg ? "Ogg FLAC" : "FLAC";
+
+        using var decoder = new FlacStreamDecoder(body, ogg, (samples, count, rate, channels) =>
+        {
+            if (sourceRate != rate)
+            {
+                // First frame, or a station that changed underneath us.
+                sourceRate = rate;
+                resampler = rate == _format.SampleRate
+                    ? null
+                    : new RationalResampler(rate, _format.SampleRate, _format.Channels);
+
+                _logger.LogInformation(
+                    "Radio decoding {Label} at {Rate} Hz, {Channels} channel(s){Conversion}",
+                    label, rate, channels,
+                    resampler is null ? "" : $", resampling to {_format.SampleRate} Hz");
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                float magnitude = Math.Abs(samples[i]);
+                if (magnitude > peak)
+                {
+                    peak = magnitude;
+                }
+            }
+
+            framesDecoded += count / _format.Channels;
+
+            var rate48 = resampler;
+            if (rate48 is null)
+            {
+                _buffer.Write(samples.AsSpan(0, count));
+            }
+            else
+            {
+                int room = rate48.MaxOutputFrames(count / _format.Channels) * _format.Channels;
+                if (resampled is null || resampled.Length < room)
+                {
+                    resampled = new float[room];
+                }
+
+                int produced = rate48.Process(samples.AsSpan(0, count), resampled);
+                _buffer.Write(resampled.AsSpan(0, produced));
+            }
+        });
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            // The same flow control the Media Foundation path needs: libFLAC
+            // decodes as fast as it is asked and the socket allows, which can
+            // outrun real time and overwrite audio not yet sent.
+            while (_buffer.Available >= HighWater && !cancellationToken.IsCancellationRequested)
+            {
+                Thread.Sleep(5);
+            }
+
+            if (!decoder.ReadOne())
+            {
+                throw new EndOfStreamException(
+                    framesDecoded == 0
+                        ? $"libFLAC read no audio at all from this station. {decoder.Failure
+                            ?? "It gave no reason."}"
+                        : $"the station stopped sending. {decoder.Failure ?? ""}".TrimEnd());
+            }
+
+            long nowMs = Environment.TickCount64;
+            if (nowMs - lastReportMs >= 2000 && sourceRate > 0)
+            {
+                lastReportMs = nowMs;
+                Description =
+                    $"{_station} — {label} {sourceRate} Hz, "
+                    + $"{framesDecoded / sourceRate} s, peak {Dbfs(peak)}";
+                peak = 0f;
+            }
         }
     }
 

@@ -103,14 +103,25 @@ jobs:
       - name: Include libFLAC beside the Hub
         shell: pwsh
         run: |
-          $bin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
-          Copy-Item "$bin\*FLAC*.dll" hub\publish
-          Copy-Item "$bin\ogg*.dll" hub\publish -ErrorAction SilentlyContinue
-          Copy-Item `
-            "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\share\libflac\copyright" `
-            hub\publish\libFLAC-LICENSE.txt -ErrorAction SilentlyContinue
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+
+          # FLAC.dll and ogg.dll only. FLAC++.dll is the C++ wrapper and
+          # nothing here speaks C++ — 88 kB of an installer for a binding
+          # that will never be loaded.
+          Copy-Item "$root\bin\FLAC.dll" hub\publish
+          Copy-Item "$root\bin\ogg.dll" hub\publish
+
+          # BSD asks that the notice travel with the binary, so a missing
+          # licence fails the build rather than shipping quietly without
+          # one. Where vcpkg keeps it has changed before now.
+          $copyright = Get-ChildItem "$root\share" -Recurse -Filter copyright |
+            Where-Object { $_.FullName -match 'flac' } | Select-Object -First 1
+          if (-not $copyright) { throw "No libFLAC copyright file found under $root\share" }
+          Copy-Item $copyright.FullName hub\publish\libFLAC-LICENSE.txt
+
           Write-Host "--- shipped beside the Hub ---"
-          Get-ChildItem hub\publish -Filter *.dll | Format-Table Name, Length
+          Get-ChildItem hub\publish |
+            Where-Object { $_.Name -match '\.dll$|LICENSE' } | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v5
         with:

@@ -128,6 +128,17 @@ jobs:
           "version=$declared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         id: version
 
+      # Windows has no Ogg demuxer, and the FLAC internet radio serves is
+      # Ogg-FLAC — so without this the Hub cannot play the stations FLAC
+      # was added for. See the same step in ci.yml for the full reasoning.
+      # Built rather than committed: a binary in a public repository is a
+      # thing nobody can review.
+      - name: Build libFLAC with Ogg support
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install libflac:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build libFLAC" }
+
       - name: Publish self-contained win-x64
         run: >
           dotnet publish src/OpenAudioLink.Hub --configuration Release
@@ -139,6 +150,26 @@ jobs:
       - name: Include the install and update scripts
         run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
         working-directory: hub
+
+      - name: Include libFLAC beside the Hub
+        shell: pwsh
+        run: |
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          Copy-Item "$root\bin\FLAC.dll" hub\publish
+          Copy-Item "$root\bin\ogg.dll" hub\publish
+
+          # A release without the licence beside the binary is not one to
+          # publish, so this throws rather than warns.
+          $copyright = Get-ChildItem "$root\share" -Recurse -Filter copyright |
+            Where-Object { $_.FullName -match 'flac' } | Select-Object -First 1
+          if (-not $copyright) { throw "No libFLAC copyright file found under $root\share" }
+          Copy-Item $copyright.FullName hub\publish\libFLAC-LICENSE.txt
+
+          # The zip is what people install, so what goes into it is worth
+          # printing where a release can be audited after the fact.
+          Write-Host "--- native libraries in this release ---"
+          Get-ChildItem hub\publish |
+            Where-Object { $_.Name -match 'FLAC|ogg' } | Format-Table Name, Length
 
       - name: Zip it
         shell: pwsh
