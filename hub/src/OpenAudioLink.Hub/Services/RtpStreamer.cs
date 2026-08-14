@@ -33,7 +33,29 @@ public sealed record StreamStatus(
     /// busy machine, or something else taking the CPU. They need opposite
     /// fixes and used to be indistinguishable.
     /// </remarks>
-    long WorstSendMs = 0);
+    long WorstSendMs = 0,
+    /// <summary>
+    /// The loudest sample sent recently, in dBFS, or null before any has
+    /// been. "−∞ dB" means the stream is carrying digital silence.
+    /// </summary>
+    /// <remarks>
+    /// The one number that separates "no sound" from "no audio", which this
+    /// project has now confused four times at a cost of an evening each. A
+    /// stream can be running, on time, losing nothing, and carrying
+    /// silence — the sender counts packets either way, and so does the
+    /// speaker. Nothing else in this record can tell those apart.
+    ///
+    /// Measured here rather than in each source because every source's
+    /// audio passes through this loop on its way to the wire, so one meter
+    /// answers the question for Spotify, vinyl, radio and the test tone at
+    /// once. A source that is silent for its own reasons and a source that
+    /// is silent because nothing is decoding look identical from outside,
+    /// and both look like a working stream.
+    ///
+    /// Reset each reporting window, so a stream that goes quiet shows it
+    /// rather than remembering how loud it once was.
+    /// </remarks>
+    double? PeakDbfs = null);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -252,7 +274,10 @@ public sealed class RtpStreamer : IAsyncDisposable
          * The counters stay: how much the last stream sent is worth reading
          * after it ends, where what it was called is actively misleading.
          */
-        _status = _status with { Running = false, Source = null, Description = null };
+        _status = _status with
+        {
+            Running = false, Source = null, Description = null, PeakDbfs = null,
+        };
         _logger.LogInformation("Stream stopped after {Packets} packets", _status.PacketsSent);
     }
 
@@ -341,6 +366,13 @@ public sealed class RtpStreamer : IAsyncDisposable
         long lateWakes = 0;
         long worstStallMs = 0;
         long worstSendMs = 0;
+
+        // The loudest sample this reporting window, and when the window
+        // started. Reset each report so a stream that goes quiet says so
+        // instead of remembering how loud it once was.
+        float peak = 0f;
+        long lastPeakReportMs = 0;
+        double? reportedPeak = null;
         long reportedUnderrun = 0;
         long lastUnderrunReportMs = 0;
         long lastStallReportMs = long.MinValue;
@@ -415,6 +447,18 @@ public sealed class RtpStreamer : IAsyncDisposable
                 while (packetsSent < due && !cancellationToken.IsCancellationRequested)
                 {
                     source.ReadFrames(samples);
+
+                    // One comparison per sample, on a thread already
+                    // touching every one of them.
+                    for (int i = 0; i < samples.Length; i++)
+                    {
+                        float magnitude = Math.Abs(samples[i]);
+                        if (magnitude > peak)
+                        {
+                            peak = magnitude;
+                        }
+                    }
+
                     int length = packetizer.WritePacket(samples, packet);
 
                     /*
@@ -498,8 +542,18 @@ public sealed class RtpStreamer : IAsyncDisposable
                     lastUnderrunReportMs = clock.ElapsedMilliseconds;
                 }
 
+                // A second's window: long enough that a quiet passage does
+                // not read as silence, short enough to follow a track.
+                if (clock.ElapsedMilliseconds - lastPeakReportMs >= 1000)
+                {
+                    reportedPeak = peak <= 0f ? double.NegativeInfinity : 20 * Math.Log10(peak);
+                    peak = 0f;
+                    lastPeakReportMs = clock.ElapsedMilliseconds;
+                }
+
                 _status = _status with
                 {
+                    PeakDbfs = reportedPeak,
                     /*
                      * Re-read every iteration, because a source can change
                      * what it calls itself while it runs and the interesting
