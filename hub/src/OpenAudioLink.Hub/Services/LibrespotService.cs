@@ -2,6 +2,7 @@ using System.Net;
 using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.Devices;
 using OpenAudioLink.Core.Net;
+using OpenAudioLink.Core.CastPoints;
 using OpenAudioLink.Core.Protocol;
 using OpenAudioLink.Hub.Configuration;
 
@@ -52,6 +53,7 @@ public sealed class LibrespotService : BackgroundService
     private readonly LibrespotOptions _options;
     private readonly HubPaths _paths;
     private readonly HubNetworkSetting _networkSetting;
+    private readonly int _hubPort;
     private readonly ILogger<LibrespotService> _logger;
     private readonly ILoggerFactory _loggers;
 
@@ -78,7 +80,8 @@ public sealed class LibrespotService : BackgroundService
     public LibrespotService(
         CastPointStore castPoints, DeviceRegistry registry, RtpStreamer streamer,
         DeviceCommandClient commands, HubConfig config, LibrespotOptions options, HubPaths paths,
-        HubNetworkSetting network, ILogger<LibrespotService> logger, ILoggerFactory loggers)
+        HubNetworkSetting network, IConfiguration configuration,
+        ILogger<LibrespotService> logger, ILoggerFactory loggers)
     {
         _castPoints = castPoints;
         _registry = registry;
@@ -88,6 +91,14 @@ public sealed class LibrespotService : BackgroundService
         _options = options;
         _paths = paths;
         _networkSetting = network;
+
+        // The script curls back into this Hub, so it has to know the port
+        // the Hub is actually listening on rather than the default.
+        var first = configuration["Urls"]?.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        _hubPort = first is not null && Uri.TryCreate(first.Replace("*", "localhost"), UriKind.Absolute, out var url)
+            ? url.Port
+            : ProtocolSuite.DefaultHubPort;
+
         _logger = logger;
         _loggers = loggers;
     }
@@ -196,6 +207,123 @@ public sealed class LibrespotService : BackgroundService
         }
     }
 
+    /// <summary>The loudest speaker in a room, which is what its slider shows.</summary>
+    private int? RoomVolume(CastPoint point)
+    {
+        int? loudest = null;
+        foreach (var deviceId in point.Destinations)
+        {
+            if (_registry.TryGet(deviceId, out var device) && device.Status?.Volume is int level)
+            {
+                loudest = loudest is null ? level : Math.Max(loudest.Value, level);
+            }
+        }
+        return loudest;
+    }
+
+    /// <summary>
+    /// Writes the little program librespot runs when the phone's volume
+    /// changes, and returns its path.
+    /// </summary>
+    /// <remarks>
+    /// librespot's <c>--onevent</c> takes a program, not a URL, so there has
+    /// to be something on disk to run. A batch file calling <c>curl</c> is
+    /// the smallest thing that works: Windows has shipped curl.exe since
+    /// 1803, so it adds no dependency the operator has to satisfy.
+    ///
+    /// One per cast point, because the cast point is not something librespot
+    /// knows about — it is in the path rather than in the event, so the Hub
+    /// can tell which speaker a volume change belongs to.
+    ///
+    /// Loopback only. This endpoint moves a volume, which is not a secret,
+    /// but nothing outside the machine has any business calling it.
+    /// </remarks>
+    private string? WriteEventScript(string castPointId)
+    {
+        if (!_options.UnifiedVolume)
+        {
+            return null;
+        }
+
+        try
+        {
+            var directory = Path.Combine(_paths.DataDirectory, "librespot-events");
+            Directory.CreateDirectory(directory);
+
+            // The id is ours and slug-shaped, but a path is worth being
+            // careful with regardless.
+            var safe = string.Concat(castPointId.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_'));
+            var path = Path.Combine(directory, $"{safe}.cmd");
+
+            var url = $"http://127.0.0.1:{_hubPort}/api/librespot/event/{Uri.EscapeDataString(castPointId)}";
+            var script = string.Join(Environment.NewLine,
+            [
+                "@echo off",
+                ":: Written by OpenAudioLink. librespot runs this on playback",
+                ":: events; the only one that matters here is a volume change,",
+                ":: which the Hub forwards to this room's speakers.",
+                $"curl -s -m 2 -X POST \"{url}?event=%PLAYER_EVENT%&volume=%VOLUME%\" >nul 2>&1",
+                "exit /b 0",
+            ]);
+
+            // Rewritten only when it differs, so a running librespot is not
+            // handed a file that changes underneath it every tick.
+            if (!File.Exists(path) || File.ReadAllText(path) != script)
+            {
+                File.WriteAllText(path, script);
+            }
+            return path;
+        }
+        catch (Exception ex)
+        {
+            // Without the script the instance runs as it always did, with
+            // librespot applying the phone's volume itself.
+            _logger.LogWarning(ex, "Could not write the volume event script for {CastPoint}", castPointId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A volume change from a phone, applied to the room it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// librespot reports the volume as a 16-bit number, and this project
+    /// speaks percent. Both are accepted rather than one assumed: the range
+    /// has differed between librespot versions, and a value that is already
+    /// a percentage is indistinguishable from a very quiet 16-bit one only
+    /// in the bottom fraction of a percent.
+    /// </remarks>
+    public async Task<int?> ApplyPhoneVolumeAsync(
+        string castPointId, string? rawVolume, CancellationToken cancellationToken)
+    {
+        if (!long.TryParse(rawVolume, out var value) || value < 0)
+        {
+            return null;
+        }
+
+        var percent = value > 100
+            ? (int)Math.Round(value * 100.0 / 65535.0)
+            : (int)value;
+        percent = Math.Clamp(percent, 0, 100);
+
+        if (!_castPoints.TryGet(castPointId, out var point))
+        {
+            return null;
+        }
+
+        foreach (var deviceId in point.Destinations)
+        {
+            if (_registry.TryGet(deviceId, out var device) && device.Online)
+            {
+                await _commands.SetVolumeAsync(device, percent, cancellationToken);
+            }
+        }
+
+        _logger.LogInformation(
+            "Phone set {CastPoint} to {Percent}%, applied at the speaker", point.Name, percent);
+        return percent;
+    }
+
     /// <summary>
     /// Makes the set of running receivers match the set of cast points. A
     /// cast point created in the Hub appears on the phone within a tick; one
@@ -259,8 +387,21 @@ public sealed class LibrespotService : BackgroundService
                     WarnIfNotSignedIn(point.Name, cache);
                 }
 
+                /*
+                 * Start the phone's slider where the speaker already is.
+                 *
+                 * Without this the two agree only after somebody moves one,
+                 * and the moment in between is the dangerous one: librespot
+                 * no longer attenuates, so a speaker left high would play
+                 * full-scale audio at a setting that used to mean something
+                 * quieter. Matching them at spawn means the first sound is
+                 * the level the room was left at.
+                 */
+                var level = RoomVolume(point) ?? _options.InitialVolume;
+
                 _instances[point.Id] = new LibrespotInstance(
                     point.Id, point.Name, executable, cache, zeroconf, _options, StreamFormat,
+                    WriteEventScript(point.Id), level,
                     _loggers.CreateLogger($"Librespot.{point.Id}"));
             }
         }

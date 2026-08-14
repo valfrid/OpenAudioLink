@@ -80,6 +80,31 @@ public sealed class LibrespotOptions
     public string ZeroconfInterface { get; set; } = "";
 
     /// <summary>
+    /// Whether the phone's volume is the speaker's volume, rather than a
+    /// second attenuator in front of it.
+    /// </summary>
+    /// <remarks>
+    /// Decision 14 says volume is digital gain at the Consumer. librespot
+    /// arrived before that decision and has always applied the phone's
+    /// volume to the samples itself, so a Spotify stream passed through two
+    /// attenuators where every other source passes through one. They
+    /// multiply: a phone at half and a speaker at 38 % is -43 dB, and on a
+    /// powered cabinet that shuts down below a signal threshold the result
+    /// is not quiet, it is silent.
+    ///
+    /// On, librespot is run with <c>--volume-ctrl fixed</c> and hands over
+    /// samples untouched, while the phone's volume changes are forwarded to
+    /// the speaker. One gain stage, one control, and the highest analogue
+    /// level a given loudness allows.
+    ///
+    /// Off restores the old behaviour, which is worth keeping reachable:
+    /// this depends on two librespot options and on what <c>fixed</c> means
+    /// in a particular build, and a Hub that cannot make a sound is worse
+    /// than one whose volume is awkward.
+    /// </remarks>
+    public bool UnifiedVolume { get; set; } = true;
+
+    /// <summary>
     /// Extra arguments appended verbatim, for anything this class does not
     /// model. Split on spaces, so an argument containing one needs the
     /// operator to think of another way.

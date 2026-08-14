@@ -577,6 +577,40 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry,
 // start says why here.
 app.MapGet("/api/librespot", (LibrespotService spotify) => Results.Ok(spotify.Snapshot()));
 
+/*
+ * Where a phone's volume slider arrives.
+ *
+ * librespot runs a script on every playback event and the script curls
+ * here; the cast point is in the path because librespot does not know
+ * about cast points, only about itself. Decision 14 wants one gain stage
+ * at the Consumer, so this is the path that puts the phone's slider
+ * there instead of in front of it.
+ *
+ * Loopback only. Nothing outside this machine has any business setting a
+ * room's volume without going through the ordinary endpoint, and the
+ * script has no way to authenticate itself.
+ */
+app.MapPost("/api/librespot/event/{castPointId}",
+    async (string castPointId, HttpContext context, LibrespotService spotify,
+           CancellationToken cancellationToken) =>
+{
+    if (!(context.Connection.RemoteIpAddress?.Equals(IPAddress.Loopback) ?? false)
+        && !(context.Connection.RemoteIpAddress?.Equals(IPAddress.IPv6Loopback) ?? false))
+    {
+        return Results.NotFound();
+    }
+
+    var kind = context.Request.Query["event"].ToString();
+
+    // Every event runs the script, and only one of them carries a volume.
+    // The rest are ordinary and uninteresting, so they are accepted
+    // quietly rather than refused noisily.
+    var applied = await spotify.ApplyPhoneVolumeAsync(
+        castPointId, context.Request.Query["volume"].ToString(), cancellationToken);
+
+    return Results.Ok(new { status = applied is null ? "ignored" : "applied", eventKind = kind, volume = applied });
+});
+
 app.MapPost("/api/castpoints", (CastPointRequest request, CastPointStore store) =>
 {
     var error = store.Create(request.Name, request.Destinations, out var created);

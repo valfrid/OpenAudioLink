@@ -74,11 +74,14 @@ public sealed class LibrespotInstance : IDisposable
 
     public LibrespotInstance(
         string castPointId, string name, string executable, string cacheDirectory,
-        string? zeroconfInterface, LibrespotOptions options, AudioStreamFormat format, ILogger logger)
+        string? zeroconfInterface, LibrespotOptions options, AudioStreamFormat format,
+        string? eventScript, int initialVolume, ILogger logger)
     {
         CastPointId = castPointId;
         Name = name;
         ZeroconfInterface = zeroconfInterface;
+        EventScript = eventScript;
+        InitialVolume = initialVolume;
         _executable = executable;
         _cacheDirectory = cacheDirectory;
         _options = options;
@@ -114,6 +117,18 @@ public sealed class LibrespotInstance : IDisposable
     /// changing it means a new process.
     /// </summary>
     public string? ZeroconfInterface { get; }
+
+    /// <summary>
+    /// The program librespot runs when something happens, or null to run
+    /// none. It is how the phone's volume reaches the speaker.
+    /// </summary>
+    public string? EventScript { get; }
+
+    /// <summary>
+    /// The volume the phone's slider starts at, matched to the speaker's own
+    /// so the two agree before anybody touches either.
+    /// </summary>
+    public int InitialVolume { get; }
 
     /// <summary>True while the process is up, whether or not it is playing.</summary>
     public bool Running => _processRunning;
@@ -348,7 +363,28 @@ public sealed class LibrespotInstance : IDisposable
         yield return "--bitrate";
         yield return _options.Bitrate.ToString();
         yield return "--initial-volume";
-        yield return _options.InitialVolume.ToString();
+        yield return InitialVolume.ToString();
+
+        /*
+         * Hands the samples over untouched, so the only gain in the system
+         * is the speaker's — decision 14's rule, which this path has been
+         * quietly breaking since it was the first source.
+         *
+         * "fixed" is librespot's name for a volume control that does not
+         * scale anything. Paired with the event script below, which carries
+         * the phone's slider to the speaker, so the control still works —
+         * it just works in one place instead of two multiplying.
+         *
+         * Both or neither: without the script this would leave the phone's
+         * slider inert, which is a worse fault than the one being fixed.
+         */
+        if (_options.UnifiedVolume && EventScript is not null)
+        {
+            yield return "--volume-ctrl";
+            yield return "fixed";
+            yield return "--onevent";
+            yield return EventScript;
+        }
         // Credentials live here. Without it every restart of the Hub makes
         // the operator log in from the phone again, which is the kind of
         // small daily friction that decides whether a thing gets used.
