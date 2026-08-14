@@ -1205,3 +1205,86 @@ attenuation reaches the record's own noise floor.
   to trim one against the other beyond setting two volumes by hand. The
   per-device endpoint exists for exactly this; nothing presents it as a
   balance control.
+
+---
+
+## 15. The Hub runs OpenAudioLink on exactly one subnet, and is told which
+
+**Status:** accepted 2026-08-14, not yet built.
+
+### The question
+
+A Hub with more than one network interface has to decide which one
+OpenAudioLink lives on. Until now it decided that question five separate
+times, in five places, by inference:
+
+- the RTP sender's source address, matched against the first destination
+- librespot's zeroconf announcement interface, matched against any device
+  in the registry
+- the OTA download URL handed to a node
+- the discovery announcements, sent from every interface
+- the Hub's own record in the device registry
+
+Each derivation can reach a different answer, and on 2026-08-14 they did.
+Three agreed on the LAN. The zeroconf one matched the Hub's own registry
+record — which carried a Tailscale address — against the interface holding
+that address, found itself, and announced Spotify on the overlay. The cast
+point appeared on the phone, answered when prodded, and never played.
+
+The bugs are worth fixing and have been. The pattern behind them is worth
+naming, because it will produce another one: **a fact that must be true
+once is being derived repeatedly.**
+
+### Decision
+
+The Hub has one **OpenAudioLink network**: a single local IPv4 address and
+its prefix. Everything that needs to know where OpenAudioLink lives asks
+for that one value rather than working it out.
+
+- **Configured explicitly** when the operator says so, by address or by
+  subnet.
+- **Detected once at startup** otherwise, preferring an RFC 1918 address,
+  and written to the log and the setup page so the choice is visible before
+  it is wrong rather than after.
+- **Refused rather than guessed** when detection is ambiguous — several
+  candidate LANs and no configuration is a question for a person, and a Hub
+  that says so beats one that picks and hopes.
+
+A device outside that subnet is **reported, not served**. Today a speaker
+on another network is streamed to anyway, by whatever route the operating
+system prefers, which is how audio can leave by an interface nothing on the
+network can hear.
+
+### Why one, and not several
+
+Nothing in this project wants two. A cast point is a room; the speakers are
+in the house; the phone is on the house Wi-Fi. Multicast discovery, mDNS
+announcements and the ~5 ms playout budget all assume one broadcast domain,
+and decision 2's threshold arithmetic is about one radio, not a routed
+path.
+
+Supporting two subnets would mean per-interface discovery state, per-device
+source-address selection on every socket, and a routing story for
+announcements — a large amount of machinery for a case nobody in this
+project has. Saying "one, and here is which" costs a configuration key.
+
+### Consequences
+
+- One place is right or wrong, and it is visible on the setup page.
+- Overlay networks stop being a hazard. Tailscale, ZeroTier, Docker,
+  Hyper-V and WSL all add interfaces to the machine the Hub runs on; none
+  of them is the OpenAudioLink network unless somebody says it is.
+- The Hub's own registry record gets a correct address, which is the entry
+  that caused this.
+- `LocalAddressSelector` keeps its job — it answers "which of my addresses
+  can *this* device reach" — but stops being the only thing standing
+  between an overlay interface and the audio path.
+- A deployment that genuinely spans subnets is out of scope, and says so
+  rather than half-working.
+
+### What this does not solve
+
+The operator can still configure the wrong subnet. The difference is that
+it will be one wrong answer, written down, in one place, visible on a page
+somebody looks at — rather than four right answers and one wrong one, none
+of them written anywhere.
