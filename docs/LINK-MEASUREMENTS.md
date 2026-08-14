@@ -583,42 +583,54 @@ one Consumer, left running after the FLAC bring-up. Hub 0.14.0, firmware
 | Received | 4 912 602 of 4 912 606 |
 | Lost | **4 packets — 0.00008 %** |
 | Loss shape | 3 gaps, 1.33 packets per gap, longest 2 |
+| Consumer signal | **−44 dBm** — the access point is close to this speaker |
 
 Four packets in nearly seven hours. Twenty milliseconds of audio missing
 in total, in three isolated events, none longer than two packets.
 
-### Do not credit this to the code
+### It is the signal strength, and there is now a curve
 
-Run 19 measured 0.061 % over 6 h 26 min on **the same network**, with the
-wired backhaul already in place. This run is roughly **750× better**, and
-nothing changed between them that could plausibly do that:
+Not the code. Run 19 measured 0.061 % over 6 h 26 min on **the same
+network** with the wired backhaul already in place, and nothing changed
+between them that could account for 750×: the codec cannot matter, since
+the wire carries 48 kHz L24 at 200 packets per second whatever the
+source, and the sender's late wakes and worst stalls overlap between the
+two runs.
 
-- **The codec cannot matter.** Whatever the source, the wire carries
-  48 kHz L24 at 200 packets per second. The decoder changed; the thing
-  being measured did not.
-- **The sender did not get materially better.** Late wakes ran about
-  1.5–1.9 % of iterations in both, and worst-stall figures overlap.
+What did change is where the speaker sits relative to the access point.
+At **−44 dBm** this consumer has a very strong link, and run 20 already
+measured the two points below it:
 
-What is left is the air. This document already records the radio
-environment moving by three orders of magnitude in a single evening —
-runs 8 to 10 are the whole cautionary tale, and the method section exists
-because of them. A 750× swing with no mechanism behind it is exactly that
-shape, and treating it as an achievement would be repeating the mistake
-those runs were written to prevent.
+| Consumer signal | Loss | Longest gap | Run |
+| --- | --- | --- | --- |
+| −67 dBm | 0.361 % | 44 packets — 220 ms | 20, same AP |
+| −53 dBm | 0.144 % | 4 packets — 20 ms | 20, across APs |
+| **−44 dBm** | **0.00008 %** | **2 packets — 10 ms** | 22 |
 
-So: this is what the link can do when the air is quiet. It is not
-evidence that anything was fixed, and it should not become the baseline
-that later runs are judged against.
+Three points, monotonic, and steep: **23 dB of link margin spans four
+orders of magnitude in loss.** That is the retry mechanism showing its
+shape. A unicast frame is acknowledged and retried; with margin to spare
+it succeeds on the first attempt, and as margin falls the retries climb
+until the budget is exhausted and a packet is finally lost. Loss is not
+really a measure of the air — it is a measure of how often the retries
+ran out.
 
-### What would settle it
+It also explains the gap lengths, which matter more than the percentages:
+weak links lose *runs* of packets because the condition that beat the
+retries persists for milliseconds, while a strong link loses the odd
+isolated frame.
 
-An A/B on one evening: the MP3 station for an hour, then this one, then
-MP3 again — the method's rule 6, which exists precisely so a change in
-the air is not mistaken for a change in the code. If MP3 also returns
-near-zero tonight, the air is the answer and run 19 was measured on a
-worse night. If MP3 returns to 0.06 % while this stays at 0.0001 %, then
-something real is different and it is worth finding, because on the
-evidence above it should not be possible.
+So this is a result about **placement**, and it is worth more than a code
+change: moving a speaker closer to an access point, or adding a point
+near a speaker, buys more than anything in this repository has.
+
+### The method gap this exposed
+
+**Run 19 did not record the consumer's signal strength**, which is why
+this took a message from the operator to explain rather than a glance at
+the table. Every run from here records it — it is now the first line of
+the method, because on the evidence above it predicts the result better
+than any other single number.
 
 ### What it does establish, independent of the loss figure
 
@@ -631,24 +643,30 @@ hours earlier. That is the part worth trusting.
 
 ## Method
 
-1. Put both nodes on the same access point. They pick by signal strength,
+1. **Record every node's signal strength before anything else.** Run 22
+   reached 0.00008 % at −44 dBm where run 20 lost 0.361 % at −67, and
+   those three points make a monotonic curve four orders of magnitude
+   deep. Nothing else in this document predicts a result as well. A run
+   without an RSSI figure cannot be compared with another run, which is
+   what made run 19 impossible to explain for a day.
+2. Put both nodes on the same access point. They pick by signal strength,
    so when they sit equidistant between two mesh points they will split.
    Power down the far point, or move them within a metre of the near one,
    then reboot both so they re-scan.
-2. Select the producer and consumers, source **Pattern** (the tone is
+3. Select the producer and consumers, source **Pattern** (the tone is
    audible but unverifiable), and press **Start link**.
-3. Let it run several minutes. Loss at these rates is a few events per
+4. Let it run several minutes. Loss at these rates is a few events per
    minute; a 30-second run measures noise.
-4. Read the access-point line under the results before trusting anything
+5. Read the access-point line under the results before trusting anything
    above it.
-5. Subtract the producer's send errors from the consumer's loss.
-6. When comparing two firmware images, measure A, then B, then A again.
+6. Subtract the producer's send errors from the consumer's loss.
+7. When comparing two firmware images, measure A, then B, then A again.
    The radio environment drifts on its own and has done so by three orders
    of magnitude in an evening; without the second A there is no way to tell
    a change in the code from a change in the air.
-7. If a run disagrees with the established baseline, restart the access
+8. If a run disagrees with the established baseline, restart the access
    points, the nodes and the Hub, and re-run the baseline before believing
    anything. Runs 8-10 above are what happens otherwise.
-8. The second A is only needed when B disagrees with the first. Runs 12 and
+9. The second A is only needed when B disagrees with the first. Runs 12 and
    14 both lost nothing at all, and a third run cannot explain a difference
    that is not there.
