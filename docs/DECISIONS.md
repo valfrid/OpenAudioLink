@@ -116,6 +116,56 @@ hardware rather than assuming.
 L16 and longer packets remain available at any point and are cheaper
 than all three.
 
+### What the measurements since have shown
+
+**2026-08-13.** Enough real runs now exist to test the reasoning above
+rather than only assert it, and they support it — with one correction to
+how the numbers should be read.
+
+**The low loss is partly produced by unicast, not merely observed
+alongside it.** Internet radio to one consumer measures 0.005% loss
+(20 409 of 20 410 packets, 1.27 ms jitter) and six hours of it measured
+0.061%. Those are not raw air quality. Every unicast frame gets 802.11
+link-layer acknowledgement and retransmission, so the AP has already
+retried whatever it lost before anything reaches an RTP sequence counter.
+Multicast would remove exactly that mechanism. Reading these figures as
+"the air is clean enough for multicast" inverts the evidence: the air is
+this clean *because* of the retries multicast does not get.
+
+**The shape of the loss is the fingerprint.** Well-behaved runs report
+isolated single-packet gaps — "1 gap, 1.00 packets per gap". That is a
+retry budget occasionally running out. When the mechanism genuinely fails
+the shape changes: run 20's turntable on a congested access point lost
+bursts, longest gap 44 packets, 220 ms. Bursty correlated loss is what
+multicast would look like as a matter of course.
+
+**The wired Hub has already taken the escape hatch.** This decision
+offered "multicast or a wired Producer" past the planning threshold. With
+the Hub on Ethernet, every Hub-sourced stream — radio, Spotify, system
+audio — is a wired Producer, and multicast would buy it nothing. Its
+transmission has left the air entirely.
+
+**So the open case is node to node, and it is still untested.** The
+tightest constraint remains what this decision said it was: an ESP32-S3
+Analog Source replicating to several receivers, 2.4 GHz only, while also
+capturing. Every measurement so far has used one or two consumers. The
+"about 4 receivers" threshold has never been approached, let alone
+measured, and it is the number most worth having.
+
+**A trap to know before trying multicast at all.** Many consumer access
+points and mesh systems perform multicast-to-unicast conversion. That
+restores the acknowledgement and the data rate — and in doing so discards
+the airtime saving that was the whole reason to use multicast. The result
+can carry multicast's complexity and unicast's cost at once, while
+looking like it works. Any multicast trial has to measure airtime or
+receiver count scaling, not just whether audio arrives.
+
+Unchanged: multicast's real home is wired receivers. Full AES67
+deployments are switched Ethernet, where multicast has no rate penalty
+and IGMP snooping contains it. That is the world the standard assumes,
+and the reason this project runs a subset of it over Wi-Fi rather than
+the thing itself.
+
 ---
 
 ## 3. Where a source lives is a capability question, not a hierarchy
