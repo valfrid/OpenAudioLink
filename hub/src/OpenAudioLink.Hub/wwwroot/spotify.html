@@ -116,13 +116,35 @@
       $('volume').value = playingRoom.volume;
       $('vol-text').textContent = OAL.volumeLabel(playingRoom.volume);
     } else if (!playingRoom) {
+      /*
+       * Parked at zero, not left where the markup put it.
+       *
+       * The control is disabled with nothing playing, but a disabled range
+       * still shows a handle, and the markup's value="50" put that handle
+       * in the middle — so a page reporting no volume at all looked like a
+       * room set to half. With a speaker actually at 80 and the other two
+       * apps saying so, that is a straight contradiction on screen.
+       *
+       * This page has no room selector by design: the room is chosen in
+       * Spotify. So until something plays there is genuinely no room to
+       * show a volume for, and the honest display is an empty one. The
+       * numbers live in the room list below instead.
+       */
+      $('volume').value = 0;
       $('vol-text').textContent = '—';
     }
 
     $('rooms').innerHTML = state.castPoints.map(point => {
       const receiver = point.receiver;
-      const sub = receiver?.playing ? 'Playing now'
-        : receiver?.offered ? 'Visible in Spotify'
+      // With no room selector on this page, the list is where a room's
+      // volume can be read at all — and reading it before pressing play on
+      // a phone is exactly when it matters, since a speaker set too low is
+      // silent rather than quiet.
+      const level = typeof point.volume === 'number'
+        ? ` · ${OAL.volumeLabel(point.volume)}`
+        : '';
+      const sub = receiver?.playing ? `Playing now${level}`
+        : receiver?.offered ? `Visible in Spotify${level}`
         : receiver?.error ? OAL.esc(receiver.error)
         : 'Not offered';
       return `

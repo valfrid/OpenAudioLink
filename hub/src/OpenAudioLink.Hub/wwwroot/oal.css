@@ -152,6 +152,11 @@ select {
 
 .volume-row { display: flex; gap: 12px; align-items: center; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* A disabled range still draws its handle, so without this it looks like
+   a setting rather than like an absent one — which is how a page with no
+   volume to report came to show a convincing half. */
+input[type="range"]:disabled { opacity: .35; cursor: default; }
 .vol-number { width: 48px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .picker h2 { margin: 0 0 15px; font-size: 20px; }

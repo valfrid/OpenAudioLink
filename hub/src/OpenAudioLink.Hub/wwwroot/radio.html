@@ -220,6 +220,18 @@
     if (typeof point?.volume === 'number') {
       $('volume').value = point.volume;
       $('vol-text').textContent = OAL.volumeLabel(point.volume);
+      $('volume').disabled = false;
+    } else {
+      /*
+       * No speaker in this room is reporting, so there is no volume to
+       * show — and the slider must not go on displaying the last room's.
+       * A control left at a number that belongs to nothing is the same
+       * failure as every other one today: a display that cannot say "I do
+       * not know" says something false instead.
+       */
+      $('volume').value = 0;
+      $('volume').disabled = true;
+      $('vol-text').textContent = '—';
     }
   }
 
