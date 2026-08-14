@@ -184,6 +184,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .footer-note { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .footer-note.bad { color: var(--danger); }
 
+/* A browser's default link is blue and underlined, which on a dark panel
+   reads as a mistake rather than as something to press. */
+.footer-note a { color: var(--accent); text-decoration: none; }
+.footer-note a:hover { text-decoration: underline; }
+
 /* The add-a-station form, and anything else shaped like it. */
 .add { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .add input {

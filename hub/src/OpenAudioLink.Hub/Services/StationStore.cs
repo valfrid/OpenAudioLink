@@ -64,6 +64,14 @@ public sealed class StationStore
         new() { Id = "drone-zone", Name = "SomaFM Drone Zone", Url = "https://somafm.com/dronezone.pls" },
         new() { Id = "secret-agent", Name = "SomaFM Secret Agent", Url = "https://somafm.com/secretagent.pls" },
         new() { Id = "radio-paradise", Name = "Radio Paradise Main Mix", Url = "http://stream.radioparadise.com/mp3-192" },
+
+        // The same programme, losslessly, and deliberately beside the MP3
+        // one: the two together are an A/B nobody has to set up, and it was
+        // this station's Ogg-FLAC that established the path exists at all.
+        // Radio Paradise publishes its current addresses at
+        // https://radioparadise.com/listen/stream-links — worth checking
+        // there rather than trusting this line, which will age.
+        new() { Id = "radio-paradise-flac", Name = "Radio Paradise Main Mix (FLAC)", Url = "http://stream.radioparadise.com/flac" },
     ];
 
     private readonly string _path;

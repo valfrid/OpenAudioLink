@@ -302,7 +302,11 @@ maintain. These are test cases, not a collection:
 | Linn Radio | FLAC again, different implementation, so the handling is not shaped around one station |
 
 Check current URLs at the source rather than hardcoding a list; they rotate
-often enough that a checked-in list ages badly. For the switchboard,
+often enough that a checked-in list ages badly. Radio Paradise publishes
+all of its channels and formats — MP3, AAC and FLAC, main mix, mellow,
+rock and global — at <https://radioparadise.com/listen/stream-links>,
+which is the model for what a station page should offer: every codec for
+every channel, as plain HTTP addresses, with no application in the way. For the switchboard,
 `radio-browser.info` is a free community directory searchable by country,
 genre, codec and bitrate, which turns "which stations" into a query rather
 than a list somebody maintains.
