@@ -154,6 +154,45 @@ public static class StationCodec
     }
 
     /// <summary>
+    /// What is inside an Ogg stream, so an unsupported one can say so.
+    /// </summary>
+    /// <remarks>
+    /// Ogg is a container and carries several codecs; this project decodes
+    /// only FLAC inside it. Without this, choosing Vorbis from a station's
+    /// format list fails as a decoder error several seconds in — true, but
+    /// it reads like a fault rather than like a choice, and the fix is to
+    /// pick a different stream.
+    ///
+    /// Radio Paradise alone offers Vorbis and FLAC from the same menu, so
+    /// this is a wrong button somebody will actually press.
+    ///
+    /// Each codec identifies itself at the start of its first packet, a
+    /// little way past the page header. Searched for rather than read at a
+    /// computed offset, because the segment table before it is variable
+    /// length and the exact position is not worth deriving to tell one
+    /// four-letter word from another.
+    /// </remarks>
+    public static string? OggPayload(ReadOnlySpan<byte> head)
+    {
+        if (head.IndexOf("OggS"u8) < 0)
+        {
+            return null;
+        }
+
+        // Upper case, and that is the whole test: the Ogg mapping header is
+        // 0x7F "FLAC" where a native stream would say "fLaC".
+        if (head.IndexOf("FLAC"u8) >= 0)
+        {
+            return "FLAC";
+        }
+        if (head.IndexOf("vorbis"u8) >= 0)
+        {
+            return "Vorbis";
+        }
+        return head.IndexOf("OpusHead"u8) >= 0 ? "Opus" : null;
+    }
+
+    /// <summary>
     /// What the URL suggests, used only to name a stream, never to route it.
     /// </summary>
     /// <remarks>

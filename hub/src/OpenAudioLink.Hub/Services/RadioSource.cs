@@ -332,6 +332,28 @@ public sealed class RadioSource : IAudioSource
         if (codec is "FLAC" or "Ogg")
         {
             bool ogg = head.AsSpan(0, peeked).StartsWith("OggS"u8);
+
+            /*
+             * Said now, by name, rather than as a decode failure later.
+             *
+             * Ogg carries several codecs and libFLAC reads one of them. A
+             * Vorbis stream reaches the decoder, produces nothing, and
+             * eventually reports something about an unparseable stream —
+             * accurate, and it reads like a fault in the Hub rather than
+             * like the wrong entry in a station's format list. Radio
+             * Paradise offers Vorbis and FLAC from the same menu, so this
+             * is a button somebody will actually press by mistake.
+             */
+            var inside = StationCodec.OggPayload(head.AsSpan(0, peeked));
+            if (inside is not null and not "FLAC")
+            {
+                counted.Dispose();
+                throw new NotSupportedException(
+                    $"this station is Ogg {inside}, and only FLAC inside Ogg is decoded. "
+                    + "Most stations offering it also publish FLAC, which is lossless and "
+                    + "plays here.");
+            }
+
             Stage($"decoding {(ogg ? "Ogg FLAC" : "FLAC")}");
             using (counted)
             {

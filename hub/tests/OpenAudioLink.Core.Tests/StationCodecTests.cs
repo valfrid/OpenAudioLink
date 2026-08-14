@@ -162,6 +162,47 @@ public class StationCodecTests
     }
 
     /// <summary>
+    /// Ogg carries several codecs and this project decodes one of them.
+    /// Naming the other is the difference between "wrong entry in the
+    /// station's format list" and "the Hub is broken".
+    /// </summary>
+    [Fact]
+    public void OggFlacIsNamedFromItsMappingHeader()
+    {
+        var head = new byte[StationCodec.SniffBytes];
+        Encoding.ASCII.GetBytes("OggS").CopyTo(head, 0);
+        head[28] = 0x7F;
+        Encoding.ASCII.GetBytes("FLAC").CopyTo(head, 29);
+        Assert.Equal("FLAC", StationCodec.OggPayload(head));
+    }
+
+    [Fact]
+    public void OggVorbisIsNamed()
+    {
+        var head = new byte[StationCodec.SniffBytes];
+        Encoding.ASCII.GetBytes("OggS").CopyTo(head, 0);
+        head[28] = 0x01;
+        Encoding.ASCII.GetBytes("vorbis").CopyTo(head, 29);
+        Assert.Equal("Vorbis", StationCodec.OggPayload(head));
+    }
+
+    [Fact]
+    public void OggOpusIsNamed()
+    {
+        var head = new byte[StationCodec.SniffBytes];
+        Encoding.ASCII.GetBytes("OggS").CopyTo(head, 0);
+        Encoding.ASCII.GetBytes("OpusHead").CopyTo(head, 28);
+        Assert.Equal("Opus", StationCodec.OggPayload(head));
+    }
+
+    /// <summary>A stream that is not Ogg has no Ogg payload to name.</summary>
+    [Fact]
+    public void ANonOggStreamHasNoOggPayload()
+    {
+        Assert.Null(StationCodec.OggPayload(Ascii("fLaC")));
+    }
+
+    /// <summary>
     /// A URL is never allowed to route a stream, only to name one — but it
     /// has to name it, because some stations cannot be identified at all.
     /// </summary>
