@@ -571,6 +571,64 @@ The generalisable part is in `ROADMAP.md`: a green build is not a
 measurement, and neither is a plausible chain of reasoning. Nothing here
 was known until something was counted.
 
+## Run 22: the best link this project has measured
+
+**2026-08-14, overnight, unattended.** Internet radio through the Hub to
+one Consumer, left running after the FLAC bring-up. Hub 0.14.0, firmware
+0.14.0, wired mesh backhaul and wired Hub — the same network as run 19.
+
+| | |
+| --- | --- |
+| Duration | 4 912 606 packets — **6 h 49 min** |
+| Received | 4 912 602 of 4 912 606 |
+| Lost | **4 packets — 0.00008 %** |
+| Loss shape | 3 gaps, 1.33 packets per gap, longest 2 |
+
+Four packets in nearly seven hours. Twenty milliseconds of audio missing
+in total, in three isolated events, none longer than two packets.
+
+### Do not credit this to the code
+
+Run 19 measured 0.061 % over 6 h 26 min on **the same network**, with the
+wired backhaul already in place. This run is roughly **750× better**, and
+nothing changed between them that could plausibly do that:
+
+- **The codec cannot matter.** Whatever the source, the wire carries
+  48 kHz L24 at 200 packets per second. The decoder changed; the thing
+  being measured did not.
+- **The sender did not get materially better.** Late wakes ran about
+  1.5–1.9 % of iterations in both, and worst-stall figures overlap.
+
+What is left is the air. This document already records the radio
+environment moving by three orders of magnitude in a single evening —
+runs 8 to 10 are the whole cautionary tale, and the method section exists
+because of them. A 750× swing with no mechanism behind it is exactly that
+shape, and treating it as an achievement would be repeating the mistake
+those runs were written to prevent.
+
+So: this is what the link can do when the air is quiet. It is not
+evidence that anything was fixed, and it should not become the baseline
+that later runs are judged against.
+
+### What would settle it
+
+An A/B on one evening: the MP3 station for an hour, then this one, then
+MP3 again — the method's rule 6, which exists precisely so a change in
+the air is not mistaken for a change in the code. If MP3 also returns
+near-zero tonight, the air is the answer and run 19 was measured on a
+worse night. If MP3 returns to 0.06 % while this stays at 0.0001 %, then
+something real is different and it is worth finding, because on the
+evidence above it should not be possible.
+
+### What it does establish, independent of the loss figure
+
+**Nearly seven hours of continuous reception**, 4.9 million packets, no
+reboot, no reconnect, three isolated single-packet events. Whatever the
+air was doing, the Hub decoded Ogg-FLAC through a native library across a
+P/Invoke boundary for almost seven hours without a leak, a crash, or a
+stall worth noticing — on code whose first frame had been decoded only
+hours earlier. That is the part worth trusting.
+
 ## Method
 
 1. Put both nodes on the same access point. They pick by signal strength,
