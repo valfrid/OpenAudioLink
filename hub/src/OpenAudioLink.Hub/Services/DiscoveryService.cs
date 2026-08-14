@@ -113,9 +113,25 @@ public sealed class DiscoveryService : BackgroundService
             _networkSetting.Configured, LocalAddressSelector.EnumerateLocalAddresses(), []);
         _logger.LogInformation("Network at startup: {Why}", provisional.Explanation);
 
-        var self = _registry.UpsertSelf(
-            BuildAnnounce(),
-            provisional.Network?.Address ?? _interfaces.FirstOrDefault() ?? IPAddress.Loopback);
+        /*
+         * A private address even when the resolver would not commit to one,
+         * because "first interface" is the answer that was wrong.
+         *
+         * A refusal means two plausible LANs and no evidence yet — a real
+         * ambiguity, and the resolver is right not to pick. But it is an
+         * ambiguity between LANs, and falling back past all of them to
+         * whatever the operating system enumerated first is how an overlay
+         * address ends up on the admin page. Any LAN beats any VPN here,
+         * and the announce tick corrects it the moment a device speaks.
+         */
+        var startupAddress = provisional.Network?.Address
+            ?? LocalAddressSelector.EnumerateLocalAddresses()
+                .Select(a => a.Address)
+                .FirstOrDefault(LocalAddressSelector.IsPrivate)
+            ?? _interfaces.FirstOrDefault()
+            ?? IPAddress.Loopback;
+
+        var self = _registry.UpsertSelf(BuildAnnounce(), startupAddress);
         _logger.LogInformation(
             "Registered this Hub as {Id} ({Name}) at {Address}", self.Id, self.Name, self.Address);
 
@@ -137,6 +153,58 @@ public sealed class DiscoveryService : BackgroundService
     /// adapter routinely wins.
     /// </summary>
     private IReadOnlyList<IPAddress> _interfaces = [];
+
+    /// <summary>
+    /// Corrects the Hub's own recorded address once the devices have said
+    /// where they are.
+    /// </summary>
+    /// <remarks>
+    /// At startup nothing has announced, so the address is a guess and on a
+    /// machine with several private networks it is a refusal — which fell
+    /// through to whichever interface enumerated first, which is how a Hub
+    /// went on calling itself by its Tailscale address while two speakers
+    /// sat on the LAN announcing every five seconds.
+    ///
+    /// The evidence arrives a moment later and nothing was re-reading it.
+    /// This does, on the announce tick, and it is cheap: a comparison
+    /// against the address already recorded, and a write only when they
+    /// differ.
+    ///
+    /// Decision 15's rule needs this to be true. "The devices decide" is
+    /// worth nothing if the deciding happens once, before any device has
+    /// spoken.
+    /// </remarks>
+    private void RefreshSelfAddress()
+    {
+        var nodes = _registry.Snapshot()
+            .Where(d => d.Id != _config.Id && d.Online)
+            .Select(d => IPAddress.TryParse(d.Address, out var ip) ? ip : null)
+            .OfType<IPAddress>()
+            .ToList();
+
+        if (nodes.Count == 0)
+        {
+            return;
+        }
+
+        var resolved = OalNetworkResolver.Resolve(
+            _networkSetting.Configured, LocalAddressSelector.EnumerateLocalAddresses(), nodes);
+        if (resolved.Network is null)
+        {
+            return;
+        }
+
+        var current = _registry.Snapshot().FirstOrDefault(d => d.Id == _config.Id)?.Address;
+        if (current == resolved.Network.Address.ToString())
+        {
+            return;
+        }
+
+        var self = _registry.UpsertSelf(BuildAnnounce(), resolved.Network.Address);
+        _logger.LogInformation(
+            "This Hub is now recorded at {Address}, was {Was}. {Why}",
+            self.Address, current ?? "unset", resolved.Explanation);
+    }
 
     /// <summary>
     /// Joins the discovery group on every usable interface, and reports
@@ -318,6 +386,8 @@ public sealed class DiscoveryService : BackgroundService
         {
             do
             {
+                RefreshSelfAddress();
+
                 await SendToGroupAsync(client, BuildAnnounce().Serialize(), groupEndpoint, stoppingToken);
 
                 // And directly to every device already known.
