@@ -118,4 +118,23 @@ public class LocalAddressSelectorTests
             Assert.InRange(local.PrefixLength, 0, 32);
         }
     }
+
+    /// <summary>
+    /// The range Tailscale and other overlays allocate from is reachable,
+    /// routable and real — and still not the LAN. Spotify Connect and
+    /// anything else that must stay local has to be able to tell.
+    /// </summary>
+    [Theory]
+    [InlineData("192.168.0.201", true)]
+    [InlineData("10.0.0.5", true)]
+    [InlineData("172.16.4.9", true)]
+    [InlineData("172.31.255.254", true)]
+    [InlineData("100.96.246.85", false)]
+    [InlineData("172.32.0.1", false)]
+    [InlineData("172.15.0.1", false)]
+    [InlineData("8.8.8.8", false)]
+    public void PrivateAddressesAreTheLanOnes(string address, bool expected)
+    {
+        Assert.Equal(expected, LocalAddressSelector.IsPrivate(IPAddress.Parse(address)));
+    }
 }

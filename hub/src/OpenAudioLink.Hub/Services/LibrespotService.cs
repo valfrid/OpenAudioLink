@@ -287,7 +287,25 @@ public sealed class LibrespotService : BackgroundService
         var locals = LocalAddressSelector.EnumerateLocalAddresses().ToList();
         foreach (var device in _registry.Snapshot())
         {
-            if (!device.Online || !IPAddress.TryParse(device.Address, out var target))
+            /*
+             * Not this Hub's own record, which is the bug this line exists
+             * to stop repeating.
+             *
+             * The registry contains the Hub as well as the speakers, and on
+             * a machine with Tailscale that record carried the overlay
+             * address. Matching it against this host's own interfaces then
+             * found the overlay interface — itself — and announced Spotify
+             * there. The phone was on the tailnet too, so the cast point
+             * appeared in the picker and answered when prodded, and the
+             * only symptom was that nothing ever played.
+             *
+             * The question this loop asks is "where is a speaker", and the
+             * Hub is not one. Matching against yourself always succeeds and
+             * proves nothing.
+             */
+            if (device.Id == _config.Id
+                || !device.Online
+                || !IPAddress.TryParse(device.Address, out var target))
             {
                 continue;
             }
@@ -295,14 +313,40 @@ public sealed class LibrespotService : BackgroundService
             var local = LocalAddressSelector.SelectSameSubnet(target, locals);
             if (local is not null)
             {
+                _logger.LogInformation(
+                    "Announcing Spotify on {Local}, which shares a subnet with {Device} at {Address}",
+                    local, device.Name, device.Address);
                 return local.ToString();
             }
         }
 
-        // No speaker has been seen yet, so there is nothing to match
-        // against. librespot's own default is right often enough, and the
-        // moment a speaker appears this is recomputed and the receivers
-        // restart on the correct address.
+        /*
+         * No speaker to match against, so fall back to a LAN address rather
+         * than to librespot's own default.
+         *
+         * Returning null here used to mean "let librespot decide", and
+         * librespot binds every interface and lets Windows choose where
+         * multicast goes — by route metric, which on this machine put
+         * Tailscale at 5 against Wi-Fi's 50. Spotify Connect is a
+         * local-network protocol, so any RFC 1918 address is a better guess
+         * than an overlay one, and a wrong guess here is visible and
+         * correctable where the operating system's is neither.
+         */
+        var lan = locals.FirstOrDefault(a => LocalAddressSelector.IsPrivate(a.Address));
+        if (lan.Address is not null)
+        {
+            _logger.LogInformation(
+                "No speaker to match against; announcing Spotify on {Local}, this host's LAN address",
+                lan.Address);
+            return lan.Address.ToString();
+        }
+
+        // Not even a LAN address on this host, which means the Hub is
+        // somewhere this project has not thought about. librespot's default
+        // is the only thing left, and the moment a speaker appears this is
+        // recomputed and the receivers restart on the right address.
+        _logger.LogWarning(
+            "No LAN address on this host; leaving the Spotify announcement to librespot");
         return null;
     }
 

@@ -101,6 +101,36 @@ public static class LocalAddressSelector
         }
     }
 
+    /// <summary>
+    /// Whether an address is on a private network — RFC 1918, the ranges a
+    /// home LAN uses.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately excludes 100.64.0.0/10, the carrier-grade NAT range that
+    /// Tailscale and similar overlays allocate from. Those addresses are
+    /// real and often reachable, which is what makes them dangerous here: a
+    /// check for "can this be reached" says yes, and the answer for anything
+    /// that must stay on the LAN is still no.
+    /// </remarks>
+    public static bool IsPrivate(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        Span<byte> bytes = stackalloc byte[4];
+        address.TryWriteBytes(bytes, out _);
+
+        return bytes[0] switch
+        {
+            10 => true,
+            172 => bytes[1] >= 16 && bytes[1] <= 31,
+            192 => bytes[1] == 168,
+            _ => false,
+        };
+    }
+
     private static bool IsLinkLocal(IPAddress address)
     {
         Span<byte> bytes = stackalloc byte[4];
