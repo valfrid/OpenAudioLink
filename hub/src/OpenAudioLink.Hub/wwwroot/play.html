@@ -129,7 +129,7 @@
 
     if (document.activeElement !== $('volume') && typeof playing.volume === 'number') {
       $('volume').value = playing.volume;
-      $('vol-text').textContent = `${playing.volume}%`;
+      $('vol-text').textContent = OAL.volumeLabel(playing.volume);
     }
   }
 
@@ -150,7 +150,7 @@
 
   $('volume').addEventListener('input', event => {
     const percent = Number(event.target.value);
-    $('vol-text').textContent = `${percent}%`;
+    $('vol-text').textContent = OAL.volumeLabel(percent);
     sendVolume(percent);
   });
 

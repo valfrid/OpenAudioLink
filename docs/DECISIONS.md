@@ -1206,6 +1206,35 @@ attenuation reaches the record's own noise floor.
   per-device endpoint exists for exactly this; nothing presents it as a
   balance control.
 
+### What using it taught, 2026-08-14
+
+**Gains multiply, and nothing said so.** A Spotify cast point played to a
+speaker set to 38 % and was inaudible. Nothing was broken: the stream ran,
+the ring never went dry after startup, the node reported itself joined and
+playing, and every packet arrived. 38 % on this taper is **−25 dB**, and
+librespot applies the phone's own volume to the samples *before* they
+reach the Hub (`LIBRESPOT.md`) — so a Spotify stream passes through two
+attenuators in series where radio passes through one. The same setting
+that sounds fine on a station disappears on Spotify.
+
+This decision documented the taper. `LIBRESPOT.md` documented the phone's
+gain. Neither said what they do together, and the slider — a bare
+percentage — said least of all.
+
+Two changes came out of it, both about instruments rather than gain:
+
+- **The slider shows what it does**: `38 % · −25 dB`. A cube taper makes
+  38 read as "a bit below half" when it means a twentieth of full scale,
+  and that number is the whole reason an evening went into networking.
+- **The streamer meters its own output** (`PeakDbfs` in `/api/stream`).
+  Whether a stream carries audio or silence was previously unanswerable
+  from any counter the system had, for any source.
+
+Still open: a Spotify cast point has two volume controls with no
+relationship between them, and no screen shows both. Whether the node's
+volume should follow the phone's, or be independent and merely visible
+beside it, is a real question this has not answered.
+
 ---
 
 ## 15. The Hub runs OpenAudioLink on exactly one subnet, and is told which

@@ -129,8 +129,25 @@ const OAL = (() => {
     };
   }
 
+  /**
+   * A volume setting as both the number and what it does.
+   *
+   * Because the number alone misleads, and it cost an evening. A cube
+   * taper puts 38 % at -25 dB, which reads as "a bit below half" and
+   * sounds like nothing — and on a Spotify stream, where the phone's own
+   * volume is already applied to the samples before they reach the Hub,
+   * two attenuators multiply and it disappears entirely. Decision 14
+   * explains the taper and LIBRESPOT.md explains the phone's gain; neither
+   * says what they do together, and the slider said least of all.
+   */
+  function volumeLabel(percent) {
+    const value = Number(percent);
+    if (!Number.isFinite(value) || value <= 0) return '0% · silent';
+    return `${value}% · ${Math.round(60 * Math.log10(value / 100))} dB`;
+  }
+
   /** Whether this cast point is the one currently making sound. */
   const isPlaying = (state, roomId) => state.playing?.id === roomId;
 
-  return { esc, api, load, roomFromUrl, fillRooms, volumeSender, isPlaying };
+  return { esc, api, load, roomFromUrl, fillRooms, volumeSender, isPlaying, volumeLabel };
 })();

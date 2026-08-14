@@ -219,7 +219,7 @@
     if (document.activeElement === $('volume')) return;
     if (typeof point?.volume === 'number') {
       $('volume').value = point.volume;
-      $('vol-text').textContent = `${point.volume}%`;
+      $('vol-text').textContent = OAL.volumeLabel(point.volume);
     }
   }
 
@@ -400,7 +400,7 @@
 
   $('volume').addEventListener('input', event => {
     const percent = Number(event.target.value);
-    $('vol-text').textContent = `${percent}%`;
+    $('vol-text').textContent = OAL.volumeLabel(percent);
     sendVolume(percent);
   });
 
