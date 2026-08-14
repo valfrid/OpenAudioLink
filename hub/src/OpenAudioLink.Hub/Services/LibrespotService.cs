@@ -154,6 +154,11 @@ public sealed class LibrespotService : BackgroundService
         _executablePath = executable;
         _logger.LogInformation("Spotify Connect receivers will run from {Path}", executable);
 
+        // Once, at startup, and only to write down what this build offers.
+        // Nothing acts on it yet: it is the measurement that decides how
+        // decision 14's second attenuator gets removed.
+        LibrespotCapabilities.Probe(executable, _logger);
+
         using var timer = new PeriodicTimer(Tick);
         try
         {
