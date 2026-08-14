@@ -1230,10 +1230,40 @@ Two changes came out of it, both about instruments rather than gain:
   Whether a stream carries audio or silence was previously unanswerable
   from any counter the system had, for any source.
 
+**And the speaker has a floor of its own.** The powered speaker this was
+found on shuts its amplifier down below a signal amplitude — ordinary
+signal-sensing standby on powered PA cabinets. So two attenuators in
+series did not merely make the audio quiet: they took the analogue level
+under that threshold and the speaker switched off. Silence, not soft
+music, which is why it read as a fault in the stream rather than a level.
+
+That is a real limit on this decision, and it is set by hardware nobody
+here controls. **Digital gain at the Consumer has a floor**, below which
+the system goes silent instead of quiet — and the cubed taper reaches it
+early, so the bottom of the slider may be unusable on such a speaker. The
+taper was chosen so that half-way sounds half as loud; nothing about it
+knows that a third of the way down the amplifier stops listening.
+
+Consequences worth carrying:
+
+- **Keep the digital gain high and set loudness elsewhere** where there is
+  an elsewhere. One attenuator, as high as it goes, keeps the analogue
+  level above the speaker's threshold.
+- **A quiet passage can put a speaker to sleep mid-track**, and it will
+  wake late on the next loud one. Not yet observed, but it follows.
+- **The useful range of the control is narrower than 0–100** and the
+  narrowing is per speaker. Nothing in the Hub knows this, and a warning
+  under some threshold would be guessing at a number that belongs to the
+  cabinet.
+- Disabling standby on the speaker, where the cabinet allows it, removes
+  the floor entirely and is the only complete fix.
+
 Still open: a Spotify cast point has two volume controls with no
 relationship between them, and no screen shows both. Whether the node's
 volume should follow the phone's, or be independent and merely visible
-beside it, is a real question this has not answered.
+beside it, is a real question this has not answered — and the speaker's
+standby threshold argues for one loud digital stage rather than two quiet
+ones.
 
 ---
 
