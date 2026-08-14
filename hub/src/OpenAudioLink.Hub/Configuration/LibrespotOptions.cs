@@ -102,7 +102,23 @@ public sealed class LibrespotOptions
     /// in a particular build, and a Hub that cannot make a sound is worse
     /// than one whose volume is awkward.
     /// </remarks>
-    public bool UnifiedVolume { get; set; } = true;
+    /// <remarks>
+    /// <para>
+    /// <b>Off by default until the event hook is proven.</b> Shipped on, it
+    /// stopped Spotify establishing a session at all: librespot kept
+    /// running and reported no error, and the phone simply would not cast.
+    /// The suspect is <c>--onevent</c>, which takes a program, and the Hub
+    /// hands it a <c>.cmd</c> — spawning a batch file is not the same as
+    /// spawning an executable, and the failure lands inside the connection
+    /// handling rather than at startup where it would have been obvious.
+    /// </para>
+    /// <para>
+    /// A default that removes a working feature is worse than the fault it
+    /// was fixing, and two attenuators in series is a nuisance rather than
+    /// a breakage. So this stays opt-in until somebody has seen it work.
+    /// </para>
+    /// </remarks>
+    public bool UnifiedVolume { get; set; }
 
     /// <summary>
     /// Extra arguments appended verbatim, for anything this class does not
