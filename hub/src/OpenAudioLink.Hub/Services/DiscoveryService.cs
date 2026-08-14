@@ -32,10 +32,15 @@ public sealed class DiscoveryService : BackgroundService
     private readonly HubConfig _config;
     private readonly ILogger<DiscoveryService> _logger;
 
-    public DiscoveryService(DeviceRegistry registry, HubConfig config, ILogger<DiscoveryService> logger)
+    private readonly HubNetworkSetting _networkSetting;
+
+    public DiscoveryService(
+        DeviceRegistry registry, HubConfig config, HubNetworkSetting network,
+        ILogger<DiscoveryService> logger)
     {
         _registry = registry;
         _config = config;
+        _networkSetting = network;
         _logger = logger;
     }
 
@@ -89,9 +94,28 @@ public sealed class DiscoveryService : BackgroundService
          * Registered before the loops start, so it is there for the first
          * request rather than the first announce.
          */
+        /*
+         * A LAN address, not whichever interface enumerated first.
+         *
+         * "First" is an ordering the operating system chooses, and on a
+         * machine with Tailscale it chose the overlay. That record is the
+         * Hub's own entry in the device table, so the admin page reported
+         * an address nothing on the network could use — and worse, another
+         * service matched its own subnet against it and announced Spotify
+         * there.
+         *
+         * No device has announced at this point, so there is nothing better
+         * to go on than "private, and only one of them". The moment a node
+         * appears the network is known properly, and everything that needs
+         * it asks OalNetworkResolver rather than reusing this.
+         */
+        var provisional = OalNetworkResolver.Resolve(
+            _networkSetting.Configured, LocalAddressSelector.EnumerateLocalAddresses(), []);
+        _logger.LogInformation("Network at startup: {Why}", provisional.Explanation);
+
         var self = _registry.UpsertSelf(
             BuildAnnounce(),
-            _interfaces.FirstOrDefault() ?? IPAddress.Loopback);
+            provisional.Network?.Address ?? _interfaces.FirstOrDefault() ?? IPAddress.Loopback);
         _logger.LogInformation(
             "Registered this Hub as {Id} ({Name}) at {Address}", self.Id, self.Name, self.Address);
 

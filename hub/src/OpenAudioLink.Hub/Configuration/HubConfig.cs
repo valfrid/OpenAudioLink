@@ -12,6 +12,21 @@ namespace OpenAudioLink.Hub.Configuration;
 /// </summary>
 public sealed record HubPaths(string DataDirectory);
 
+/// <summary>
+/// Which network OpenAudioLink runs on, when the operator has said.
+/// </summary>
+/// <remarks>
+/// Decision 15, and empty nearly always. The devices answer this question
+/// by existing — an ESP32 is on one network and announces from it — so
+/// configuration is for the cases observation cannot cover: a Hub whose
+/// speakers are all off, or a machine on two LANs where the right one is
+/// not the one with a speaker on it yet.
+///
+/// <c>Hub:Network</c>, as an address (<c>192.168.0.201</c>) or a subnet
+/// (<c>192.168.0.0/24</c>).
+/// </remarks>
+public sealed record HubNetworkSetting(string? Configured);
+
 /// <summary>Persisted Hub identity and settings.</summary>
 public sealed record HubConfig
 {

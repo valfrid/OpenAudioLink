@@ -31,6 +31,7 @@ builder.Configuration.GetSection(LibrespotOptions.SectionName).Bind(librespot);
 builder.Services.AddSingleton(configStore);
 builder.Services.AddSingleton(configStore.LoadOrCreate());
 builder.Services.AddSingleton(new HubPaths(dataDirectory));
+builder.Services.AddSingleton(new HubNetworkSetting(builder.Configuration["Hub:Network"]));
 builder.Services.AddSingleton(librespot);
 builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(new FirmwareStore(dataDirectory));

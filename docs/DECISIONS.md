@@ -1210,7 +1210,8 @@ attenuation reaches the record's own noise floor.
 
 ## 15. The Hub runs OpenAudioLink on exactly one subnet, and is told which
 
-**Status:** accepted 2026-08-14, not yet built.
+**Status:** accepted 2026-08-14. Resolver and the two worst call sites
+built the same day; the remaining call sites still derive their own answer.
 
 ### The question
 
@@ -1241,14 +1242,31 @@ The Hub has one **OpenAudioLink network**: a single local IPv4 address and
 its prefix. Everything that needs to know where OpenAudioLink lives asks
 for that one value rather than working it out.
 
-- **Configured explicitly** when the operator says so, by address or by
-  subnet.
-- **Detected once at startup** otherwise, preferring an RFC 1918 address,
-  and written to the log and the setup page so the choice is visible before
-  it is wrong rather than after.
-- **Refused rather than guessed** when detection is ambiguous — several
-  candidate LANs and no configuration is a question for a person, and a Hub
-  that says so beats one that picks and hopes.
+**The devices decide.** The Hub may be on several networks; an ESP32 is on
+exactly one and announces itself from it. So the question has an *observed*
+answer and needs no configured one: OpenAudioLink runs wherever the
+speakers are. An interface with no device on it is not the audio network,
+however reachable it looks — which is the whole overlay problem, solved
+without asking the operator anything, because Tailscale and Docker add
+interfaces to the Hub and never to a speaker.
+
+In order of evidence:
+
+- **Configuration**, when the operator has set `Hub:Network` — an address
+  or a subnet. It wins outright, including over the devices, because a
+  machine can legitimately run this somewhere no heuristic would guess.
+- **The devices**, which is the answer nearly always. The subnet with the
+  most of them wins, so a stray node on the wrong network cannot move the
+  system.
+- **A single private address**, provisionally, before anything has
+  announced — enough for discovery and the setup page to have something to
+  say, replaced by real evidence the moment a node appears.
+- **Refused rather than guessed** when two LANs are plausible and nothing
+  has announced. That is a question for a person, and a Hub that says so
+  beats one that picks and is wrong for a week.
+
+Whatever it decides is written to the log and the setup page, with the
+reason, so the choice is visible before it is wrong rather than after.
 
 A device outside that subnet is **reported, not served**. Today a speaker
 on another network is streamed to anyway, by whatever route the operating

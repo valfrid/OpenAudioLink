@@ -51,6 +51,7 @@ public sealed class LibrespotService : BackgroundService
     private readonly HubConfig _config;
     private readonly LibrespotOptions _options;
     private readonly HubPaths _paths;
+    private readonly HubNetworkSetting _networkSetting;
     private readonly ILogger<LibrespotService> _logger;
     private readonly ILoggerFactory _loggers;
 
@@ -77,7 +78,7 @@ public sealed class LibrespotService : BackgroundService
     public LibrespotService(
         CastPointStore castPoints, DeviceRegistry registry, RtpStreamer streamer,
         DeviceCommandClient commands, HubConfig config, LibrespotOptions options, HubPaths paths,
-        ILogger<LibrespotService> logger, ILoggerFactory loggers)
+        HubNetworkSetting network, ILogger<LibrespotService> logger, ILoggerFactory loggers)
     {
         _castPoints = castPoints;
         _registry = registry;
@@ -86,6 +87,7 @@ public sealed class LibrespotService : BackgroundService
         _config = config;
         _options = options;
         _paths = paths;
+        _networkSetting = network;
         _logger = logger;
         _loggers = loggers;
     }
@@ -284,69 +286,50 @@ public sealed class LibrespotService : BackgroundService
             return _options.ZeroconfInterface.Trim();
         }
 
-        var locals = LocalAddressSelector.EnumerateLocalAddresses().ToList();
-        foreach (var device in _registry.Snapshot())
-        {
-            /*
-             * Not this Hub's own record, which is the bug this line exists
-             * to stop repeating.
-             *
-             * The registry contains the Hub as well as the speakers, and on
-             * a machine with Tailscale that record carried the overlay
-             * address. Matching it against this host's own interfaces then
-             * found the overlay interface — itself — and announced Spotify
-             * there. The phone was on the tailnet too, so the cast point
-             * appeared in the picker and answered when prodded, and the
-             * only symptom was that nothing ever played.
-             *
-             * The question this loop asks is "where is a speaker", and the
-             * Hub is not one. Matching against yourself always succeeds and
-             * proves nothing.
-             */
-            if (device.Id == _config.Id
-                || !device.Online
-                || !IPAddress.TryParse(device.Address, out var target))
-            {
-                continue;
-            }
-
-            var local = LocalAddressSelector.SelectSameSubnet(target, locals);
-            if (local is not null)
-            {
-                _logger.LogInformation(
-                    "Announcing Spotify on {Local}, which shares a subnet with {Device} at {Address}",
-                    local, device.Name, device.Address);
-                return local.ToString();
-            }
-        }
-
         /*
-         * No speaker to match against, so fall back to a LAN address rather
-         * than to librespot's own default.
+         * One question, asked once, of the thing that knows the answer.
          *
-         * Returning null here used to mean "let librespot decide", and
-         * librespot binds every interface and lets Windows choose where
-         * multicast goes — by route metric, which on this machine put
-         * Tailscale at 5 against Wi-Fi's 50. Spotify Connect is a
-         * local-network protocol, so any RFC 1918 address is a better guess
-         * than an overlay one, and a wrong guess here is visible and
-         * correctable where the operating system's is neither.
+         * This used to walk the registry itself and match each record's
+         * subnet against this host's interfaces — which is the right idea
+         * and was wrong in one detail: the registry contains the Hub, and
+         * matching this machine against its own Tailscale address found
+         * the Tailscale interface. Spotify was then announced on the
+         * overlay, where the phone could see it and nothing could play.
+         *
+         * OalNetworkResolver asks it properly: the devices decide, the Hub
+         * is not one of them, and the operator can overrule the lot.
          */
-        var lan = locals.FirstOrDefault(a => LocalAddressSelector.IsPrivate(a.Address));
-        if (lan.Address is not null)
+        var nodes = _registry.Snapshot()
+            .Where(d => d.Id != _config.Id && d.Online)
+            .Select(d => IPAddress.TryParse(d.Address, out var ip) ? ip : null)
+            .OfType<IPAddress>()
+            .ToList();
+
+        // Hub:Network first: it is the whole system's answer, where
+        // Librespot:ZeroconfInterface only ever spoke for this one feature.
+        // The older key still works for anyone who set it.
+        var configured = string.IsNullOrWhiteSpace(_networkSetting.Configured)
+            ? _options.ZeroconfInterface
+            : _networkSetting.Configured;
+
+        var resolved = OalNetworkResolver.Resolve(
+            configured,
+            LocalAddressSelector.EnumerateLocalAddresses(),
+            nodes);
+
+        if (resolved.Network is not null)
         {
-            _logger.LogInformation(
-                "No speaker to match against; announcing Spotify on {Local}, this host's LAN address",
-                lan.Address);
-            return lan.Address.ToString();
+            _logger.LogInformation("Announcing Spotify on {Network}: {Why}",
+                resolved.Network, resolved.Explanation);
+            return resolved.Network.Address.ToString();
         }
 
-        // Not even a LAN address on this host, which means the Hub is
-        // somewhere this project has not thought about. librespot's default
-        // is the only thing left, and the moment a speaker appears this is
-        // recomputed and the receivers restart on the right address.
+        // Said out loud, because the alternative is librespot binding every
+        // interface and Windows choosing by route metric — the trap that
+        // put the announcement on a VPN in the first place.
         _logger.LogWarning(
-            "No LAN address on this host; leaving the Spotify announcement to librespot");
+            "Cannot tell which network OpenAudioLink runs on, so Spotify is announced "
+            + "wherever librespot decides. {Why}", resolved.Explanation);
         return null;
     }
 
