@@ -391,6 +391,15 @@ That is a board question, not a software one, and it is unsolved. Drift
 correction also gets harder, because a USB DAC owns its own clock where
 I²S lets the ESP trim its own through the APLL.
 
+**Reference design to read before starting:**
+<https://github.com/rbouteiller/airplay-esp32> — an ESP32 AirPlay receiver.
+Supplied by the operator as prior art for the dongle bring-up; not yet read
+by anyone here, so what it settles is unknown. The questions worth taking to
+it are the ones above: how it powers the bus, whether it keeps a console
+port free, and what it does about a DAC that owns its own clock. If it
+answers the VBUS question, the board problem may be smaller than this
+section assumes.
+
 ## Reference Analog Source
 
 ```text
