@@ -36,7 +36,7 @@ public sealed record StreamStatus(
     long WorstSendMs = 0,
     /// <summary>
     /// The loudest sample sent recently, in dBFS, or null before any has
-    /// been. "−∞ dB" means the stream is carrying digital silence.
+    /// been. −120 is the floor and means digital silence.
     /// </summary>
     /// <remarks>
     /// The one number that separates "no sound" from "no audio", which this
@@ -81,6 +81,18 @@ public sealed class RtpStreamer : IAsyncDisposable
     /// 100 ms cap produced almost none.
     /// </summary>
     private const int MaxCatchUpPackets = 20;
+
+    /// <summary>
+    /// What the peak meter reports when there is no signal at all.
+    /// </summary>
+    /// <remarks>
+    /// Finite, because JSON has no infinity and System.Text.Json throws
+    /// rather than writing one — which turned the first silent second of a
+    /// stream into a 500 from /api/stream and took the switchboard with it.
+    /// −120 dBFS is far below anything 24-bit audio carries, so it reads as
+    /// "nothing at all" without pretending to be a measurement.
+    /// </remarks>
+    private const double SilenceDbfs = -120.0;
 
     private readonly ILogger<RtpStreamer> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -546,7 +558,23 @@ public sealed class RtpStreamer : IAsyncDisposable
                 // not read as silence, short enough to follow a track.
                 if (clock.ElapsedMilliseconds - lastPeakReportMs >= 1000)
                 {
-                    reportedPeak = peak <= 0f ? double.NegativeInfinity : 20 * Math.Log10(peak);
+                    /*
+                     * Floored, not −∞, because JSON has no infinity.
+                     *
+                     * System.Text.Json throws on a non-finite double rather
+                     * than writing one, so the first stream to carry a
+                     * second of digital silence made /api/stream return 500
+                     * — taking the switchboard with it, since that endpoint
+                     * is what every page polls. A diagnostic that breaks the
+                     * thing it is diagnosing is worse than no diagnostic.
+                     *
+                     * −120 dBFS is far below anything 24-bit audio can
+                     * carry, so it reads as "nothing at all" without
+                     * pretending to be a measurement.
+                     */
+                    reportedPeak = peak <= 0f
+                        ? SilenceDbfs
+                        : Math.Max(20 * Math.Log10(peak), SilenceDbfs);
                     peak = 0f;
                     lastPeakReportMs = clock.ElapsedMilliseconds;
                 }
