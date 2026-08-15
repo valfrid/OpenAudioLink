@@ -80,45 +80,47 @@ public sealed class LibrespotOptions
     public string ZeroconfInterface { get; set; } = "";
 
     /// <summary>
-    /// Whether the phone's volume is the speaker's volume, rather than a
-    /// second attenuator in front of it.
+    /// Whether librespot hands over samples untouched instead of applying
+    /// the phone's volume to them.
     /// </summary>
     /// <remarks>
-    /// Decision 14 says volume is digital gain at the Consumer. librespot
-    /// arrived before that decision and has always applied the phone's
-    /// volume to the samples itself, so a Spotify stream passed through two
-    /// attenuators where every other source passes through one. They
-    /// multiply: a phone at half and a speaker at 38 % is -43 dB, and on a
-    /// powered cabinet that shuts down below a signal threshold the result
-    /// is not quiet, it is silent.
+    /// Half of decision 14's unfinished business. Volume is meant to be
+    /// digital gain at the Consumer, and librespot has always applied the
+    /// phone's volume itself — a second attenuator in series, and they
+    /// multiply. A phone at half and a speaker at 38 % is −43 dB, which on
+    /// a powered cabinet that shuts down below a signal threshold is not
+    /// quiet but silent.
     ///
-    /// On, librespot is run with <c>--volume-ctrl fixed</c> and hands over
-    /// samples untouched, while the phone's volume changes are forwarded to
-    /// the speaker. One gain stage, one control, and the highest analogue
-    /// level a given loudness allows.
+    /// Separate from <see cref="VolumeEvents"/> on purpose. Shipped
+    /// together, they stopped Spotify establishing a session at all, and
+    /// because both changed at once there was no way to tell which. Two
+    /// switches means one restart each answers it.
     ///
-    /// Off restores the old behaviour, which is worth keeping reachable:
-    /// this depends on two librespot options and on what <c>fixed</c> means
-    /// in a particular build, and a Hub that cannot make a sound is worse
-    /// than one whose volume is awkward.
+    /// On its own this leaves the phone's slider doing nothing, so it is a
+    /// diagnostic rather than a configuration worth living with.
     /// </remarks>
+    public bool VolumeCtrlFixed { get; set; }
+
+    /// <summary>
+    /// Whether librespot runs a small program on playback events, so the
+    /// phone's volume can reach the speaker.
+    /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Off by default until the event hook is proven.</b> Shipped on, it
-    /// stopped Spotify establishing a session at all: librespot kept
-    /// running and reported no error, and the phone simply would not cast.
-    /// The suspect is <c>--onevent</c>, which takes a program, and the Hub
-    /// hands it a <c>.cmd</c> — spawning a batch file is not the same as
-    /// spawning an executable, and the failure lands inside the connection
-    /// handling rather than at startup where it would have been obvious.
-    /// </para>
-    /// <para>
-    /// A default that removes a working feature is worse than the fault it
-    /// was fixing, and two attenuators in series is a nuisance rather than
-    /// a breakage. So this stays opt-in until somebody has seen it work.
-    /// </para>
+    /// The other half, and the prime suspect for the broken hand-off:
+    /// <c>--onevent</c> takes a program and the Hub writes a <c>.cmd</c>,
+    /// which is not the same thing as an executable on Windows. librespot
+    /// fires events during connection setup, so a failure to spawn lands
+    /// inside the hand-off rather than at startup — which matches what was
+    /// seen exactly: the process running, no error reported, and a phone
+    /// that would not cast.
+    ///
+    /// Volume changes are only *applied* when <see cref="VolumeCtrlFixed"/>
+    /// is on as well. With events alone, librespot is still attenuating, so
+    /// applying the same volume again at the speaker would square it. Alone,
+    /// this logs what the phone asked for and changes nothing — which is all
+    /// the bisect needs.
     /// </remarks>
-    public bool UnifiedVolume { get; set; }
+    public bool VolumeEvents { get; set; }
 
     /// <summary>
     /// Extra arguments appended verbatim, for anything this class does not

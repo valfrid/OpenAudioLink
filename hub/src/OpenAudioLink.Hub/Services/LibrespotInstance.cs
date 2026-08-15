@@ -366,22 +366,27 @@ public sealed class LibrespotInstance : IDisposable
         yield return InitialVolume.ToString();
 
         /*
-         * Hands the samples over untouched, so the only gain in the system
-         * is the speaker's — decision 14's rule, which this path has been
-         * quietly breaking since it was the first source.
+         * Two switches, separately, because together they broke Spotify and
+         * left no way to tell which.
          *
-         * "fixed" is librespot's name for a volume control that does not
-         * scale anything. Paired with the event script below, which carries
-         * the phone's slider to the speaker, so the control still works —
-         * it just works in one place instead of two multiplying.
+         * "fixed" is librespot's name for a volume control that scales
+         * nothing, which is decision 14's rule — the only gain in the
+         * system belongs to the speaker. The event script is how the
+         * phone's slider reaches that speaker.
          *
-         * Both or neither: without the script this would leave the phone's
-         * slider inert, which is a worse fault than the one being fixed.
+         * Wanted together in the end. Passed independently now, so one
+         * restart each says which of them stops the hand-off: the process
+         * stayed up and reported no error either way, so the answer is not
+         * going to come from anywhere else.
          */
-        if (_options.UnifiedVolume && EventScript is not null)
+        if (_options.VolumeCtrlFixed)
         {
             yield return "--volume-ctrl";
             yield return "fixed";
+        }
+
+        if (EventScript is not null)
+        {
             yield return "--onevent";
             yield return EventScript;
         }

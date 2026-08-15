@@ -170,6 +170,16 @@ public sealed class LibrespotService : BackgroundService
         // decision 14's second attenuator gets removed.
         LibrespotCapabilities.Probe(executable, _logger);
 
+        // Which of the two switches is on, said once and plainly. A bisect
+        // is worthless if the state being tested has to be inferred from a
+        // config file nobody can edit.
+        _logger.LogInformation(
+            "Spotify volume: librespot {Attenuates} the samples, phone volume events {Events}",
+            _options.VolumeCtrlFixed ? "does not scale" : "applies the phone's volume to",
+            _options.VolumeEvents
+                ? (_options.VolumeCtrlFixed ? "applied at the speaker" : "logged only")
+                : "off");
+
         using var timer = new PeriodicTimer(Tick);
         try
         {
@@ -240,7 +250,7 @@ public sealed class LibrespotService : BackgroundService
     /// </remarks>
     private string? WriteEventScript(string castPointId)
     {
-        if (!_options.UnifiedVolume)
+        if (!_options.VolumeEvents)
         {
             return null;
         }
@@ -309,6 +319,25 @@ public sealed class LibrespotService : BackgroundService
         if (!_castPoints.TryGet(castPointId, out var point))
         {
             return null;
+        }
+
+        /*
+         * Reported whether or not it is acted on, because the report is the
+         * point while this is being bisected: it proves the event hook fired
+         * and reached the Hub, which is the half of the puzzle that has
+         * never been observed working.
+         *
+         * Applied only when librespot has been told to stop attenuating.
+         * Otherwise it is still scaling the samples by this same volume, and
+         * setting the speaker to it as well would square the attenuation —
+         * half becoming a quarter, and a quiet room becoming a silent one.
+         */
+        if (!_options.VolumeCtrlFixed)
+        {
+            _logger.LogInformation(
+                "Phone set {CastPoint} to {Percent}%, not applied: librespot is still "
+                + "applying it itself (Librespot:VolumeCtrlFixed is off)", point.Name, percent);
+            return percent;
         }
 
         foreach (var deviceId in point.Destinations)
