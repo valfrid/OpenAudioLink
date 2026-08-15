@@ -82,6 +82,7 @@ public sealed class LibrespotInstance : IDisposable
         ZeroconfInterface = zeroconfInterface;
         EventScript = eventScript;
         InitialVolume = initialVolume;
+        VolumeFixed = options.VolumeCtrlFixed;
         _executable = executable;
         _cacheDirectory = cacheDirectory;
         _options = options;
@@ -129,6 +130,19 @@ public sealed class LibrespotInstance : IDisposable
     /// so the two agree before anybody touches either.
     /// </summary>
     public int InitialVolume { get; }
+
+    /// <summary>
+    /// Whether this process was started with librespot's own attenuation
+    /// switched off.
+    /// </summary>
+    /// <remarks>
+    /// Recorded because it is fixed at spawn, like the name and the
+    /// announcement address: changing it means a new process. Without this
+    /// the mode could be switched at runtime and nothing would happen until
+    /// the Hub restarted, which is the sort of half-working control that
+    /// wastes an afternoon.
+    /// </remarks>
+    public bool VolumeFixed { get; }
 
     /// <summary>True while the process is up, whether or not it is playing.</summary>
     public bool Running => _processRunning;

@@ -590,6 +590,56 @@ app.MapGet("/api/librespot", (LibrespotService spotify) => Results.Ok(spotify.Sn
  * room's volume without going through the ordinary endpoint, and the
  * script has no way to authenticate itself.
  */
+/*
+ * The two volume switches, readable and settable while the Hub runs.
+ *
+ * They exist to be bisected, and a bisect needs somebody able to change
+ * one thing at a time. appsettings.json is inside Program Files, which on
+ * a locked-down machine the operator cannot edit at all — so a switch
+ * that lives only there is a switch nobody can throw.
+ *
+ * Not persisted. This is a diagnostic: a restart should put the Hub back
+ * in the state its configuration describes, rather than leaving an
+ * experiment running that nobody remembers starting.
+ */
+app.MapGet("/api/librespot/volume-mode", (LibrespotOptions options) => Results.Ok(new
+{
+    volumeCtrlFixed = options.VolumeCtrlFixed,
+    volumeEvents = options.VolumeEvents,
+    meaning = options.VolumeCtrlFixed
+        ? "librespot hands over samples untouched; the speaker's volume is the only one"
+        : "librespot applies the phone's volume to the samples before the Hub sees them",
+}));
+
+app.MapPost("/api/librespot/volume-mode",
+    (VolumeModeRequest request, LibrespotOptions options, ILoggerFactory loggers) =>
+{
+    if (request.VolumeCtrlFixed is bool fixedVolume)
+    {
+        options.VolumeCtrlFixed = fixedVolume;
+    }
+    if (request.VolumeEvents is bool events)
+    {
+        options.VolumeEvents = events;
+    }
+
+    // Loud, because this is the setting a bisect is turning and the whole
+    // exercise depends on knowing which way it was turned.
+    loggers.CreateLogger("Librespot").LogInformation(
+        "Volume mode set to volumeCtrlFixed={Fixed}, volumeEvents={Events}; "
+        + "receivers restart on the next tick",
+        options.VolumeCtrlFixed, options.VolumeEvents);
+
+    return Results.Ok(new
+    {
+        status = "set",
+        volumeCtrlFixed = options.VolumeCtrlFixed,
+        volumeEvents = options.VolumeEvents,
+        note = "Receivers restart within a second. Not persisted: a Hub restart "
+            + "returns to the configured values.",
+    });
+});
+
 app.MapPost("/api/librespot/event/{castPointId}",
     async (string castPointId, HttpContext context, LibrespotService spotify,
            CancellationToken cancellationToken) =>
@@ -1291,6 +1341,9 @@ internal sealed record StationRequest(string? Name, string? Url);
 /// clear 400 instead of silently muting the room, which is what binding a
 /// missing value to the default 0 would do.
 /// </summary>
+/// <summary>Either switch, or both; anything omitted is left alone.</summary>
+internal sealed record VolumeModeRequest(bool? VolumeCtrlFixed, bool? VolumeEvents);
+
 internal sealed record VolumeRequest(int? Percent);
 
 internal static class StreamLimits

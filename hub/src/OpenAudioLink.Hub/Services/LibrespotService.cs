@@ -378,9 +378,23 @@ public sealed class LibrespotService : BackgroundService
             {
                 if (_instances.TryGetValue(point.Id, out var existing))
                 {
-                    if (existing.Name == point.Name && existing.ZeroconfInterface == zeroconf)
+                    // The volume mode is fixed at spawn too, so a change
+                    // has to respawn — otherwise flipping it from the API
+                    // appears to do nothing until the Hub is restarted.
+                    var wantsEvents = _options.VolumeEvents;
+                    if (existing.Name == point.Name
+                        && existing.ZeroconfInterface == zeroconf
+                        && existing.VolumeFixed == _options.VolumeCtrlFixed
+                        && (existing.EventScript is not null) == wantsEvents)
                     {
                         continue;
+                    }
+
+                    if (existing.VolumeFixed != _options.VolumeCtrlFixed
+                        || (existing.EventScript is not null) != wantsEvents)
+                    {
+                        _logger.LogInformation(
+                            "Volume mode changed; restarting {Name}'s receiver", existing.Name);
                     }
 
                     if (existing.Name != point.Name)
