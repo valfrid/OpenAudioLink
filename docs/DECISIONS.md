@@ -1365,3 +1365,64 @@ The operator can still configure the wrong subnet. The difference is that
 it will be one wrong answer, written down, in one place, visible on a page
 somebody looks at — rather than four right answers and one wrong one, none
 of them written anywhere.
+
+
+---
+
+## 16. A microphone is its own role, not a Producer
+
+**Status:** accepted 2026-08-14, not yet built. Detail in `LISTENING.md`.
+
+### The question
+
+The measurement microphone for `ROOM-CALIBRATION.md` captures audio and
+sends it over RTP, which is what a Producer does. So is it one?
+
+### Decision
+
+No. A microphone node is a **Listener**, a fourth device role beside
+Controller, Producer and Consumer.
+
+The Controller still orchestrates and computes — the node captures, the Hub
+decides what to play, correlates what came back, and produces the filters.
+That split is unchanged.
+
+### Why, and the reason is physical first
+
+A Listener has to be where the *person* is. Every other node has to be where
+the *equipment* is. Those are opposite ends of a room, and no amount of role
+list flexibility makes them the same box:
+
+- a Consumer sits at the speaker;
+- a Producer sits at the turntable, the PA, the dongle;
+- a Listener sits at the listening position, acoustically open, away from
+  both.
+
+A microphone inside a speaker measures the speaker rather than the room,
+which is the one thing calibration must not do.
+
+The rest follows from that. Its audio goes to the Controller to be analysed
+rather than to Consumers to be heard. It runs on demand or while waiting for
+a word, not while something is playing. It feeds nothing anybody listens to.
+
+And the part that would settle it on its own: **a microphone is not a line
+in.** A device that can hear the room should be listed as one, switchable off
+as a class, and obvious in an inventory without anybody inferring it from a
+hardware profile. Roles are already how this project says what a box is for.
+
+### Consequences
+
+- One more role in `DeviceRole`, the registry, the setup page and the
+  provisioning portal.
+- A Listener is never a stream destination and never a music source. Code
+  that enumerates producers should not offer it.
+- Room calibration and voice share the hardware and, more usefully, the
+  measurement: echo cancellation needs the delay and impulse response
+  between speaker and microphone, which is exactly what a calibration sweep
+  produces. One sweep serves both.
+- Echo cancellation belongs to the Hub, not the node. A Listener at the far
+  end of the room has no reference signal — an earlier assumption that it
+  would, because a node knows what it is playing, holds only for a
+  microphone built into a speaker, which this decision forbids.
+- Anything spoken back into a room collides with one stream at a time
+  (decision 2). Recorded in `LISTENING.md`; not solved here.
