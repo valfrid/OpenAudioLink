@@ -391,14 +391,44 @@ That is a board question, not a software one, and it is unsolved. Drift
 correction also gets harder, because a USB DAC owns its own clock where
 I²S lets the ESP trim its own through the APLL.
 
-**Reference design to read before starting:**
-<https://github.com/rbouteiller/airplay-esp32> — an ESP32 AirPlay receiver.
-Supplied by the operator as prior art for the dongle bring-up; not yet read
-by anyone here, so what it settles is unknown. The questions worth taking to
-it are the ones above: how it powers the bus, whether it keeps a console
-port free, and what it does about a DAC that owns its own clock. If it
-answers the VBUS question, the board problem may be smaller than this
-section assumes.
+**Two references, and one of them settles the software question.**
+
+<https://github.com/Averyy/esp-uac2-host> is a USB Audio Class 2.0 **host**
+driver for the ESP32-S3, as an ESP-IDF component. Read 2026-08-15, and it
+answers several things this section had open:
+
+- **UAC 2.0 works at full speed.** The ESP32-S3's USB is full-speed only
+  (12 Mbps), and there was reason to think UAC 2.0 devices would demand high
+  speed. Its own figures put 48 kHz / 24-bit / stereo — exactly our wire
+  format — at about a quarter of the bus. Bandwidth is not the obstacle.
+- **The clock problem has a standard answer.** This section notes that a USB
+  DAC owns its own clock where I²S lets the ESP trim its own through the
+  APLL. The driver implements the feedback endpoint, which is how
+  asynchronous USB audio resolves that: the device reports its true rate and
+  the host adapts. That does not make the drift question disappear, but it
+  moves it from "unsolved" to "solved the way USB audio always solves it",
+  and it will want reconciling with decision 12's playout contract.
+- **It costs an ESP-IDF bump.** The component wants 5.4; this project builds
+  on 5.3.1.
+- **It carries a microsecond first-frame timestamp**, added by its author for
+  synchronising measurements — the same problem `ROOM-CALIBRATION.md` has.
+  Their stated use is playing measurement sweeps through a miniDSP.
+
+What it does **not** settle:
+
+- **Alpha, and validated narrowly.** Version 0.1.2, described by its author
+  as new and under active testing, exercised against a miniDSP 2x4 HD and an
+  ESP32-based simulator. Single-clock UAC2 devices only, and not yet on the
+  component registry.
+- **Nothing about the CX31993.** Whether that dongle enumerates as UAC 2.0,
+  single-clock, at full speed, is unknown and is the first thing to check —
+  plug it into a PC and read its descriptors before writing any firmware.
+- **The board question is untouched.** This blockage was never a software
+  one: the ESP32-S3 must source VBUS as host and still leave a console port
+  free. That remains exactly as stated above.
+
+<https://github.com/rbouteiller/airplay-esp32> is an ESP32 AirPlay receiver,
+supplied as further prior art and not yet read here.
 
 ## Reference Analog Source
 
