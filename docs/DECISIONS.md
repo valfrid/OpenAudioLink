@@ -1258,12 +1258,58 @@ Consequences worth carrying:
 - Disabling standby on the speaker, where the cabinet allows it, removes
   the floor entirely and is the only complete fix.
 
-Still open: a Spotify cast point has two volume controls with no
-relationship between them, and no screen shows both. Whether the node's
-volume should follow the phone's, or be independent and merely visible
-beside it, is a real question this has not answered — and the speaker's
-standby threshold argues for one loud digital stage rather than two quiet
-ones.
+### The attempt to remove the second attenuator, and why it failed
+
+**2026-08-15. Measured, and the answer is no.**
+
+The plan was librespot's `--volume-ctrl fixed` to make it hand over samples
+untouched, plus `--onevent` to carry the phone's slider to the speaker: one
+gain stage, at the Consumer, where this decision puts it. Both options exist
+in the shipped librespot — `--help` confirms them — and both were tried
+separately with the peak meter watching the wire.
+
+| librespot mode | phone slider | peak on the wire |
+| --- | --- | --- |
+| default | low | −58.8 dBFS |
+| default | higher | −31.7 dBFS |
+| `--volume-ctrl fixed` | one step up from zero | **−27.8 dBFS** |
+| `--volume-ctrl fixed` | full | **0.2 dBFS** |
+
+**`fixed` does not bypass the volume.** The level tracks the slider either
+way, so it selects a curve rather than switching attenuation off. Nothing
+downstream can undo it: the samples arrive already scaled, and attenuation
+is not reversible.
+
+`--onevent` failed separately and quietly. It was passed, librespot ran, and
+the script never once executed — no event ever reached the Hub. A `.cmd` is
+not an executable, and librespot gave no complaint about it.
+
+So the second attenuator cannot be removed by configuration.
+
+### What to do instead
+
+Put the phone at **100 %** and control loudness at the speaker. The phone
+still attenuates, but by nothing, so the result is what this decision asked
+for by convention rather than by code:
+
+- one effective gain stage, at the Consumer;
+- ≈0 dBFS on the wire, the best signal-to-noise available;
+- the highest analogue level for a given loudness, which is what a cabinet
+  with a signal-sensing standby threshold needs.
+
+`Librespot:InitialVolume` sets where each session's slider starts, so 100
+makes that the default state rather than something to remember. The cost is
+that the phone's slider becomes a trap rather than a control: moving it down
+only ever makes things worse.
+
+One thing the measurement caught on the way: at full slider the wire reads
+**0.2 dBFS** — above full scale. Spotify masters hot, and with no
+attenuation anywhere those samples will clip on conversion to L24. A decibel
+or two of deliberate headroom belongs in any arrangement that runs the phone
+at full.
+
+Still open: no screen shows both volumes, and nothing warns that the phone's
+is the one making a room silent.
 
 ---
 
