@@ -1,0 +1,37 @@
+# uacprobe defaults. See firmware/uacprobe/README.md.
+
+# THE CONSOLE MUST LEAVE THE USB PORT.
+#
+# The testnode build sets CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y, because on
+# these boards UART0 is not wired to the USB connector and without it the
+# board runs correctly and prints nothing at all.
+#
+# Here that setting is actively harmful. The ESP32-S3's USB-Serial/JTAG and
+# USB-OTG peripherals share one PHY and one pair of pins (GPIO19/GPIO20).
+# Only one can have them. This program needs USB-OTG in host mode, so the
+# console has to go somewhere else — and the symptom of getting this wrong
+# is the same silence the testnode setting exists to cure, arriving for the
+# opposite reason.
+#
+# So: console on UART0, and a USB-serial adapter on the board's TX/RX pins
+# is required to see anything. Flashing still works over the USB connector,
+# because the ROM bootloader takes the pins back in download mode.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# Required by esp-uac2-host. The first is large enough for a UAC 2.0
+# configuration descriptor — the dongle's runs well past the 256-byte
+# default — and the second biases the host controller's buffer allocation
+# towards periodic OUT traffic, which is what isochronous playback is.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
+CONFIG_USB_HOST_HW_BUFFER_BIAS_PERIODIC_OUT=y
+
+# No OTA here and no partition table of our own: this image is flashed by
+# cable and is not a node. A larger single app partition simply avoids
+# running out of room as the USB host stack grows.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# The same 1 ms tick the node runs at. An isochronous frame is 1 ms, so a
+# 10 ms tick would make every timed wait in the audio path an order of
+# magnitude coarser than the thing it is waiting for.
+CONFIG_FREERTOS_HZ=1000

@@ -220,9 +220,20 @@ have to be handled before this is a profile rather than a demo.
 5. **Enumerate, and nothing more.** IDF 5.4, the host stack, no audio: does
    the device attach, and do its descriptors match what Windows reported?
    First real go/no-go.
-6. **Open the stream.** For the dongle: interface 1, alternate 2 (24-bit),
-   48 kHz, clock `0x09`. Answers the two-clock question.
-7. **Play a tone**, the synthetic source that validated the I²S path.
+6. **Open the stream.** For the dongle: 48 kHz, 24-bit, stereo. Answers the
+   two-clock question.
+7. **Play a tone.**
+
+**Steps 5–7 are built.** `firmware/uacprobe` is a standalone application
+that does exactly those three and nothing else — no Wi-Fi, no RTP, no
+`oal_*` components, ESP-IDF 5.4, `esp-uac2-host` pinned to a commit. It
+prints the UAC version, the clock count, the sync type and feedback endpoint
+of every alternate setting, and whether 48 kHz / 24-bit / stereo is offered,
+then plays a 1 kHz sine and counts frames once a second. Its README covers
+the wiring, the flashing procedure and how to read the output. Flashing over
+the board's USB-C connector still works in download mode; **the console has
+to move to UART**, because USB-Serial/JTAG and USB-OTG share one PHY on the
+S3 and host mode takes it.
 8. **Measure the drift.** Free-run for hours against the Hub's clock, the way
    run 22 in `LINK-MEASUREMENTS.md` was run — plus, for a speaker, its added
    latency against an I²S node on the same cast point. A fixed offset is a

@@ -210,3 +210,32 @@ jobs:
           path: |
             firmware/testnode/build/testnode-${{ matrix.target }}-flash.bin
             firmware/testnode/build/testnode-${{ matrix.target }}-ota.bin
+
+  # The USB host experiment, `docs/USB-AUDIO.md` track A.
+  #
+  # Its own job on its own ESP-IDF, and that separation is the entire point.
+  # `esp-uac2-host` requires 5.4 where every node in the house runs firmware
+  # built on 5.3.1 above, and isolation rule 2 says that pin does not move
+  # for an experiment. Two jobs, two toolchains, no argument.
+  #
+  # It is allowed to fail without failing the build. The dependency is an
+  # alpha component fetched from a third party's git, so a red mark here can
+  # mean somebody else's repository moved — which is worth seeing and is not
+  # worth blocking a Hub release over.
+  uacprobe:
+    name: Firmware uacprobe (USB host experiment)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4
+          target: esp32s3
+          path: firmware/uacprobe
+          command: idf.py build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: uacprobe-esp32s3
+          path: firmware/uacprobe/build/oal_uacprobe.bin

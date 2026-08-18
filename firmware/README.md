@@ -8,12 +8,21 @@ components/       Shared, portable components (no SoC-specific code)
   oal_discovery/  Discovery announce/probe per protocol/DISCOVERY.md
   oal_control/    Control server (/status, /reboot, /ota) per protocol/CONTROL.md
 testnode/         Test firmware: boot -> Wi-Fi -> announce -> controllable + OTA
+uacprobe/         Experiment: USB host + UAC 2.0 DAC, enumerate and tone
 ```
 
 The eventual Receiver and Analog Source firmware will live here as separate
 projects reusing the shared components. Hardware-specific behaviour (I²S
 pins, DAC/ADC init) belongs in hardware-profile code, never in shared
 components. The ESP32-S3 is the only target that builds.
+
+**`uacprobe` is not a node and shares nothing with one.** It is the first
+step of `docs/USB-AUDIO.md` track A, it builds on **ESP-IDF 5.4** where
+`testnode` builds on 5.3.1, and it uses none of the `oal_*` components. That
+separation is the point rather than an accident: the driver it depends on
+requires 5.4, and no experiment gets to move the toolchain every node in the
+house is built with. Its own README covers wiring, flashing and how to read
+what it prints.
 
 ## Flash layout
 

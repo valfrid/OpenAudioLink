@@ -1,0 +1,13 @@
+# The UAC 2.0 host driver, pinned to a commit rather than a tag.
+#
+# It is v0.1.2 alpha, not on the component registry, and its author
+# describes it as under active testing — so "whatever main happens to be"
+# is not a dependency, it is a moving target. A commit makes a failure here
+# reproducible, which is the only reason this experiment can produce
+# evidence rather than anecdotes.
+dependencies:
+  idf: ">=5.4"
+  uac2_host:
+    git: https://github.com/Averyy/esp-uac2-host.git
+    path: components/uac2_host
+    version: a072adb6a2410f9f93474637a483724c93d5fc6f
