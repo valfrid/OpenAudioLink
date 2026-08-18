@@ -420,15 +420,82 @@ What it does **not** settle:
   as new and under active testing, exercised against a miniDSP 2x4 HD and an
   ESP32-based simulator. Single-clock UAC2 devices only, and not yet on the
   component registry.
-- **Nothing about the CX31993.** Whether that dongle enumerates as UAC 2.0,
-  single-clock, at full speed, is unknown and is the first thing to check —
-  plug it into a PC and read its descriptors before writing any firmware.
 - **The board question is untouched.** This blockage was never a software
   one: the ESP32-S3 must source VBUS as host and still leave a console port
   free. That remains exactly as stated above.
 
 <https://github.com/rbouteiller/airplay-esp32> is an ESP32 AirPlay receiver,
 supplied as further prior art and not yet read here.
+
+#### What the dongle's descriptors say
+
+Read 2026-08-18 from the actual part — a CX31993 + MAX97220 "PRO" USB-C
+dongle, VID `0x3302` PID `0x336A` — enumerated on Windows 11 and dumped with
+USB Device Tree Viewer. This closes the "first thing to check" above, and the
+answer is *mostly yes, with two things to verify in firmware*.
+
+**It can run at full speed.** The device publishes a **Device Qualifier
+descriptor** with `bNumConfigurations 0x01`, and an **Other Speed
+Configuration** to go with it. That is the descriptor pair a device only
+provides when it has a second, slower personality — so the dongle is not
+high-speed-only, and an ESP32-S3 host (full speed, 12 Mbps) is a viable host
+for it. Had the qualifier been absent, this whole idea would have been dead
+on the spot.
+
+**There is no UAC 1.0 fallback.** The original question was whether it could
+enumerate as UAC 1.0, which some driver stacks find easier. It cannot: the
+Audio Control interface header inside the *Other Speed* configuration still
+reads `bcdADC 0x0200`. The full-speed personality is UAC 2.0 as well. The
+speed changes; the class version does not. So `esp-uac2-host` (or equivalent)
+is required — there is no simpler UAC 1.0 route to fall back on.
+
+**Bandwidth is comfortable.** At full speed, the speaker interface's 24-bit
+alternate setting declares `wMaxPacketSize 576` bytes at `bInterval 1` (one
+packet per millisecond). Our wire format needs 48 000 × 3 × 2 = 288 bytes per
+millisecond — half the reserved packet. This matches the driver's own claim
+of about a quarter of the bus.
+
+**Two clock sources, where the driver documents one.** The dongle exposes
+clock source `0x09` for the speaker path and `0x0A` for the microphone path,
+both `bmAttributes 0x03` (internal programmable, not synced to SOF) with
+`bmControls 0x07` (frequency host-programmable, validity read-only).
+`esp-uac2-host` states support for **single-clock** UAC2 devices. That is the
+first real compatibility risk, and it is worth noting the shape of it: the
+driver would need to select and program the right clock for the interface it
+is streaming to. If only playback is used, only clock `0x09` matters, which
+may make it a non-issue in practice — but it is untested.
+
+**Synchronous endpoints, no feedback endpoint.** Every audio endpoint is
+isochronous with `bmAttributes 0x0D` — SyncType *Synchronous* — and no
+feedback endpoint appears anywhere in the configuration. This matters more
+than the clock count: the section above credits `esp-uac2-host` with solving
+the drift problem *by implementing the feedback endpoint*, and this device
+does not offer one. It instead expects the host to deliver exactly one
+packet per SOF and slaves itself to the host's frame timing. For a Consumer
+node that is arguably better news than a feedback endpoint would be — the ESP
+keeps its own clock authority and decision 12's playout contract stays
+intact — but it does mean the drift correction path here is *not* the one the
+driver's README describes, and would have to be re-thought rather than
+inherited.
+
+The rest, for the record:
+
+- **Speaker path** — Input Terminal 1 (USB Streaming, 2 ch, FL/FR) → Feature
+  Unit 2 (mute + per-channel volume) → Output Terminal 3 (Speaker).
+  Interface 1 alternates 1/2/3 are 16/24/32-bit. 48 kHz / 24-bit / stereo is
+  present, which is exactly our wire format, unconverted.
+- **Microphone path** — Input Terminal 4 (Microphone, **1 channel**) →
+  Feature Unit 5 → Output Terminal 6. Interface 2 alternates 1/2 are
+  16/24-bit. Mono only, which is worth knowing before anyone considers this
+  dongle for `LISTENING.md`'s Listener role — adequate for a measurement
+  microphone, useless for anything stereo.
+- **Interface 3 is HID**, the consumer volume/play keys.
+- `bNumConfigurations 0x01`, bus-powered, `MaxPower 0x32` — **100 mA**. Modest,
+  but it is current the ESP32-S3 board must be able to source as host, which
+  is the unsolved board question above and not a software one.
+- The tool flags a firmware quirk in the Interface Association Descriptor
+  (`bInterfaceCount must be greater than 1`). Cosmetic on Windows; a stricter
+  host stack could be less forgiving.
 
 ## Reference Analog Source
 
