@@ -477,7 +477,7 @@ obstacles are hardware and are worth stating plainly:
   boards take VBUS in through a diode that will not pass it back out, nor
   whether the CC pins present Rp so a USB-C device attaches at all. Wiring
   a USB-A receptacle straight to GPIO19/GPIO20 sidesteps both. See
-  `USB-AUDIO-HOST.md`.
+  `USB-AUDIO.md`.
 - **The console.** `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` shares the
   native USB peripheral. On a single-port board, switching it to OTG host
   costs the heartbeat diagnostics and USB flashing at the same time.
@@ -495,7 +495,7 @@ obstacles are hardware and are worth stating plainly:
   spent elsewhere. **Amended, 2026-08-18:** the measured dongle is
   *synchronous* with no feedback endpoint, so it does not own its clock —
   it follows the host's SOF. That may be better than assumed here, and it
-  is what `USB-AUDIO-HOST.md`'s experiment exists to measure.
+  is what `USB-AUDIO.md`'s experiment exists to measure.
 
 An **ESP32-S3-DevKitC-1** style board with two USB-C ports (one bridged
 UART, one native USB) and an N16R8 module is the shape that fits: the

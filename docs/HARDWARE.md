@@ -382,7 +382,7 @@ makes a C3 a Consumer or a Producer, never both.
 ### CX31993 USB dongle
 
 Status: an experimental track, isolated from the main line.
-`USB-AUDIO-HOST.md` holds the plan, the open questions and the order to test
+`USB-AUDIO.md` holds the plan, the open questions and the order to test
 in; the descriptors and the analysis are here.
 
 Decision 8 appendix A covers this in full and the analysis is not repeated
