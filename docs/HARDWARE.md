@@ -30,7 +30,7 @@ are additive — new profiles, not a new architecture.
 | --- | --- | --- | --- |
 | PCM5102A | line level, needs an amplifier | ~28 SEK | a room someone sits and listens in |
 | MAX98357A | 3 W to a driver, no amplifier | ~20 SEK | bathroom, kitchen, workshop, party |
-| CX31993 USB dongle | headphone amp, shielded | ~120 SEK | desk or headphones — **blocked**, see below |
+| CX31993 USB dongle | headphone amp, shielded | ~120 SEK | desk or headphones — **experimental**, see below |
 
 ### MAX98357A — DAC and amplifier in one chip
 
@@ -381,7 +381,9 @@ makes a C3 a Consumer or a Producer, never both.
 
 ### CX31993 USB dongle
 
-Status: recorded, blocked, nothing scheduled.
+Status: an experimental track, isolated from the main line.
+`USB-AUDIO-HOST.md` holds the plan, the open questions and the order to test
+in; the descriptors and the analysis are here.
 
 Decision 8 appendix A covers this in full and the analysis is not repeated
 here. The short version: it gives a shielded, finished output stage with a

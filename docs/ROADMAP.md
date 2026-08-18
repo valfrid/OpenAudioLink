@@ -402,7 +402,9 @@ Priority is intentionally not fixed:
 - DSP — including automatic speaker and room calibration with a
   measurement microphone, proposed in `ROOM-CALIBRATION.md`
 - more hardware profiles
-- alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode,
-  a PC Consumer application, a Raspberry Pi Consumer (see decision 8)
+- alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode —
+  now an isolated experimental track with the dongle in hand and its
+  descriptors read, `USB-AUDIO-HOST.md`; a PC Consumer application; a
+  Raspberry Pi Consumer (see decision 8)
 - a wall control surface — the web app half is built (`/play`); tags and
   the panel are still open, see `CONTROL-SURFACE.md`
