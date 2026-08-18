@@ -74,8 +74,29 @@ because two things stand between a powered board and an attached dongle:
 S3's native USB is GPIO19 (D−) and GPIO20 (D+). Wiring those to a plain
 **USB-A receptacle**, with 5 V from the separate supply and a common ground,
 removes the problem instead of working around it: USB-A has no CC pins, so
-there is nothing to negotiate, and VBUS is whatever is wired to it. A C-to-A
-cable then reaches the dongle. This is the rig to build.
+there is nothing to negotiate, and VBUS is whatever is wired to it. This is
+the rig to build.
+
+**The adapter in the dongle's box completes it.** The unit ships with a
+USB-C-receptacle-to-USB-A-plug adapter — the accessory for using it on an
+older laptop — and that adapter is required by spec to present **Rp**
+(56 kΩ to VBUS, the "default USB power" advertisement) on its CC pin. That
+is precisely the signal the dongle needs in order to attach as a device.
+So the CC question above is answered by a part already on the desk: A
+receptacle on the ESP → included adapter → dongle, with no cable in between
+and nothing to buy.
+
+It does not change what the device *reports*. The adapter is passive on
+D+/D−; VID/PID, the descriptors, the UAC version and the speed capability
+are properties of the dongle and identical either way. What it changes is
+whether the two ends agree to talk at all — and it supplies no power, so
+VBUS still comes from the separate supply.
+
+A wrinkle worth knowing rather than worrying about: USB-IF actually
+prohibits C-receptacle-to-A-plug adapters, and they are sold by the million
+regardless. Universally functional, occasionally sloppily built. If step 3
+fails to attach, the adapter is one of the cheap things to substitute before
+suspecting the firmware.
 
 A self-powered USB hub between the two is the lazier variant — it powers the
 dongle itself, so the ESP never sources anything — but it does not solve the
@@ -148,7 +169,8 @@ that ends the track without wasting the next one's effort.
 1. **Multimeter on the board.** Is there 5 V at the connector's VBUS pin with
    the separate supply attached? Answers question 1 before any soldering.
 2. **Build the USB-A rig.** GPIO19/GPIO20 to a USB-A receptacle, 5 V and
-   ground from the separate supply. Nothing running on the ESP yet.
+   ground from the separate supply, and the dongle's own C-to-A adapter to
+   reach it. Nothing running on the ESP yet, and nothing to buy.
 3. **Enumerate, and nothing more.** IDF 5.4, the USB host stack, no audio:
    does the dongle attach, and do its descriptors come back matching what
    Windows reported? This is the first real go/no-go.
