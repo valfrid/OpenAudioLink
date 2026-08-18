@@ -33,6 +33,50 @@ wire I²S" into "plug in something that already works".
 Against that: it is a track that must not disturb anything currently working,
 which is the whole reason it is isolated.
 
+### The use case that is better than the dongle
+
+Supplied 2026-08-18: a Reddit ESP32 project making a **JBL Charge 6** an
+AirPlay endpoint through its USB-C port
+(<https://www.reddit.com/r/esp32/comments/1v27rx6/jbl_charge_6_diy_airplay_adapter/>
+— not read here, Reddit is unreachable from the build environment, so what
+follows is reasoning from the use case rather than a report of that project).
+
+Recent portable speakers accept **USB audio in** over their charging port.
+That inverts what this track is for. The dongle case is *give a node a better
+output stage* — 120 SEK to improve on a 28 SEK PCM5102A, which is a marginal
+argument and always was. The speaker case is:
+
+> **Any powered speaker with a USB-C audio input becomes an OpenAudioLink
+> Consumer, with no analogue design at all.**
+
+No DAC module, no amplifier, no enclosure, no driver, no wiring, no soldered
+I²S. The node becomes a small box strapped to a speaker somebody already
+owns, and the path is digital end to end: RTP L24 → USB → the speaker's own
+converter. Against a house full of Bluetooth speakers that today can only be
+fed one phone at a time, that is a much larger prize than a headphone amp on
+a desk — and it is the same host capability, so the track pays for both.
+
+Two things about it need checking before anybody gets excited, and both are
+cheap:
+
+- **Its descriptors are unknown.** Whether the Charge 6 offers a full-speed
+  UAC interface at 48 kHz, and whether it is synchronous or asynchronous with
+  a feedback endpoint, decides everything. Plug it into the laptop and dump
+  it with USB Device Tree Viewer, exactly as the dongle was. **A speaker with
+  a battery and its own crystal is far more likely to be asynchronous than
+  the dongle turned out to be**, which would put decision 8's original drift
+  concern back on the table rather than removing it.
+- **Power is a different order of magnitude.** The dongle asks for 100 mA. A
+  speaker on a USB port may well try to charge from it, and a legacy A-to-C
+  cable advertises 500 mA by default. The separate supply must cover that,
+  and the rig's wiring must carry it.
+
+One caution that is not about USB at all: portable speakers apply their own
+DSP, limiting and loudness curves. That is fine for playing music and awkward
+for `ROOM-CALIBRATION.md`, and it means a speaker like this is a Consumer
+whose output the system does not fully control. Worth knowing before it is
+measured and found strange.
+
 ## What is already settled
 
 From the descriptor dump in `HARDWARE.md` (the CX31993 + MAX97220 dongle,
@@ -166,6 +210,12 @@ So the rules for this track:
 Each step is cheap relative to the one after it, and each can fail in a way
 that ends the track without wasting the next one's effort.
 
+0. **Dump the other candidates' descriptors.** Free, needs no ESP, and can be
+   done the same evening: put every USB audio device in the house on the
+   laptop and read it with USB Device Tree Viewer — the dongle is done, a
+   USB-C speaker is the one that matters. Full-speed support, UAC version,
+   and synchronous versus asynchronous are what decide whether the rest of
+   this list is worth starting, and finding out costs a cable.
 1. **Multimeter on the board.** Is there 5 V at the connector's VBUS pin with
    the separate supply attached? Answers question 1 before any soldering.
 2. **Build the USB-A rig.** GPIO19/GPIO20 to a USB-A receptacle, 5 V and
