@@ -277,6 +277,39 @@ back toward isolated single gaps, which is what decision 2 says a healthy
 link looks like. A USB host servicing isochronous transfers every
 millisecond does not belong on Wi-Fi's core.
 
+A third reading, later still, makes the case harder to argue with — because
+the radio had got *worse* and the loss kept falling:
+
+| | 0.15.0 | 0.15.1 | 0.15.1, later |
+| --- | --- | --- | --- |
+| `rssi` | −47 dBm | −57 dBm | **−68 dBm** |
+| `lossPpm` | 10 911 | 2 585 | **1 087** |
+| `meanGapX100` | 290 | 185 | **141** |
+| `singleLosses` / `lossEvents` | 96 / 429 | 11 / 20 | **8 / 12** |
+
+Twenty-one decibels of signal thrown away and ten times less loss than the
+run that had the best signal of the three. Two thirds of the remaining loss
+events are single packets, which is the shape decision 2 calls a retry
+budget occasionally running out rather than a mechanism failing.
+
+### The drift shows up in the ring, and it points the way the measurement said
+
+That run also shows `bufferedFrames` at **5 999 against a target of 4 800**,
+with 7 869 frames trimmed and 4 392 dropped. The ring is riding *above*
+target and the trim is working to walk it back.
+
+That is the direction the uacprobe measurement predicted. The dongle
+consumes at the rate the host's SOF sets, and that SOF measured **20.7 ppm
+slow** — so the Hub delivers very slightly more audio per second than the
+dongle takes, and the ring gains. An I²S node's ring drifts for its own
+reasons; this one has a number attached to it, measured before the node
+existed.
+
+It is small — about one frame a second — and the trim absorbs it today. It
+is also exactly the quantity a drift servo would have to cancel, and the
+first time this project has seen its own clock arithmetic appear in a
+speaker's buffer.
+
 **The second fault was hiding behind the first, and it follows from the
 wiring being convenient.**
 
