@@ -261,6 +261,54 @@ confirmed it. The measurement that would: the same sixteen minutes on
 0.15.1, with `lossPpm` and `meanGapX100` back to what an I²S node reports
 in the same house.
 
+## Two faults, and the wiring explains the second
+
+**The core-1 fix worked.** 0.15.1 against 0.15.0 on the same node, same
+house, minutes apart:
+
+| | 0.15.0 (core 0) | 0.15.1 (core 1) |
+| --- | --- | --- |
+| `lossPpm` | 10 911 | **2 585** |
+| `meanGapX100` | 290 | **185** |
+| `longestGap` | 9 | **4** |
+
+and on a later run, no dropouts at all. Loss down four-fold and the *shape*
+back toward isolated single gaps, which is what decision 2 says a healthy
+link looks like. A USB host servicing isochronous transfers every
+millisecond does not belong on Wi-Fi's core.
+
+**The second fault was hiding behind the first, and it follows from the
+wiring being convenient.**
+
+After an OTA the node came back enumerated and streaming — `outputReady`
+true, `writeErrors` 0, `framesPlayed` rising at exactly 48 kHz — and
+silent. Raising the node's own volume to 100 changed nothing. **Pulling the
+dongle's power and putting it back fixed it.**
+
+That stops being a mystery once the power path is written down. **VBUS on
+that socket is wired to the 5 V rail and is not switched by anything** —
+the same fact that lets a dongle plug straight into a XIAO with no adapters
+and no bench supply. So an ESP reboot restarts the *host* and never
+power-cycles the *device*. The dongle keeps whatever internal state it had:
+across an OTA, across a crash, across everything short of being unplugged.
+
+Everything else the stream needs is written explicitly at each start —
+alternate setting, sample rate, clock source. **The feature unit was the
+exception**: mute and volume were read and deliberately left alone, on the
+reasoning that the device's default had proved audible. A default is what a
+device holds just after it is powered up, and this one had not been.
+
+So the sink now unmutes and sets unity on every stream start, and logs what
+it found first. That log line is the proof or the refutation: a dongle
+reported as arriving `MUTED` after an OTA closes this, and one arriving
+unmuted means the stale state is something else and the search continues.
+
+**The general lesson outlasts the fix.** A USB device on an unswitched VBUS
+rail cannot be reset by anything the firmware does to itself. Any state it
+holds must be written explicitly at stream start rather than assumed,
+because "it was fine when I plugged it in" and "it is fine now" are claims
+about different moments.
+
 ## What it reaches
 
 One capability, four classes of hardware:
