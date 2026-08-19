@@ -1,0 +1,10 @@
+# The UAC 2.0 host driver behind the dongle output stage, pinned to a commit
+# rather than a tag: it is v0.1.2 alpha, not on the component registry, and
+# its author describes it as under active testing. "Whatever main happens to
+# be" is not a dependency for firmware that plays music in somebody's house.
+dependencies:
+  idf: ">=5.4"
+  uac2_host:
+    git: https://github.com/Averyy/esp-uac2-host.git
+    path: components/uac2_host
+    version: a072adb6a2410f9f93474637a483724c93d5fc6f

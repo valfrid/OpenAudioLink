@@ -49,3 +49,15 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
 # plane down while audio carried on playing: no status, no portal, no OTA,
 # and a log full of accept errors. Sixteen costs a few hundred bytes.
 CONFIG_LWIP_MAX_SOCKETS=16
+
+# The USB dongle output stage (docs/USB-AUDIO.md), required by
+# esp-uac2-host. The first is large enough for a UAC 2.0 configuration
+# descriptor — the measured dongle's runs well past the 256-byte default —
+# and the second biases the host controller's buffer allocation towards
+# periodic OUT traffic, which is what isochronous playback is.
+#
+# Set unconditionally, because one image serves a board with a DAC and a
+# board with a dongle. They cost a little static allocation on a node that
+# never hosts anything, which is the price of not having two firmwares.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
+CONFIG_USB_HOST_HW_BUFFER_BIAS_PERIODIC_OUT=y

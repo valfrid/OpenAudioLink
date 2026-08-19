@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "oal_channel.h"
+#include "oal_output.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,6 +55,15 @@ typedef struct {
 
     /** Which of the two channels this speaker plays (decision 10). */
     oal_channel_t channel;
+
+    /**
+     * Which output stage this board has (docs/USB-AUDIO.md).
+     *
+     * The GPIO fields above are I2S's and are ignored when this is USB —
+     * a dongle brings its own wiring, and the only pins involved are the
+     * two the USB peripheral already owns.
+     */
+    oal_output_t output;
 
     /**
      * Playback level, 0-100, applied on the way to the DAC.

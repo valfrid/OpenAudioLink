@@ -3,7 +3,7 @@
 #include <inttypes.h>
 #include <string.h>
 
-#include "driver/i2s_std.h"
+#include "oal_sink.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -53,13 +53,13 @@ static const char *TAG = "oal_playout";
 #define STARVED_CHUNKS (200 / OAL_RTP_PTIME_MS)
 
 /*
- * DMA holds 20 ms on top of the ring. It is part of the latency and worth
+ * The sink holds about 20 ms on top of the ring — four I2S DMA descriptors,
+ * or the USB driver's own buffer. It is part of the latency and worth
  * stating rather than discovering: with the default 100 ms target, a sample
  * spends about 120 ms between arriving and being heard.
  */
-#define DMA_DESCRIPTORS 4
 
-static i2s_chan_handle_t s_tx;
+static const oal_sink_t *s_sink;
 static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
 
@@ -416,6 +416,21 @@ static void playout_task(void *arg)
     static int32_t chunk[CHUNK_SAMPLES];
 
     for (;;) {
+        /*
+         * A sink that cannot play yet must not be fed. USB dongles arrive
+         * when somebody plugs them in, and taking chunks meanwhile would
+         * drain the ring into nowhere while counting the frames as played
+         * — the exact symptom of a fast clock, and this project has
+         * already spent a session chasing that once.
+         *
+         * Leaving the ring alone lets it fill and drop its oldest, which
+         * is what it already does for a full ring and is already counted.
+         */
+        if (!s_sink->ready()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         take_chunk(chunk);
 
         /*
@@ -446,9 +461,9 @@ static void playout_task(void *arg)
         size_t offset = 0;
         while (offset < sizeof(chunk)) {
             size_t written = 0;
-            esp_err_t err = i2s_channel_write(
-                s_tx, (const uint8_t *)chunk + offset, sizeof(chunk) - offset,
-                &written, pdMS_TO_TICKS(200));
+            esp_err_t err = s_sink->write(
+                (const uint8_t *)chunk + offset, sizeof(chunk) - offset,
+                &written, 200);
             if (err != ESP_OK) {
                 s_state.write_errors++;
                 break;
@@ -495,57 +510,22 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
         return ESP_ERR_NO_MEM;
     }
 
-    i2s_chan_config_t channel_config = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-    channel_config.dma_desc_num = DMA_DESCRIPTORS;
-    channel_config.dma_frame_num = CHUNK_FRAMES;
-    /* Underrun should be silence, not the last buffer played again — a
-     * repeated 5 ms of audio is a buzz, and a recognisable one. */
-    channel_config.auto_clear = true;
-
-    esp_err_t err = i2s_new_channel(&channel_config, &s_tx, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_new_channel failed: %s", esp_err_to_name(err));
-        return err;
+    s_sink = oal_sink_for(config->output);
+    if (s_sink == NULL) {
+        ESP_LOGE(TAG, "no sink for output stage %s — this build cannot drive it",
+                 oal_output_name(config->output));
+        return ESP_ERR_NOT_SUPPORTED;
     }
 
-    i2s_std_config_t std_config = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(rate),
-        /* 32-bit slots carrying 24-bit samples left-justified. The PCM5102A
-         * and the MAX98357A both take the leading 24 bits and ignore the
-         * padding, so one configuration drives either board. */
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-            I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            /* No master clock. The PCM5102A runs its internal PLL from the
-             * bit clock when its SCK pin is grounded, and the MAX98357A
-             * never wanted one — which is why both are wired with three
-             * signals instead of four (docs/HARDWARE.md). */
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = config->bclk_gpio,
-            .ws   = config->ws_gpio,
-            .dout = config->dout_gpio,
-            .din  = I2S_GPIO_UNUSED,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            },
-        },
+    oal_sink_config_t sink_config = {
+        .sample_rate = rate,
+        .bclk_gpio = config->bclk_gpio,
+        .ws_gpio = config->ws_gpio,
+        .dout_gpio = config->dout_gpio,
     };
 
-    err = i2s_channel_init_std_mode(s_tx, &std_config);
+    esp_err_t err = s_sink->open(&sink_config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_channel_init_std_mode failed: %s", esp_err_to_name(err));
-        i2s_del_channel(s_tx);
-        s_tx = NULL;
-        return err;
-    }
-
-    err = i2s_channel_enable(s_tx);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(err));
-        i2s_del_channel(s_tx);
-        s_tx = NULL;
         return err;
     }
 
@@ -565,15 +545,13 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
      * not — and the socket has a buffer for exactly that.
      */
     if (xTaskCreate(playout_task, "oal_playout", 4096, NULL, 7, &s_task) != pdPASS) {
-        i2s_channel_disable(s_tx);
-        i2s_del_channel(s_tx);
-        s_tx = NULL;
+        s_sink->close();
+        s_sink = NULL;
         s_state.running = false;
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "I2S out on BCLK=%d WS=%d DOUT=%d, %" PRIu32 " Hz, %s, %" PRIu32 " ms buffer",
-             config->bclk_gpio, config->ws_gpio, config->dout_gpio, rate,
-             oal_channel_name(config->channel), target_ms);
+    ESP_LOGI(TAG, "%s out, %" PRIu32 " Hz, %s, %" PRIu32 " ms buffer",
+             s_sink->name, rate, oal_channel_name(config->channel), target_ms);
     return ESP_OK;
 }

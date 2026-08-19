@@ -224,6 +224,12 @@ void app_main(void)
          * that it applies at reboot, so this is where it takes effect. */
         playout.channel = oal_config_get_channel();
 
+        /* Which output stage this board has (docs/USB-AUDIO.md). Read at
+         * boot for the same reason as the channel: it describes the box,
+         * not what is playing, and changing it means rewiring or unplugging
+         * something anyway. */
+        playout.output = oal_config_get_output();
+
         /* Volume is different: POST /volume applies it live and this only
          * restores what the room was left at. A speaker that came back at
          * full scale after an update would be a genuinely unpleasant
