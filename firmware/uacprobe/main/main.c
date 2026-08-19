@@ -280,6 +280,14 @@ static void probe_task(void *arg)
     uint64_t frames_written = 0;
     int64_t next_report_us = 0;
 
+    /* Latched once the ring buffer has stopped filling, so the cumulative
+     * rate below is not poisoned by the prefill. The first second of a
+     * stream moves about 52 500 frames — 48 000 of streaming plus the
+     * buffer — and averaging that in makes an otherwise exact figure look
+     * 20 ppm slow for the next five minutes. */
+    int64_t base_us = 0;
+    uint64_t base_frames = 0;
+
     uac2_host_device_config_t dev_cfg = {
         .addr = probe->addr,
         .iface_num = probe->iface_num,
@@ -356,9 +364,36 @@ static void probe_task(void *arg)
         int64_t now_us = esp_timer_get_time();
         if (now_us >= next_report_us) {
             next_report_us = now_us + 1000000;
-            ESP_LOGI(TAG, "%llu frames written (%.1f s of audio)",
-                     (unsigned long long)frames_written,
-                     (double)frames_written / WANT_RATE);
+
+            if (base_us == 0) {
+                base_us = now_us;
+                base_frames = frames_written;
+                ESP_LOGI(TAG, "%llu frames written — measuring from here",
+                         (unsigned long long)frames_written);
+                continue;
+            }
+
+            /*
+             * The cumulative rate, so a long run reports its own answer
+             * instead of leaving somebody to subtract two lines from a
+             * scrollback. Per-second deltas are useless for this: they read
+             * exactly 48 000.0 Hz whatever is happening, because a single
+             * second cannot resolve less than 96 frames.
+             *
+             * Read it for what it is. The SOF that paces the device and the
+             * timer this is measured against both come from the ESP's own
+             * crystal, so this cannot see the node drifting away from the
+             * Hub — that needs the Hub. What it can see is the device
+             * failing to follow our SOF, which for a synchronous endpoint
+             * with no feedback would be a surprise worth catching.
+             */
+            double seconds = (now_us - base_us) / 1e6;
+            uint64_t frames = frames_written - base_frames;
+            double rate = frames / seconds;
+
+            ESP_LOGI(TAG, "%llu frames (%.0f s), %.4f Hz, %+.1f ppm vs %d",
+                     (unsigned long long)frames_written, seconds, rate,
+                     (rate - WANT_RATE) / WANT_RATE * 1e6, WANT_RATE);
         }
     }
 

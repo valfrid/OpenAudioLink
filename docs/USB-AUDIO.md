@@ -126,11 +126,47 @@ a measurement of there being nothing obviously wrong.
    written. `uacprobe` therefore reads those controls and deliberately
    leaves them alone.
 
-**What this does not yet show.** Nothing has been measured over time. The
-tone ran for seconds, not hours, and the number this track exists to produce
-— drift against the Hub's clock with no feedback endpoint to lean on — is
-still unmeasured. That is the next step and it is the one that decides
-whether this becomes a hardware profile or stays a demo.
+## Five minutes, and what it does and does not prove
+
+A 302-second run, uninterrupted: 14 529 408 frames, no write failure, no
+transfer error, no stream restart, no disconnect. As a soak test that is a
+real result and it is the first one this track has.
+
+As a *drift* measurement it needs reading carefully.
+
+**Per-second deltas are worthless here.** Every interval reads 48 096 frames
+in 1 002 ms — 48 000.0000 Hz, exactly, every time. That is not precision, it
+is quantisation: writes go out in 96-frame chunks, so one second cannot
+resolve anything finer than 96 frames.
+
+**Over the whole run it comes out 288 frames short of ideal**, which is
+−20 ppm against a floor of about 7 ppm for a 288-second baseline. Marginally
+above the noise, and small enough that one or two hiccups would account for
+it entirely.
+
+**But the number to distrust is the whole approach.** The SOF that paces the
+device and the `esp_timer` this is measured against **both come from the
+ESP's own crystal**. Measuring one against the other is measuring a clock
+against itself, and it cannot see the node drifting away from the Hub.
+
+What it *can* see is the device failing to follow our SOF — and it did not.
+That is worth stating as the finding it is:
+
+> **The dongle introduces no new clock domain.** A synchronous endpoint with
+> no feedback behaved exactly as advertised: it consumed at the rate we
+> clocked it, for five minutes, within the resolution of the instrument.
+> Decision 12's clock authority survives — the node still owns its timing.
+
+That is a better outcome than decision 8 assumed, and it shrinks the problem
+rather than solving it. **The remaining question is not authority but
+correction.** An I²S node follows the Hub by trimming its bit clock through
+the APLL. A USB host node would have to steer its SOF instead, and whether
+an S3 can do that — or how finely — is unknown and is now the open item.
+
+**What is still unmeasured.** Drift against the Hub, which needs the Hub in
+the picture. Hours rather than minutes. And whether anything audible happens
+at the moment a correction would be applied. Those decide whether this
+becomes a hardware profile or stays a demo.
 
 ## What it reaches
 
