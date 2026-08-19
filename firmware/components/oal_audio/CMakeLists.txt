@@ -1,5 +1,6 @@
 idf_component_register(
-    SRCS "oal_pcm.c"
+    SRCS "oal_output.c"
+         "oal_pcm.c"
          "oal_playout.c"
          "oal_capture.c"
     INCLUDE_DIRS "include"

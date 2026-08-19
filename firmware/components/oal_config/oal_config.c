@@ -18,6 +18,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_NAME  "name"
 #define NVS_KEY_CHANNEL "channel"
 #define NVS_KEY_VOLUME "volume"
+#define NVS_KEY_OUTPUT "output"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -251,6 +252,61 @@ esp_err_t oal_config_set_channel(oal_channel_t channel)
 
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "channel set to %s (takes effect on reboot)", name);
+    }
+    return err;
+}
+
+/*
+ * The output stage (docs/USB-AUDIO.md). Stored as the wire name for the
+ * same reasons as the channel profile above, and read with the same
+ * fallback — an absent key means every node configured before this setting
+ * existed keeps playing through the DAC it is wired to.
+ */
+oal_output_t oal_config_get_output(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return OAL_OUTPUT_DEFAULT;
+    }
+
+    char stored[16];
+    size_t length = sizeof(stored);
+    esp_err_t err = nvs_get_str(nvs, NVS_KEY_OUTPUT, stored, &length);
+    nvs_close(nvs);
+
+    oal_output_t output;
+    if (err != ESP_OK || !oal_output_parse(stored, &output)) {
+        return OAL_OUTPUT_DEFAULT;
+    }
+    return output;
+}
+
+esp_err_t oal_config_set_output(oal_output_t output)
+{
+    /* Round-tripping the name is the validity check, as for the channel:
+     * an out-of-range enum formats as "i2s" and would be stored as a
+     * setting nobody asked for. */
+    oal_output_t parsed;
+    const char *name = oal_output_name(output);
+    if (!oal_output_parse(name, &parsed) || parsed != output) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(nvs, NVS_KEY_OUTPUT, name);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "output stage set to %s (takes effect on reboot)", name);
     }
     return err;
 }

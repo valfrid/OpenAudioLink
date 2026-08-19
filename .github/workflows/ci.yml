@@ -161,6 +161,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o destination-tests oal_destinations.c test/test_destinations.c &&
           ./destination-tests
+      - name: Output stage
+        working-directory: firmware/components/oal_audio
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o output-tests oal_output.c test/test_output.c &&
+          ./output-tests
       - name: PCM conversion
         working-directory: firmware/components/oal_audio
         run: >

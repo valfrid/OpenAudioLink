@@ -5,6 +5,7 @@
 
 #include "esp_err.h"
 #include "oal_channel.h"
+#include "oal_output.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,6 +96,21 @@ uint8_t oal_config_get_volume(void);
 
 /** Persists the volume. Rejects anything above 100. */
 esp_err_t oal_config_set_volume(uint8_t percent);
+
+/*
+ * Which output stage this board has (docs/USB-AUDIO.md).
+ *
+ * Beside the channel profile and the volume because it answers the same
+ * kind of question — what is this particular box — rather than what is
+ * playing. A node is soldered to a DAC or has a dongle pushed into it, and
+ * one image serves both.
+ */
+
+/** Stored output stage, or I2S when unset or unreadable. */
+oal_output_t oal_config_get_output(void);
+
+/** Persists the output stage. Rejects values outside the enum. */
+esp_err_t oal_config_set_output(oal_output_t output);
 
 /** Longest node name, including the terminator. Matches the announce field. */
 #define OAL_NAME_MAX 32

@@ -394,12 +394,17 @@ static const char PORTAL_TEMPLATE[] =
     "<label><input type=\"radio\" name=\"channel\" value=\"left\"> Left only</label>"
     "<label><input type=\"radio\" name=\"channel\" value=\"right\"> Right only</label>"
     "</div>"
+    "<label>Audio leaves the board by</label>"
+    "<div class=\"row\">"
+    "<label><input type=\"radio\" name=\"output\" value=\"i2s\" checked> I2S DAC</label>"
+    "<label><input type=\"radio\" name=\"output\" value=\"usb\"> USB dongle</label>"
+    "</div>"
     "<button type=\"submit\">Save and reboot</button></form></body></html>";
 
 /* Built once at portal start, because the default name comes from the MAC.
- * The page renders to about 1.8 KB with the role and speaker rows; the
- * slack is so an edit to the form does not silently become a portal that
- * refuses to start, which is the one failure a node cannot report. */
+ * The page renders to about 2 KB with the role, speaker and output rows;
+ * the slack is so an edit to the form does not silently become a portal
+ * that refuses to start, which is the one failure a node cannot report. */
 static char s_portal_page[3072];
 
 static void url_decode(char *value)
@@ -440,6 +445,7 @@ static esp_err_t apply_credentials(httpd_req_t *req, char *form)
     char name[OAL_NAME_MAX] = { 0 };
     char roles[OAL_ROLES_STR_MAX] = { 0 };
     char channel[16] = { 0 };
+    char output[16] = { 0 };
 
     esp_err_t parsed = httpd_query_key_value(form, "ssid", ssid, sizeof(ssid));
     if (parsed != ESP_OK) {
@@ -484,6 +490,23 @@ static esp_err_t apply_credentials(httpd_req_t *req, char *form)
         }
     }
 
+    /* The output stage (docs/USB-AUDIO.md). Absent is not an error: the
+     * form always sends it, but the same handler serves anything posting
+     * to this endpoint, and a node that omits it keeps the DAC default. */
+    if (httpd_query_key_value(form, "output", output, sizeof(output)) == ESP_OK) {
+        url_decode(output);
+        oal_output_t parsed_output;
+        if (!oal_output_parse(output, &parsed_output)) {
+            ESP_LOGE(TAG, "unrecognised output \"%s\"", output);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown output");
+            return ESP_FAIL;
+        }
+        if (oal_config_set_output(parsed_output) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not save output");
+            return ESP_FAIL;
+        }
+    }
+
     if (httpd_query_key_value(form, "name", name, sizeof(name)) == ESP_OK) {
         url_decode(name);
         if (oal_config_set_name(name) != ESP_OK) {
@@ -496,9 +519,10 @@ static esp_err_t apply_credentials(httpd_req_t *req, char *form)
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "provisioned: ssid \"%s\", name \"%s\", roles \"%s\", channel \"%s\"; rebooting",
+    ESP_LOGI(TAG, "provisioned: ssid \"%s\", name \"%s\", roles \"%s\", channel \"%s\", output \"%s\"; rebooting",
              ssid, name[0] ? name : "(default)", roles[0] ? roles : "(default)",
-             channel[0] ? channel : "(default)");
+             channel[0] ? channel : "(default)",
+             output[0] ? output : "(default)");
     httpd_resp_send(req, "Saved. The device is rebooting and will join your network.",
                     HTTPD_RESP_USE_STRLEN);
     vTaskDelay(pdMS_TO_TICKS(1000));
