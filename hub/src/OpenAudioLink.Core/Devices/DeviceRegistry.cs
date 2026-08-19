@@ -33,6 +33,24 @@ public sealed record DeviceStatus
     public string? AudioChannel { get; init; }
 
     /// <summary>
+    /// How audio leaves this board: "i2s" for a soldered DAC, "usb" for a
+    /// dongle the node hosts (docs/USB-AUDIO.md). Null from firmware older
+    /// than the setting, which is I2S by definition — it is the only stage
+    /// that existed.
+    /// </summary>
+    public string? Output { get; init; }
+
+    /// <summary>
+    /// Whether that stage can currently take samples.
+    ///
+    /// The field worth watching. A USB node with no dongle plugged in is
+    /// online, joined, claimed and streaming, with every counter rising and
+    /// no sound in the room — and this is the only thing that says so. Null
+    /// from firmware that predates it.
+    /// </summary>
+    public bool? OutputReady { get; init; }
+
+    /// <summary>
     /// Playback level, 0-100, as the node reports it actually is — not as
     /// the Hub last asked for. The two differ while a request is in flight
     /// and after one that failed, and a slider that shows what was asked

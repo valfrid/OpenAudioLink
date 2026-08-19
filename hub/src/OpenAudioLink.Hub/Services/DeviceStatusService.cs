@@ -95,6 +95,8 @@ public sealed class DeviceStatusService : BackgroundService
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
                 AudioChannel = status.AudioChannel,
+                Output = status.Output,
+                OutputReady = status.OutputReady,
                 Volume = status.Volume,
                 Input = status.Input is { } input
                     ? new InputLevel(input.LeftDb, input.RightDb, input.Hz, input.ReadErrors)
@@ -139,6 +141,19 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("volume")]
         public int? Volume { get; init; }
+
+        /// <summary>How audio leaves the board: "i2s" or "usb".</summary>
+        [JsonPropertyName("output")]
+        public string? Output { get; init; }
+
+        /// <summary>
+        /// Whether that output stage can currently take samples. Always true
+        /// for I2S; false on a USB node with no dongle plugged in — which
+        /// receives, buffers and plays nothing, and looks entirely healthy
+        /// from every other counter.
+        /// </summary>
+        [JsonPropertyName("outputReady")]
+        public bool? OutputReady { get; init; }
 
         [JsonPropertyName("input")]
         public InputStatus? Input { get; init; }
