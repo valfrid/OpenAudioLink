@@ -116,6 +116,62 @@ static void driver_event_cb(uint8_t addr, uint8_t iface_num,
 }
 
 /*
+ * Take the dongle's own gain stage out of the argument.
+ *
+ * The dongle has a Feature Unit with mute and per-channel volume, and it
+ * remembers what the last host set — which may have been a Windows machine
+ * during a descriptor dump, weeks ago, in another room. Leaving it at
+ * whatever it happens to hold is two attenuators in series with nobody
+ * owning either, and decision 14 exists because that arrangement already
+ * cost this project a Spotify consumer that was silent at 38 %.
+ *
+ * An earlier revision read these controls and deliberately left them
+ * alone, on the grounds that the device's default had proved audible. That
+ * was a measurement of one dongle on one evening, not a property of the
+ * design, and a node that plays nothing after a replug is the cost of
+ * being wrong.
+ *
+ * So: unmute, and set the device's own volume to unity. **The node's
+ * digital gain is then the only attenuator in the path**, which is where
+ * decision 14 says volume belongs — applied at playout, per node, ahead of
+ * the sink.
+ *
+ * Failures are logged and survived. A dongle without a feature unit, or
+ * one that refuses the write, still plays; it just keeps its own idea of
+ * level, which is the situation this replaces rather than a new one.
+ */
+static void claim_the_gain(uac2_host_device_handle_t dev)
+{
+    esp_err_t err = uac2_host_device_set_mute(dev, 0, false);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "could not unmute the dongle: %s", esp_err_to_name(err));
+    }
+
+    uac2_volume_range_t range;
+    uint8_t num_ranges = 1;
+    if (uac2_host_device_get_volume_range(dev, 1, &range, &num_ranges) != ESP_OK) {
+        ESP_LOGW(TAG, "no volume range; leaving the dongle's level alone");
+        return;
+    }
+
+    /* UAC 2.0 volume is 1/256 dB and 0 is unity. Clamped, because a device
+     * whose maximum is below unity should go as loud as it can rather than
+     * refuse the write and stay wherever it was. */
+    int16_t want = 0;
+    if (want > range.max) {
+        want = range.max;
+    }
+    if (want < range.min) {
+        want = range.min;
+    }
+
+    err = uac2_host_device_set_volume_all_channels(dev, want);
+    ESP_LOGI(TAG, "dongle gain set to %.1f dB (range %.1f..%.1f): %s",
+             want / 256.0, range.min / 256.0, range.max / 256.0,
+             err == ESP_OK ? "ok" : esp_err_to_name(err));
+}
+
+/*
  * Opening and closing live here because both are forbidden from the
  * driver's callbacks, and because a dongle can come and go for as long as
  * the node is powered.
@@ -159,6 +215,8 @@ static void attach_task(void *arg)
                 s_pending = false;
                 continue;
             }
+
+            claim_the_gain(s_dev);
 
             ESP_LOGI(TAG, "dongle playing: %" PRIu32 " Hz, 24-bit, %d ch",
                      s_sample_rate, OAL_RTP_CHANNELS);
