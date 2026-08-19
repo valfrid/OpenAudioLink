@@ -61,6 +61,65 @@ actually does.
 
 # Track A — the node as a USB host
 
+## It works. 2026-08-19, first attempt.
+
+An ESP32-S3 hosted the CX31993 dongle and a 1 kHz tone came out of it. No
+soldering, no bench supply — a XIAO ESP32S3, its own USB-C connector, the
+two adapters, and a USB-serial adapter for power and console.
+
+`firmware/uacprobe` and its README are the record of how; this is what the
+run settled.
+
+**The two open questions are answered, and both the better way.**
+
+- **Two clock sources did not stop it.** The dongle reports clocks `0x09`
+  and `0x0A` where `esp-uac2-host` documents single-clock devices, and the
+  driver selected `0x09` — the playback clock — without help. Its runtime
+  state reads `Clock source ID: 9`, the rate set to 48 000 Hz and read back
+  as 48 000 Hz, `clock valid: yes`. **The component's documentation is more
+  conservative than its behaviour.**
+- **Power reached the dongle through the board's own connector.** The
+  soldered USB-A rig was never needed, which means the XIAO's `5V`/`VUSB`
+  pin does reach the USB-C connector's VBUS. The silkscreen was telling the
+  truth, and the diode this document worried about is not in that path.
+
+**The format is ours, unconverted.** Interface 1 alternate 2 was selected:
+2 channels, 24-bit in 3-byte slots, endpoint `0x01`, `wMaxPacketSize 576`,
+`bInterval 1`. The driver's own packet size came out at **288 bytes** —
+exactly the 48 000 × 3 × 2 per millisecond predicted from the Windows dump,
+in half the reserved packet.
+
+**And the rate is right.** The write loop is paced by the device's
+consumption, and it reported 48 096 frames per 1 002 ms for as long as it
+ran: 48 000.0 Hz, to the resolution the counter can express.
+
+**Confirmed, having been read off Windows first:** VID `3302` PID `336A`,
+`TTGK Technology Co.,Ltd`, `CX31993+MAX97220 PRO`, UAC 2.0 with
+`bcdADC 0200`, and **no feedback endpoint anywhere** — every endpoint
+`Sync`. The drift story in this document stands as written.
+
+**Three things worth knowing that only the hardware could say.**
+
+1. **The parser truncation is real.** `AS interface limit reached (4),
+   skipping iface 2 alt 2` — `UAC2_MAX_AS_INTERFACES` is 4 and this device
+   has five alternates carrying endpoints. What was dropped is the
+   **microphone's 24-bit** setting. Harmless for playback and not harmless
+   for `LISTENING.md`, which wants that microphone.
+2. **The feature unit's controls are not where they look.** Feature Unit 2
+   reports `mute_ch_map=0x1 volume_ch_map=0x6`: mute on the master channel,
+   volume on channels 1 and 2 and **not** on master. The descriptor summary
+   prints `volume=no` for exactly that reason. Anything writing volume to
+   channel 0 will write to a control that is not there.
+3. **It is audible at its own default**, muted at nothing, with no volume
+   written. `uacprobe` therefore reads those controls and deliberately
+   leaves them alone.
+
+**What this does not yet show.** Nothing has been measured over time. The
+tone ran for seconds, not hours, and the number this track exists to produce
+— drift against the Hub's clock with no feedback endpoint to lean on — is
+still unmeasured. That is the next step and it is the one that decides
+whether this becomes a hardware profile or stays a demo.
+
 ## What it reaches
 
 One capability, four classes of hardware:

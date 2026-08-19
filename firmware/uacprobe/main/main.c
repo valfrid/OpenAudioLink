@@ -174,6 +174,67 @@ static void report_device(uac2_host_device_handle_t dev)
     uac2_host_device_print_info(dev);
 }
 
+/*
+ * The gap between "frames are flowing" and "something is audible".
+ *
+ * The dongle has a Feature Unit with mute and per-channel volume, and
+ * nothing so far touches either. A device that powers up muted, or at the
+ * bottom of its volume range, streams perfectly and makes no sound — which
+ * is the exact failure this project has walked into twice before: the FLAC
+ * channel that decoded nothing while every counter rose, and a Spotify
+ * consumer silent at volume 38 because the speaker's standby threshold sat
+ * above it. Counters agreeing is not the same as hearing something.
+ *
+ * Its controls are worth reading rather than assuming, too. This dongle
+ * reports mute on the master channel and volume on channels 1 and 2 only —
+ * `mute_ch_map=0x1 volume_ch_map=0x6` — so a master volume write would go
+ * to a control that is not there. `set_volume_all_channels` walks the
+ * bitmap instead of guessing.
+ */
+static void unmute_and_set_volume(uac2_host_device_handle_t dev)
+{
+    bool muted = false;
+
+    if (uac2_host_device_get_mute(dev, 0, &muted) == ESP_OK) {
+        ESP_LOGI(TAG, "mute on arrival: %s", muted ? "MUTED" : "not muted");
+    }
+
+    esp_err_t err = uac2_host_device_set_mute(dev, 0, false);
+    ESP_LOGI(TAG, "unmute: %s", err == ESP_OK ? "ok" : esp_err_to_name(err));
+
+    uac2_volume_range_t range;
+    uint8_t num_ranges = 1;
+
+    if (uac2_host_device_get_volume_range(dev, 1, &range, &num_ranges) != ESP_OK) {
+        ESP_LOGW(TAG, "no volume range — leaving the level alone");
+        return;
+    }
+
+    /* UAC 2.0 volume is 1/256 dB, and 0 means unity. */
+    ESP_LOGI(TAG, "volume range %.1f to %.1f dB in %.2f dB steps",
+             range.min / 256.0, range.max / 256.0, range.res / 256.0);
+
+    int16_t now = 0;
+    if (uac2_host_device_get_volume(dev, 1, &now) == ESP_OK) {
+        ESP_LOGI(TAG, "volume on arrival: %.1f dB", now / 256.0);
+    }
+
+    /*
+     * Read, and deliberately not written.
+     *
+     * The dongle's own default proved audible on the first run, so there is
+     * nothing here to fix and a level that is known to work is worth more
+     * than a level that is merely known. Writing unity gain would change a
+     * working state for no result anybody asked for, and would do it into a
+     * headphone amplifier.
+     *
+     * Volume belongs to the Consumer anyway. Decision 14 puts it at the
+     * node, applied in the playout path, and when this becomes a hardware
+     * profile rather than a probe that is the code that should own this
+     * feature unit — not a test program that runs for six seconds.
+     */
+}
+
 /* ── Phase 2: make a noise ───────────────────────────────────────────── */
 
 static void fill_sine(uint8_t *dst, size_t frames, float *phase)
@@ -268,6 +329,8 @@ static void probe_task(void *arg)
     if (uac2_host_device_get_clock_valid(dev, &clock_valid) == ESP_OK) {
         ESP_LOGI(TAG, "clock valid: %s", clock_valid ? "yes" : "NO — device is not locked");
     }
+
+    unmute_and_set_volume(dev);
 
     ESP_LOGI(TAG, "playing %g Hz at %d Hz / %d-bit / %d ch",
              TONE_HZ, WANT_RATE, WANT_BITS, WANT_CHANNELS);
