@@ -67,6 +67,18 @@ plug in the first adapter only, and measure across those two pins:
   below. Do not go looking for a firmware problem: there is no firmware
   problem, there is no power.
 
+**The board's own silkscreen is the best evidence available before the
+meter.** On a XIAO ESP32S3 the pin marked `5V` on the front is marked
+**`VUSB`** on the back — the USB connector's own supply net rather than a
+regulated rail derived from it. A pin named after the thing we need it to
+reach is the outcome to hope for, and it turns the measurement from a coin
+flip into a confirmation. It is still a confirmation worth doing: whether
+anything sits in that path is not something a label can tell you.
+
+It also explains the "never both at once" rule below with a mechanism rather
+than caution. If that pin really is VBUS, then feeding it 5 V while USB-C is
+plugged into a PC pushes current back into the PC's port.
+
 `MaxPower` on the measured dongle is 100 mA, and a XIAO with the radio idle
 is around 100 mA more. A USB-serial adapter's 5 V pin comes straight from a
 PC port and should carry that, but if the board browns out when the dongle
@@ -75,15 +87,25 @@ adapter.
 
 ### The soldered rig, if VBUS is not there
 
+Easier than it looks, because **the XIAO ESP32S3 breaks the USB data lines
+out on its back as two pads labelled `D+` and `D−`** — no need to find
+GPIO20 and GPIO19 anywhere on the module. They sit in the middle of the
+board beside the JTAG pads (`MTCK`, `MTMS`, `MTDI`, `MTDO`) and the battery
+pads (`BAT+`, `BAT−`).
+
 ```
-ESP32-S3  GPIO20 (D+) ──┐
-          GPIO19 (D−) ──┤ USB-A receptacle ── C↔A adapter ── dongle
-   5 V supply ──────────┤
-          GND ──────────┘
+XIAO back pad  D+  ──┐
+XIAO back pad  D−  ──┤ USB-A receptacle ── C↔A adapter ── dongle
+    5 V supply ──────┤
+           GND ──────┘
 ```
 
-Same two pins the USB-C connector uses, so **do not have both occupied at
-once** — one for the dongle, the other for flashing, never together.
+Those pads are **wired in parallel with the USB-C connector**, not instead of
+it, so the rule stands whichever route is used: **do not have both occupied
+at once** — one for the dongle, the other for flashing, never together.
+
+`EN` is also broken out on the back, which is a hardware reset if the board
+ends up somewhere a button cannot reach.
 
 ## Flashing and the console
 
