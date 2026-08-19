@@ -431,7 +431,10 @@
           `<button data-cmd="volume" data-id="${esc(d.id)}" ` +
           `data-volume="${esc(d.status?.volume ?? '')}"${disabled}>Volume…</button>`;
         const s = d.status;
-        return `<tr><td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
+        /* The running version travels on the row so the update button can
+         * see what it would be replacing, and refuse a silent downgrade. */
+        return `<tr data-firmware="${esc(d.firmwareVersion ?? '')}">` +
+          `<td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
           `<td>${channelCell(d)}</td>` +
           `<td>${controllerCell(d)}</td>` +
           `<td>${inputCell(d)}</td>` +
@@ -644,6 +647,23 @@
       document.getElementById('tone-status').textContent = text;
     }
 
+    /* Numeric, part by part: "0.9.0" is older than "0.15.1", and a string
+     * compare says the opposite. Returns <0, 0 or >0. */
+    function compareVersions(a, b) {
+      const pa = String(a).split('.').map(Number);
+      const pb = String(b).split('.').map(Number);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const x = pa[i] ?? 0, y = pb[i] ?? 0;
+        if (Number.isNaN(x) || Number.isNaN(y)) return 0;  /* unreadable: do not guess */
+        if (x !== y) return x - y;
+      }
+      return 0;
+    }
+
+    /* The newest image at the last render, so a genuinely new build can
+     * override a stale selection. See refreshFirmware below. */
+    let lastNewestFirmware = null;
+
     async function refreshFirmware() {
       let images = [];
       try {
@@ -670,7 +690,32 @@
         `<option value="${esc(f.file)}">${esc(f.file)}` +
         `${f.descriptor ? ` — ${esc(f.descriptor.version)}` : ' — version unreadable'}` +
         `${i === 0 && f.descriptor ? ' (newest)' : ''}</option>`).join('');
-      if ([...select.options].some(o => o.value === current)) select.value = current;
+      /*
+       * Keep a deliberate choice, but not past a newer image arriving.
+       *
+       * This list refreshes on a poll, so yanking the selection out from
+       * under somebody mid-choice would be its own bug — hence restoring
+       * it. But restoring it unconditionally meant that after weeks of
+       * 0.14.0 being the newest, fetching 0.15.1 left the box still
+       * pointing at 0.14.0, and pressing Update installed the old one. The
+       * "(newest)" label was there and did not save anybody, because the
+       * eye goes to the button, not the dropdown.
+       *
+       * So: if the newest image is the same one it was last time, keep the
+       * selection. If a newer one has appeared, move to it. Choosing an
+       * older image on purpose still works and still sticks — until the
+       * next new build, which is exactly when it should stop.
+       */
+      const newest = images.length > 0 ? images[0].file : null;
+      const keep = current
+        && newest === lastNewestFirmware
+        && [...select.options].some(o => o.value === current);
+      if (keep) {
+        select.value = current;
+      } else if (newest) {
+        select.value = newest;
+      }
+      lastNewestFirmware = newest;
     }
 
     document.getElementById('fw-fetch').addEventListener('click', async () => {
@@ -784,8 +829,27 @@
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
         say(response.ok ? 'Device is rebooting.' : 'Reboot request failed.');
       } else {
-        const file = document.getElementById('fw-select').value;
+        const select = document.getElementById('fw-select');
+        const file = select.value;
         if (!file) { say('Upload a firmware image first.'); return; }
+
+        /*
+         * Refuse to downgrade by accident.
+         *
+         * An update that installs an older version than the node is
+         * already running looks exactly like a successful one — the node
+         * reboots, comes back, and reports a version nobody reads
+         * carefully. Ask, with both numbers in the question, so the answer
+         * is informed rather than brave.
+         */
+        const chosen = (select.selectedOptions[0]?.textContent ?? '').split('—')[1]?.trim();
+        const running = button.closest('tr')?.dataset.firmware;
+        if (chosen && running && compareVersions(chosen, running) < 0
+            && !confirm(`This installs ${chosen} over ${running}, which is older. Continue?`)) {
+          say('Update cancelled.');
+          return;
+        }
+
         say(`Starting update to ${file}…`);
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/ota`, {
           method: 'POST',
