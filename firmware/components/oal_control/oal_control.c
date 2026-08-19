@@ -215,12 +215,12 @@ static esp_err_t status_handler(httpd_req_t *req)
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        oal_channel_name(oal_config_get_channel()),
-                       oal_output_name(oal_config_get_output()),
-                       oal_playout_output_ready() ? "true" : "false",
                        /* What the speaker is actually doing, not what is
                         * stored: they differ for as long as it takes an
                         * NVS write to fail, and the sound is the truth. */
                        (unsigned)oal_playout_volume(),
+                       oal_output_name(oal_config_get_output()),
+                       oal_playout_output_ready() ? "true" : "false",
                        input, s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
