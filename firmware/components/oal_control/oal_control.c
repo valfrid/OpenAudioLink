@@ -7,6 +7,7 @@
 
 #include "cJSON.h"
 #include "oal_capture.h"
+#include "oal_config.h"
 #include "oal_discovery.h"
 #include "oal_join.h"
 #include "oal_playout.h"
@@ -202,6 +203,11 @@ static esp_err_t status_handler(httpd_req_t *req)
     int len = snprintf(body, sizeof(s_body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
                        "\"roles\":%s,\"channel\":\"%s\",\"volume\":%u,"
+                       /* Which output stage the board has, and whether it
+                        * can currently play through it. A dongle node with
+                        * nothing plugged in is receiving, buffering and
+                        * silent, and that is the only place it says so. */
+                       "\"output\":\"%s\",\"outputReady\":%s,"
                        "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"controller\":%s,\"join\":%s,"
@@ -209,6 +215,8 @@ static esp_err_t status_handler(httpd_req_t *req)
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
                        oal_channel_name(oal_config_get_channel()),
+                       oal_output_name(oal_config_get_output()),
+                       oal_playout_output_ready() ? "true" : "false",
                        /* What the speaker is actually doing, not what is
                         * stored: they differ for as long as it takes an
                         * NVS write to fail, and the sound is the truth. */

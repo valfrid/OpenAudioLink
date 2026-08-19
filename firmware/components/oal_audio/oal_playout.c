@@ -127,6 +127,11 @@ bool oal_playout_running(void)
     return s_state.running;
 }
 
+bool oal_playout_output_ready(void)
+{
+    return s_sink != NULL && s_sink->ready();
+}
+
 void oal_playout_get(oal_playout_state_t *out)
 {
     if (out == NULL) {

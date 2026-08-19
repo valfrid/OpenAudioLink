@@ -133,6 +133,17 @@ uint8_t oal_playout_volume(void);
 /** True once the I²S peripheral is up. */
 bool oal_playout_running(void);
 
+/**
+ * Whether the output stage can currently take samples.
+ *
+ * Always true for I²S once started — the pins exist whether or not a DAC
+ * is soldered to them. Meaningful for USB, where it is false until a
+ * dongle has been plugged in and its stream opened. A node reporting
+ * running-but-not-ready is receiving audio and playing none of it, which
+ * is worth being able to see from the Hub rather than from a speaker.
+ */
+bool oal_playout_output_ready(void);
+
 #ifdef __cplusplus
 }
 #endif

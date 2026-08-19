@@ -23,6 +23,7 @@
 
 #include "oal_sink.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -173,6 +174,25 @@ static void usb_host_task(void *arg)
 static esp_err_t usb_open(const oal_sink_config_t *config)
 {
     s_sample_rate = config->sample_rate;
+
+    /*
+     * The console is about to go, and saying so is the last chance to.
+     *
+     * A node's console runs over USB-Serial/JTAG, because UART0 is not
+     * wired to the connector on these boards. The ESP32-S3 shares one PHY
+     * between USB-Serial/JTAG and USB-OTG, so installing the host stack
+     * takes the pins and the log stops here — permanently, on this boot.
+     *
+     * That is the price of the dongle output stage and it is worth paying
+     * on a deployed node: /status, OTA and the Hub are the diagnostics
+     * that matter once a speaker is on a shelf, and all three survive.
+     * But somebody watching a serial monitor deserves to know that the
+     * silence about to follow is expected rather than a crash.
+     */
+    ESP_LOGW(TAG, "installing the USB host stack — the console goes quiet now.");
+    ESP_LOGW(TAG, "use /status, the Hub or a UART adapter on D6 from here on.");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     usb_host_config_t host_config = {
         .skip_phy_setup = false,
