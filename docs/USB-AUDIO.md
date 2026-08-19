@@ -126,11 +126,11 @@ a measurement of there being nothing obviously wrong.
    written. `uacprobe` therefore reads those controls and deliberately
    leaves them alone.
 
-## Ten minutes: the offset is real, and it is constant
+## Fifty minutes: the offset is constant, and its size is a clue
 
-A 600-second run, uninterrupted: 28 862 016 frames, no write failure, no
-transfer error, no stream restart, no disconnect. As a soak test that is a
-real result and it is the first one this track has.
+A 3 050-second run — fifty minutes, uninterrupted: 146 552 928 frames, no
+write failure, no transfer error, no stream restart, no disconnect. As a
+soak test that is a real result and it is the first one this track has.
 
 As a *drift* measurement it needs reading carefully.
 
@@ -139,27 +139,56 @@ in 1 002 ms — 48 000.0000 Hz, exactly, every time. That is not precision, it
 is quantisation: writes go out in 96-frame chunks, so one second cannot
 resolve anything finer than 96 frames.
 
-**And the offset is not noise.** Two baselines from the same run, taken
+**And the offset is not noise.** Three baselines from the same run, taken
 after the ring buffer had settled:
 
-| Baseline | Frames | Versus ideal | |
-| --- | --- | --- | --- |
-| 287.6 s | 13 803 552 | **−288** | −20.86 ppm |
-| 586.2 s | 28 136 160 | **−576** | −20.47 ppm |
+| Baseline | Frames | Versus ideal | | |
+| --- | --- | --- | --- | --- |
+| 287.6 s | 13 803 552 | **−288** | −20.86 ppm | 47 998.9985 Hz |
+| 586.2 s | 28 136 160 | **−576** | −20.47 ppm | 47 999.0174 Hz |
+| 3 038.1 s | 145 827 072 | **−3 024** | −20.74 ppm | 47 999.0046 Hz |
 
-The baseline doubled and the deficit doubled with it, to three figures. A
-quantisation artefact or an occasional hiccup would not do that — this is a
-**constant rate ratio of about −20.5 ppm**, which is 0.98 samples per second,
-or 74 ms of accumulated offset per hour.
+Ten times the baseline, ten times the deficit, same ratio to two figures. A
+quantisation artefact or an occasional hiccup does not do that — this is a
+**constant rate ratio of −20.7 ppm**, which is 0.99 samples per second, and
+63 ms of accumulated offset over the fifty minutes.
 
-**Where it comes from is not yet known.** Both clocks in this measurement
-descend from the same 40 MHz crystal — the USB SOF through the PLL, the
-`esp_timer` systimer through its own path — and two integer divisions of one
-crystal should agree exactly. A steady 20 ppm between them means one of those
-paths is not what it appears, or the driver's scheduling adds a systematic
-delay, or the device is not as strictly slaved as a synchronous endpoint
-implies. **It is small, it is repeatable, and it is unexplained**, which is
-the right shape of thing to write down now and chase when it matters.
+### −20.83 ppm is exactly one count in 48 000
+
+That number is not arbitrary, and its precision is the interesting part:
+
+```
+1 / 48 000 = 20.83 ppm
+```
+
+A USB host generates SOF by counting PHY clocks — 48 000 of them at full
+speed, for a 1 ms frame — and the count lives in a register. **A frame
+interval of 48 001 rather than 48 000 produces a SOF exactly 20.83 ppm slow,
+which is the measurement to within its own error.** Being off by less than
+one count is not possible; being off by exactly one is the smallest error
+this mechanism can have.
+
+So the working explanation is that the ESP32-S3's host controller is
+counting one clock too many per frame, and everything downstream —
+the device's consumption, and therefore our write rate — inherits it.
+**Unverified**: it fits the arithmetic, it fits the constancy, and nobody
+has read the register.
+
+**If it is right, it answers the open question rather than adding one.**
+This document has had "whether an S3 can steer its SOF, and how finely" as
+the item standing between a demo and a hardware profile. A frame interval
+in a register is steerable by definition, in steps of 20.83 ppm — coarse,
+but a drift servo that alternates between two neighbouring values gets any
+average it likes, which is how fractional rate control is normally done.
+
+That would leave the USB output stage with a correction mechanism of its
+own, in place of the APLL trim an I²S node uses, and decision 12's playout
+contract intact on both.
+
+Both clocks in this measurement descend from the same 40 MHz crystal — the
+USB SOF through the PLL, the `esp_timer` systimer through its own path — and
+two integer divisions of one crystal should agree exactly. That they do not
+is what makes the frame-interval explanation above the first place to look.
 
 **But the number to distrust is the whole approach.** The SOF that paces the
 device and the `esp_timer` this is measured against **both come from the
