@@ -27,12 +27,16 @@
 #include <inttypes.h>
 #include <math.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
 #include "usb/uac2_desc.h"
 #include "usb/uac2_host.h"
 #include "usb/usb_host.h"
@@ -305,6 +309,60 @@ done:
     vTaskDelete(NULL);
 }
 
+/* ── Getting back into download mode without touching the board ──────── */
+
+/*
+ * Type `download` on the serial console and the board reboots ready to be
+ * flashed.
+ *
+ * The obvious hardware answer does not work here. esptool normally enters
+ * download mode by driving two lines — one to reset the chip, one to hold
+ * GPIO0 low while it comes up — and on a XIAO ESP32S3 **GPIO0 is not
+ * brought out anywhere**. It reaches the BOOT button and nothing else. So
+ * wiring the adapter to EN buys an automatic *reset* and still leaves a
+ * finger on BOOT, which is most of the inconvenience.
+ *
+ * The chip has a second route to the same place: a bit in an RTC register
+ * that tells the ROM to enter download mode on the next boot whatever GPIO0
+ * is doing. Set it, restart, and the board arrives in download mode with no
+ * buttons and no extra wires — over the UART that is already connected to
+ * read this log.
+ *
+ * The trigger is a word rather than a keystroke because the ESP's RX line
+ * may well be floating: a single character would make electrical noise
+ * enough to reboot the experiment.
+ */
+static void download_watch_task(void *arg)
+{
+    static const char phrase[] = "download";
+    size_t matched = 0;
+
+    (void)arg;
+    setvbuf(stdin, NULL, _IONBF, 0);
+
+    while (true) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        if (c == phrase[matched]) {
+            matched++;
+        } else {
+            matched = (c == phrase[0]) ? 1 : 0;
+        }
+
+        if (matched == sizeof(phrase) - 1) {
+            ESP_LOGW(TAG, "rebooting into download mode — flash now");
+            fflush(stdout);
+            vTaskDelay(pdMS_TO_TICKS(100));  /* let the line drain */
+            REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+            esp_restart();
+        }
+    }
+}
+
 /* ── Plumbing ────────────────────────────────────────────────────────── */
 
 static void driver_event_cb(uint8_t addr, uint8_t iface_num,
@@ -369,7 +427,9 @@ void app_main(void)
      * about to want it. Once the host driver below claims the USB peripheral
      * the board stops appearing as a serial port, so the usual automatic
      * reset into download mode has nothing to talk to. */
-    ESP_LOGI(TAG, "to reflash: hold BOOT, tap RESET, release BOOT — then flash over USB or this UART");
+    ESP_LOGI(TAG, "to reflash: type 'download' here, or hold BOOT and tap RESET");
+
+    xTaskCreate(download_watch_task, "dl_watch", 3072, NULL, 2, NULL);
 
     xTaskCreatePinnedToCore(usb_host_task, "usb_host", HOST_TASK_STACK,
                             xTaskGetCurrentTaskHandle(), HOST_TASK_PRIO, NULL, 0);

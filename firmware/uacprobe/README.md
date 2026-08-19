@@ -33,8 +33,8 @@ and it either works or it fails on one measurable thing.
 ```
   USB-serial adapter          XIAO ESP32S3            dongle
   ───────────────────         ────────────            ──────
-  RX  ──────────────────────  D6 (GPIO43, U0TXD)
-  TX  ──────────────────────  D7 (GPIO44, U0RXD)   [optional]
+  RX  ──────────────────────  D6 (GPIO43, U0TXD)   read the log
+  TX  ──────────────────────  D7 (GPIO44, U0RXD)   reflash without buttons
   GND ──────────────────────  GND
   5V  ──────────────────────  5V
 
@@ -125,9 +125,30 @@ esptool asks the board to reset itself over the serial port it is already
 talking to; once this application claims the USB peripheral there is no
 serial port for it to ask. So:
 
-> **Hold BOOT, tap RESET, release BOOT.** The board comes up as a
-> `USB JTAG/serial debug unit` again and flashes exactly as it did the first
-> time.
+> **Type `download` on the serial console.** The board reboots straight into
+> download mode — no buttons, no extra wires, over the UART already
+> connected to read the log.
+>
+> Or, always available: **hold BOOT, tap RESET, release BOOT.**
+
+**Why not just wire the adapter to EN and be done?** Because entering
+download mode takes two lines, not one: a reset *and* GPIO0 held low while
+the chip comes up. On a XIAO ESP32S3 **GPIO0 is not brought out anywhere** —
+it reaches the BOOT button and nothing else. Wiring EN to the adapter's RTS
+buys an automatic reset and still leaves a finger on BOOT, which is most of
+the inconvenience for all of the effort. Worse, plenty of USB-serial
+adapters assert RTS the moment a port is opened, so a direct EN connection
+can hold the board in reset and make it look dead.
+
+The `download` command exists because of that dead end. The chip has a
+second route to the same place — a bit in an RTC register telling the ROM to
+enter download mode on the next boot regardless of GPIO0 — so the firmware
+sets it and restarts itself. The trigger is a whole word rather than a
+keystroke because the ESP's RX line may be floating, and a single character
+would let electrical noise reboot the experiment.
+
+This needs the adapter's **TX wired to D7**, which is the same wire the
+UART flashing route below wants. Wire both directions from the start.
 
 **And you can flash over the UART adapter instead**, without touching the
 USB-C side of the rig at all. The ROM listens on U0TXD/U0RXD as well as on
