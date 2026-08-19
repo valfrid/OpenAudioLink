@@ -126,9 +126,9 @@ a measurement of there being nothing obviously wrong.
    written. `uacprobe` therefore reads those controls and deliberately
    leaves them alone.
 
-## Five minutes, and what it does and does not prove
+## Ten minutes: the offset is real, and it is constant
 
-A 302-second run, uninterrupted: 14 529 408 frames, no write failure, no
+A 600-second run, uninterrupted: 28 862 016 frames, no write failure, no
 transfer error, no stream restart, no disconnect. As a soak test that is a
 real result and it is the first one this track has.
 
@@ -139,10 +139,27 @@ in 1 002 ms — 48 000.0000 Hz, exactly, every time. That is not precision, it
 is quantisation: writes go out in 96-frame chunks, so one second cannot
 resolve anything finer than 96 frames.
 
-**Over the whole run it comes out 288 frames short of ideal**, which is
-−20 ppm against a floor of about 7 ppm for a 288-second baseline. Marginally
-above the noise, and small enough that one or two hiccups would account for
-it entirely.
+**And the offset is not noise.** Two baselines from the same run, taken
+after the ring buffer had settled:
+
+| Baseline | Frames | Versus ideal | |
+| --- | --- | --- | --- |
+| 287.6 s | 13 803 552 | **−288** | −20.86 ppm |
+| 586.2 s | 28 136 160 | **−576** | −20.47 ppm |
+
+The baseline doubled and the deficit doubled with it, to three figures. A
+quantisation artefact or an occasional hiccup would not do that — this is a
+**constant rate ratio of about −20.5 ppm**, which is 0.98 samples per second,
+or 74 ms of accumulated offset per hour.
+
+**Where it comes from is not yet known.** Both clocks in this measurement
+descend from the same 40 MHz crystal — the USB SOF through the PLL, the
+`esp_timer` systimer through its own path — and two integer divisions of one
+crystal should agree exactly. A steady 20 ppm between them means one of those
+paths is not what it appears, or the driver's scheduling adds a systematic
+delay, or the device is not as strictly slaved as a synchronous endpoint
+implies. **It is small, it is repeatable, and it is unexplained**, which is
+the right shape of thing to write down now and chase when it matters.
 
 **But the number to distrust is the whole approach.** The SOF that paces the
 device and the `esp_timer` this is measured against **both come from the
