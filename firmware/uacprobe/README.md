@@ -25,43 +25,97 @@ The frame counter is not decoration. Run 18's lesson was that an instrument
 which cannot distinguish the failure from the success is not an instrument,
 and here "no sound" has to be separable from "no data".
 
-## Wiring
+## The rig, without soldering anything
 
-The dongle is bus-powered and sources nothing, so the board has to. See
-`docs/USB-AUDIO.md` for why the USB-C connector is the wrong place to try
-this — the short version is that VBUS enters through a diode that will not
-pass current back out, and both ends present Rd on CC so they never attach.
+Try this first. It uses the board's own USB-C connector and two adapters,
+and it either works or it fails on one measurable thing.
+
+```
+  USB-serial adapter          XIAO ESP32S3            dongle
+  ───────────────────         ────────────            ──────
+  RX  ──────────────────────  D6 (GPIO43, U0TXD)
+  TX  ──────────────────────  D7 (GPIO44, U0RXD)   [optional]
+  GND ──────────────────────  GND
+  5V  ──────────────────────  5V
+
+                              USB-C ── [C plug→A socket]
+                                        ── [A plug→C socket] ── CX31993
+```
+
+Three things about it are worth knowing before it disappoints anybody.
+
+**The CC pins are already handled.** The second adapter — the one that came
+in the dongle's box — presents Rp on CC, which is the signal the dongle
+needs in order to attach as a device. Nothing else in the chain has to
+negotiate anything, because the XIAO's USB-OTG is put into host mode in
+software rather than by CC detection.
+
+**But that Rp is 56 kΩ *to VBUS*.** With no VBUS there is no pull-up, the
+dongle sees nothing, and the whole chain is inert. **VBUS is the entire
+question**, and everything else here is already solved.
+
+**So measure it before believing any of it.** The middle of the chain has an
+exposed USB-A socket, whose pin 1 is VBUS and pin 4 is GND — far easier to
+probe than anything on the board. Power the XIAO from the serial adapter,
+plug in the first adapter only, and measure across those two pins:
+
+- **~5 V** — the board's 5 V pin reaches the connector. Plug in the rest and
+  go.
+- **0 V** — VBUS enters the board through a diode that will not pass current
+  back out, which is the failure `docs/USB-AUDIO.md` predicts. Inject 5 V at
+  that USB-A socket from the same supply, or fall back to the soldered rig
+  below. Do not go looking for a firmware problem: there is no firmware
+  problem, there is no power.
+
+`MaxPower` on the measured dongle is 100 mA, and a XIAO with the radio idle
+is around 100 mA more. A USB-serial adapter's 5 V pin comes straight from a
+PC port and should carry that, but if the board browns out when the dongle
+attaches, give the 5 V pin its own supply and keep only GND and RX from the
+adapter.
+
+### The soldered rig, if VBUS is not there
 
 ```
 ESP32-S3  GPIO20 (D+) ──┐
           GPIO19 (D−) ──┤ USB-A receptacle ── C↔A adapter ── dongle
-   5 V supply ──────────┤   (the adapter came in the dongle's box and
-          GND ──────────┘    carries the Rp the device needs to attach)
+   5 V supply ──────────┤
+          GND ──────────┘
 ```
 
-Feed the same 5 V to the board's 5 V pin and to the receptacle's VBUS, and
-share the ground. `MaxPower` on the measured dongle is 100 mA.
-
-The receptacle sits in parallel with the board's own USB-C connector on the
-same two pins, so **do not have both occupied at once** — use one for the
-dongle and the other for flashing, never together.
+Same two pins the USB-C connector uses, so **do not have both occupied at
+once** — one for the dongle, the other for flashing, never together.
 
 ## Flashing and the console
 
-**Flashing works over the board's USB-C port**, even though the application
-takes that peripheral for host duty: hold BOOT, tap RESET, and the ROM
-bootloader takes the pins back as a serial device. Release BOOT, flash,
-reset.
+**Flash it the normal way the first time**: the CI artifact
+`uacprobe-esp32s3` holds `uacprobe-esp32s3-flash.bin`, a complete image for
+<https://espressif.github.io/esptool-js/> at address `0x0`, exactly like the
+node images in `firmware/README.md`.
 
-**The console does not.** `sdkconfig.defaults` moves it to UART0 and
-explains why at length: USB-Serial/JTAG and USB-OTG share one PHY and one
-pin pair on the S3, and only one can have them. Put a USB-serial adapter on
-the board's UART0 TX/RX pins to read the log. On a XIAO ESP32S3 those are
-D6/D7 — the same two pins `HARDWARE.md` tells you to keep clear of I²S, for
-this reason.
+**After that, flashing needs download mode.** Once this application is
+running it owns the USB peripheral, so the board no longer appears as a
+serial port on its own: hold BOOT, tap RESET, release BOOT, and the ROM
+bootloader takes the pins back. Then flash as usual.
+
+Disconnect the serial adapter's 5 V before plugging in USB-C, so the board
+is not fed from two supplies at once.
+
+**The console never comes back to USB.** `sdkconfig.defaults` moves it to
+UART0 and explains why at length: USB-Serial/JTAG and USB-OTG share one PHY
+and one pin pair on the S3, and only one can have them. Reading the log
+needs the adapter above, at 115200 baud, with its logic level set to
+**3.3 V** — a 5 V TX line into GPIO44 is out of spec.
+
+To read the log you only need the adapter's **RX** on D6 and a common
+ground; TX is there for completeness and nothing in this program listens.
 
 Without the adapter the board runs and says nothing, which looks exactly
 like a board that is not running.
+
+**Power up and start the monitor before plugging in the dongle.** The banner
+prints within a second of boot, and attaching afterwards separates "the
+program is running and waiting" from "the device never arrived" — two
+failures that otherwise look identical.
 
 ```
 idf.py -p COMn flash          # over USB-C, in download mode

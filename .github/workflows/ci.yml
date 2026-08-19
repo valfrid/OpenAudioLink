@@ -234,8 +234,17 @@ jobs:
           esp_idf_version: v5.4
           target: esp32s3
           path: firmware/uacprobe
-          command: idf.py build
+          command: >
+            idf.py build &&
+            cd build &&
+            esptool.py --chip esp32s3 merge_bin
+            -o uacprobe-esp32s3-flash.bin @flash_args
       - uses: actions/upload-artifact@v5
         with:
           name: uacprobe-esp32s3
-          path: firmware/uacprobe/build/oal_uacprobe.bin
+          # The merged image, because this one is flashed from a browser with
+          # esptool-js at address 0x0 like any other first flash here — the
+          # bare app binary would need the bootloader and partition table
+          # placed at their own offsets by hand. No OTA image: this is not a
+          # node and there is nothing to update it from.
+          path: firmware/uacprobe/build/uacprobe-esp32s3-flash.bin
