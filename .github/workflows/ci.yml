@@ -195,7 +195,7 @@ jobs:
       - name: Build with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.3.1
+          esp_idf_version: v5.4
           target: ${{ matrix.target }}
           path: firmware/testnode
           command: >
@@ -213,10 +213,11 @@ jobs:
 
   # The USB host experiment, `docs/USB-AUDIO.md` track A.
   #
-  # Its own job on its own ESP-IDF, and that separation is the entire point.
-  # `esp-uac2-host` requires 5.4 where every node in the house runs firmware
-  # built on 5.3.1 above, and isolation rule 2 says that pin does not move
-  # for an experiment. Two jobs, two toolchains, no argument.
+  # Still its own job, though it no longer needs its own toolchain: the node
+  # firmware moved to 5.4 too, so that `esp-uac2-host` could be used by a
+  # real Consumer rather than only by this probe. What keeps it separate now
+  # is that it is a different application with different sdkconfig — USB in
+  # host mode, console on UART, no Wi-Fi.
   #
   # It is allowed to fail without failing the build. The dependency is an
   # alpha component fetched from a third party's git, so a red mark here can

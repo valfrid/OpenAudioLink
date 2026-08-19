@@ -62,7 +62,7 @@ jobs:
       - name: Build with ESP-IDF
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.3.1
+          esp_idf_version: v5.4
           target: esp32s3
           path: firmware/testnode
           command: >
@@ -92,9 +92,10 @@ jobs:
   # Downloading node firmware by mistake because the experiment was only in
   # Actions is a real way to lose an evening.
   #
-  # Its own ESP-IDF, because `esp-uac2-host` requires 5.4 where every node
-  # above is built on 5.3.1, and isolation rule 2 in `docs/USB-AUDIO.md` says
-  # that pin does not move for an experiment.
+  # No longer on a different ESP-IDF from the node firmware — the whole tree
+  # moved to 5.4 so a real Consumer could use `esp-uac2-host`. It stays a
+  # separate application because its sdkconfig is genuinely different: USB in
+  # host mode, console on UART, no Wi-Fi.
   #
   # Isolation rule 3 — experimental images stay out of the Hub's firmware
   # store — holds here by construction rather than by promise. `FirmwareFetcher`
