@@ -142,6 +142,27 @@ static void driver_event_cb(uint8_t addr, uint8_t iface_num,
  */
 static void claim_the_gain(uac2_host_device_handle_t dev)
 {
+    /*
+     * Read before writing, and say what was found.
+     *
+     * This is the evidence for next time. A dongle keeps its feature unit
+     * across an ESP reboot — VBUS on that socket is wired to the 5 V rail
+     * and is not switched by anything, which is why one cable works and
+     * also why a firmware restart does not reset the device. So a stale
+     * mute survives an OTA and a repower clears it, which is exactly the
+     * shape of "silent until I pulled the power".
+     *
+     * If that is what happened, this line is where it shows.
+     */
+    bool was_muted = false;
+    if (uac2_host_device_get_mute(dev, 0, &was_muted) == ESP_OK) {
+        ESP_LOGI(TAG, "dongle arrived %s", was_muted ? "MUTED" : "unmuted");
+    }
+    int16_t was_at = 0;
+    if (uac2_host_device_get_volume(dev, 1, &was_at) == ESP_OK) {
+        ESP_LOGI(TAG, "dongle arrived at %.1f dB", was_at / 256.0);
+    }
+
     esp_err_t err = uac2_host_device_set_mute(dev, 0, false);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "could not unmute the dongle: %s", esp_err_to_name(err));
