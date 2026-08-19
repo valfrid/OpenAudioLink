@@ -121,6 +121,28 @@ so match by **name**, not position.
 
 Avoid D6/D7 — those carry the UART the serial log comes out of.
 
+### The UART, when the console cannot use USB
+
+D6 and D7 are the two pads furthest from the USB connector, one on each
+side of the board — easy to find, easy to confuse with each other.
+
+| XIAO | GPIO | Function | Wire it to the adapter's |
+| --- | --- | --- | --- |
+| D6 | GPIO43 | U0**TX**D — the ESP talks | **RX** |
+| D7 | GPIO44 | U0**RX**D — the ESP listens | **TX** |
+
+Crossed, as always: the direction in the name is the direction relative to
+whichever board the label is printed on. Share a ground, set the adapter to
+**3.3 V logic**, and use 115 200 baud.
+
+**To read a log, D6 and GND are enough.** The TX side only matters for
+typing into a console, which nothing here has.
+
+This normally does not come up, because the console runs over the native USB
+port. It matters when USB is doing something else — `firmware/uacprobe` puts
+USB-OTG into host mode, and the S3 shares one PHY between USB-Serial/JTAG and
+USB-OTG, so the console has nowhere to go but here.
+
 ### Laying the two boards out
 
 The header orders are fixed — `SCK BCK DIN LCK GND VIN` on the DAC,
