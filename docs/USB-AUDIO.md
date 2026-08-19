@@ -214,6 +214,53 @@ the picture. Hours rather than minutes. And whether anything audible happens
 at the moment a correction would be applied. Those decide whether this
 becomes a hardware profile or stays a demo.
 
+## First node: it plays, and Wi-Fi pays for it
+
+2026-08-19, a XIAO running `testnode` 0.15.0 with `output=usb`, a dongle in
+its USB-C socket, joined and streaming from the Hub. Audible on the first
+attempt — and audibly distorted, which the counters explain.
+
+From `/stream` after sixteen minutes of playback:
+
+| | |
+| --- | --- |
+| `writeErrors` | **0** — the USB sink never refused a write |
+| `bufferedFrames` / `targetFrames` | 4800 / 4800 — the ring sits exactly on target |
+| `silenceFrames` | **415 869** — 8.7 seconds of inserted silence |
+| `underruns` | **337** |
+| `lossPpm` | **10 911** — 1.09 % |
+| `meanGapX100` / `longestGap` | **290** / 9 — gaps of 2.9 packets, not 1 |
+| `rssi` | −47 dBm |
+
+**The output stage is not the fault.** Zero write errors and a ring sitting
+on its target say the dongle path did its job for sixteen minutes. What
+starved it was the network: 1.09 % loss where this project's own baseline
+is 0.005 % to 0.061 %, and — the part that matters more than the size —
+**gaps averaging 2.9 packets rather than 1.0.**
+
+Decision 2's evidence section names that shape exactly: isolated
+single-packet gaps are a retry budget occasionally running out, while
+bursty correlated loss is what a broken mechanism looks like. At −47 dBm
+the radio is not the problem.
+
+**What is new on this node is a USB host stack**, servicing isochronous
+transfers every millisecond at task priority 20 and 21 — and it was pinned
+to **core 0**, which is where Wi-Fi runs. `uacprobe` had the same pinning
+and never showed it, because `uacprobe` has no radio.
+
+Decision 2 anticipated this and wrote it down about I²S: *"its second core
+matters here: I2S DMA servicing can run apart from Wi-Fi transmit bursts."*
+A USB host is the same argument, louder. Firmware 0.15.1 moves the host
+task, the driver task and the attach task to **core 1** — and installs the
+USB host from the host task rather than from playout, because ESP-IDF
+allocates an interrupt on whichever core calls the allocating function, and
+leaving the ISR on core 0 would have moved the tasks and not the load.
+
+**Untested.** The reasoning is sound and the fix is small, but nothing has
+confirmed it. The measurement that would: the same sixteen minutes on
+0.15.1, with `lossPpm` and `meanGapX100` back to what an I²S node reports
+in the same house.
+
 ## What it reaches
 
 One capability, four classes of hardware:

@@ -40,6 +40,26 @@ static const char *TAG = "oal_sink_usb";
 #define DRIVER_TASK_PRIO   20
 #define HOST_TASK_PRIO     21
 
+/*
+ * Core 1, and this is not a detail.
+ *
+ * Wi-Fi runs on core 0. Isochronous USB wants servicing every millisecond
+ * at a priority above almost everything, and putting the two on one core
+ * makes them compete — measured as 1.09 % packet loss in *bursts* at
+ * −47 dBm, against 0.005 % and isolated single gaps on an I²S node in the
+ * same house. Decision 2 anticipated exactly this and said so about I²S
+ * DMA: "its second core matters here: I2S DMA servicing can run apart from
+ * Wi-Fi transmit bursts." A USB host is the same argument, louder.
+ *
+ * The interrupt matters as much as the tasks. ESP-IDF allocates an
+ * interrupt on whichever core calls the allocating function, so
+ * `usb_host_install` is called from the host task below rather than from
+ * `usb_open` — otherwise the ISR lands on whatever core started playout,
+ * which is core 0, and pinning the tasks alone would leave the loudest
+ * part of the load where it started.
+ */
+#define USB_CORE           1
+
 /* The dongle's 24-bit alternate: three bytes a sample, two channels. */
 #define USB_BYTES_PER_FRAME (3 * OAL_RTP_CHANNELS)
 
@@ -60,6 +80,7 @@ static uint8_t s_pack[PACK_BYTES];
 static volatile uint8_t s_pending_addr;
 static volatile uint8_t s_pending_iface;
 static volatile bool s_pending;
+static volatile esp_err_t s_install_result;
 
 static void device_event_cb(uac2_host_device_handle_t dev,
                             const uac2_host_device_event_t event, void *arg)
@@ -159,7 +180,23 @@ static void attach_task(void *arg)
 
 static void usb_host_task(void *arg)
 {
-    (void)arg;
+    TaskHandle_t caller = (TaskHandle_t)arg;
+
+    /* Installed here, on this core, so the USB interrupt is allocated on
+     * core 1 with the tasks that service it. */
+    usb_host_config_t host_config = {
+        .skip_phy_setup = false,
+        .intr_flags = ESP_INTR_FLAG_LEVEL1,
+    };
+
+    esp_err_t err = usb_host_install(&host_config);
+    s_install_result = err;
+    xTaskNotifyGive(caller);
+
+    if (err != ESP_OK) {
+        vTaskDelete(NULL);
+        return;
+    }
 
     for (;;) {
         uint32_t flags = 0;
@@ -194,27 +231,27 @@ static esp_err_t usb_open(const oal_sink_config_t *config)
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(200));
 
-    usb_host_config_t host_config = {
-        .skip_phy_setup = false,
-        .intr_flags = ESP_INTR_FLAG_LEVEL1,
-    };
-
-    esp_err_t err = usb_host_install(&host_config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    if (xTaskCreate(usb_host_task, "usb_host", HOST_TASK_STACK, NULL,
-                    HOST_TASK_PRIO, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(usb_host_task, "usb_host", HOST_TASK_STACK,
+                               xTaskGetCurrentTaskHandle(), HOST_TASK_PRIO,
+                               NULL, USB_CORE) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
+
+    /* Wait for it to install, so a failure is reported from here rather
+     * than discovered later as a device that never arrives. */
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000));
+    if (s_install_result != ESP_OK) {
+        ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(s_install_result));
+        return s_install_result;
+    }
+
+    esp_err_t err;
 
     uac2_host_driver_config_t driver_cfg = {
         .create_background_task = true,
         .task_priority = DRIVER_TASK_PRIO,
         .stack_size = DRIVER_TASK_STACK,
-        .core_id = 0,
+        .core_id = USB_CORE,
         .callback = driver_event_cb,
         .callback_arg = NULL,
     };
@@ -225,7 +262,8 @@ static esp_err_t usb_open(const oal_sink_config_t *config)
         return err;
     }
 
-    if (xTaskCreate(attach_task, "oal_usb_attach", 4096, NULL, 6, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(attach_task, "oal_usb_attach", 4096, NULL, 6,
+                               NULL, USB_CORE) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 
