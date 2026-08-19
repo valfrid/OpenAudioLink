@@ -25,69 +25,59 @@ The frame counter is not decoration. Run 18's lesson was that an instrument
 which cannot distinguish the failure from the success is not an instrument,
 and here "no sound" has to be separable from "no data".
 
-## The rig, without soldering anything
+## The rig
 
-Try this first. It uses the board's own USB-C connector and two adapters,
-and it either works or it fails on one measurable thing.
+No soldering, no adapters, no cable. The dongle plugs **straight into the
+XIAO's USB-C socket**; the serial adapter carries power and the console.
 
 ```
-  USB-serial adapter          XIAO ESP32S3            dongle
-  ───────────────────         ────────────            ──────
+  USB-serial adapter          XIAO ESP32S3
+  ───────────────────         ────────────
   RX  ──────────────────────  D6 (GPIO43, U0TXD)   read the log
   TX  ──────────────────────  D7 (GPIO44, U0RXD)   reflash without buttons
   GND ──────────────────────  GND
   5V  ──────────────────────  5V
 
-                              USB-C ── [C plug→A socket]
-                                        ── [A plug→C socket] ── CX31993
+                              USB-C ──── CX31993 dongle
 ```
 
-Three things about it are worth knowing before it disappoints anybody.
+**Why the CC pins turn out not to matter.** Both ends of that joint present
+Rd — the XIAO's socket is wired as a device, and so is the dongle — and two
+Rd's facing each other normally means neither side attaches. It works
+anyway, because CC only decides *whether a port switches VBUS on*. The
+XIAO's VBUS is not switched by anything: it is wired to the 5 V rail. Feed
+that pin and the socket is live regardless of what CC says, the dongle sees
+VBUS, powers up and enumerates. Nothing negotiates because nothing here has
+a vote.
 
-**The CC pins are already handled.** The second adapter — the one that came
-in the dongle's box — presents Rp on CC, which is the signal the dongle
-needs in order to attach as a device. Nothing else in the chain has to
-negotiate anything, because the XIAO's USB-OTG is put into host mode in
-software rather than by CC detection.
+The USB-OTG side is the same story — host mode is set in software, not by
+CC detection.
 
-**But that Rp is 56 kΩ *to VBUS*.** With no VBUS there is no pull-up, the
-dongle sees nothing, and the whole chain is inert. **VBUS is the entire
-question**, and everything else here is already solved.
+**So VBUS was the only real question, and on this board the answer is yes.**
+Measured by the thing working: a XIAO powered through its 5 V pin puts 5 V
+on its own USB-C socket. The back silkscreen said as much, marking that pin
+`VUSB` rather than naming a regulated rail.
 
-**So measure it before believing any of it.** The middle of the chain has an
-exposed USB-A socket, whose pin 1 is VBUS and pin 4 is GND — far easier to
-probe than anything on the board. Power the XIAO from the serial adapter,
-plug in the first adapter only, and measure across those two pins:
+That also sharpens the never-both-at-once rule below into a mechanism:
+feeding the 5 V pin while USB-C is plugged into a PC pushes current into the
+PC's port.
 
-- **~5 V** — the board's 5 V pin reaches the connector. Plug in the rest and
-  go.
-- **0 V** — VBUS enters the board through a diode that will not pass current
-  back out, which is the failure `docs/USB-AUDIO.md` predicts. Inject 5 V at
-  that USB-A socket from the same supply, or fall back to the soldered rig
-  below. Do not go looking for a firmware problem: there is no firmware
-  problem, there is no power.
-
-**The board's own silkscreen is the best evidence available before the
-meter.** On a XIAO ESP32S3 the pin marked `5V` on the front is marked
-**`VUSB`** on the back — the USB connector's own supply net rather than a
-regulated rail derived from it. A pin named after the thing we need it to
-reach is the outcome to hope for, and it turns the measurement from a coin
-flip into a confirmation. It is still a confirmation worth doing: whether
-anything sits in that path is not something a label can tell you.
-
-It also explains the "never both at once" rule below with a mechanism rather
-than caution. If that pin really is VBUS, then feeding it 5 V while USB-C is
-plugged into a PC pushes current back into the PC's port.
+**Where this stops generalising.** A board with a real CC controller, or one
+whose VBUS is gated, will not behave this way — and neither will a USB-C
+*device* that refuses to attach until it sees Rp. The adapters described in
+`docs/USB-AUDIO.md` are still the answer there; they simply were not needed
+here.
 
 `MaxPower` on the measured dongle is 100 mA, and a XIAO with the radio idle
-is around 100 mA more. A USB-serial adapter's 5 V pin comes straight from a
-PC port and should carry that, but if the board browns out when the dongle
+is around 100 mA more. A USB-serial adapter's 5 V comes straight from a PC
+port and carries that comfortably. If the board browns out when the dongle
 attaches, give the 5 V pin its own supply and keep only GND and RX from the
 adapter.
 
-### The soldered rig, if VBUS is not there
+### The soldered rig, if a board ever needs it
 
-Easier than it looks, because **the XIAO ESP32S3 breaks the USB data lines
+Not needed on a XIAO ESP32S3 — kept for a board whose VBUS turns out to be
+gated. Easier than it looks, because **the XIAO ESP32S3 breaks the USB data lines
 out on its back as two pads labelled `D+` and `D−`** — no need to find
 GPIO20 and GPIO19 anywhere on the module. They sit in the middle of the
 board beside the JTAG pads (`MTCK`, `MTMS`, `MTDI`, `MTDO`) and the battery

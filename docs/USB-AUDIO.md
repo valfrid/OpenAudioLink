@@ -64,8 +64,9 @@ actually does.
 ## It works. 2026-08-19, first attempt.
 
 An ESP32-S3 hosted the CX31993 dongle and a 1 kHz tone came out of it. No
-soldering, no bench supply — a XIAO ESP32S3, its own USB-C connector, the
-two adapters, and a USB-serial adapter for power and console.
+soldering, no bench supply, and — on the second run — **no adapters**: the
+dongle plugged straight into the XIAO's USB-C socket, with a USB-serial
+adapter carrying power and the console.
 
 `firmware/uacprobe` and its README are the record of how; this is what the
 run settled.
@@ -78,10 +79,19 @@ run settled.
   state reads `Clock source ID: 9`, the rate set to 48 000 Hz and read back
   as 48 000 Hz, `clock valid: yes`. **The component's documentation is more
   conservative than its behaviour.**
-- **Power reached the dongle through the board's own connector.** The
-  soldered USB-A rig was never needed, which means the XIAO's `5V`/`VUSB`
-  pin does reach the USB-C connector's VBUS. The silkscreen was telling the
-  truth, and the diode this document worried about is not in that path.
+- **Power reached the dongle through the board's own connector**, so the
+  XIAO's `5V`/`VUSB` pin does reach the USB-C socket's VBUS. The silkscreen
+  was telling the truth, and the diode this document worried about is not in
+  that path.
+- **And the CC question was never a question on this board.** Confirmed by
+  running the dongle plugged *directly* into the XIAO's socket, with no
+  adapters at all. Both ends present Rd, which normally means neither
+  attaches — but CC only decides whether a port *switches VBUS on*, and the
+  XIAO's VBUS is not switched by anything. It is wired to the 5 V rail. Feed
+  that pin and the socket is live whatever CC says; the dongle sees VBUS and
+  enumerates. **The analysis below is not wrong, it is about ports that have
+  a vote, and this one does not.** A board with a real CC controller, or a
+  device that waits for Rp before attaching, still needs it.
 
 **The format is ours, unconverted.** Interface 1 alternate 2 was selected:
 2 channels, 24-bit in 3-byte slots, endpoint `0x01`, `wMaxPacketSize 576`,
@@ -90,8 +100,10 @@ exactly the 48 000 × 3 × 2 per millisecond predicted from the Windows dump,
 in half the reserved packet.
 
 **And the rate is right.** The write loop is paced by the device's
-consumption, and it reported 48 096 frames per 1 002 ms for as long as it
-ran: 48 000.0 Hz, to the resolution the counter can express.
+consumption. Over a fifteen-second run it moved 673 344 frames in 14.028 s —
+**48 000.0 Hz**, to the resolution the counter can express, with no drift
+visible at that scale. Fifteen seconds is not a measurement of drift; it is
+a measurement of there being nothing obviously wrong.
 
 **Confirmed, having been read off Windows first:** VID `3302` PID `336A`,
 `TTGK Technology Co.,Ltd`, `CX31993+MAX97220 PRO`, UAC 2.0 with
