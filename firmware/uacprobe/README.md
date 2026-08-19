@@ -114,13 +114,34 @@ ends up somewhere a button cannot reach.
 <https://espressif.github.io/esptool-js/> at address `0x0`, exactly like the
 node images in `firmware/README.md`.
 
-**After that, flashing needs download mode.** Once this application is
-running it owns the USB peripheral, so the board no longer appears as a
-serial port on its own: hold BOOT, tap RESET, release BOOT, and the ROM
-bootloader takes the pins back. Then flash as usual.
+**After that, every flash needs download mode — but nothing is ever
+stuck.** Download mode lives in the chip's ROM and is entered by the state
+of a pin at reset, before any application code runs at all. Whatever this
+firmware does with USB is undone by the reset that precedes it, so the board
+cannot be flashed into a corner. The worst case is a button press.
 
-Disconnect the serial adapter's 5 V before plugging in USB-C, so the board
-is not fed from two supplies at once.
+What is genuinely lost is the *automatic* entry into download mode. Normally
+esptool asks the board to reset itself over the serial port it is already
+talking to; once this application claims the USB peripheral there is no
+serial port for it to ask. So:
+
+> **Hold BOOT, tap RESET, release BOOT.** The board comes up as a
+> `USB JTAG/serial debug unit` again and flashes exactly as it did the first
+> time.
+
+**And you can flash over the UART adapter instead**, without touching the
+USB-C side of the rig at all. The ROM listens on U0TXD/U0RXD as well as on
+USB, so with the adapter already wired to D6/D7 the same button press puts
+the board in reach of `idf.py -p COM<uart> flash`. This wants both
+directions wired — D6 to the adapter's RX *and* D7 to its TX — where merely
+reading the log needs only D6.
+
+Whichever route: **disconnect the serial adapter's 5 V before plugging in
+USB-C**, so the board is not fed from two supplies at once. If the 5 V pin
+really is VBUS, doing both pushes current into the PC's port.
+
+The banner this program prints at boot repeats the button sequence, on the
+theory that the person reading the log is the person about to need it.
 
 **The console never comes back to USB.** `sdkconfig.defaults` moves it to
 UART0 and explains why at length: USB-Serial/JTAG and USB-OTG share one PHY

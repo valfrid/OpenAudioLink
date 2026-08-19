@@ -365,6 +365,11 @@ void app_main(void)
 
     ESP_LOGI(TAG, "uacprobe: USB host + UAC 2.0, 48 kHz / 24-bit / stereo tone");
     ESP_LOGI(TAG, "if nothing follows, the device is not attaching — check VBUS first");
+    /* Printed here because the person reading this log is exactly the person
+     * about to want it. Once the host driver below claims the USB peripheral
+     * the board stops appearing as a serial port, so the usual automatic
+     * reset into download mode has nothing to talk to. */
+    ESP_LOGI(TAG, "to reflash: hold BOOT, tap RESET, release BOOT — then flash over USB or this UART");
 
     xTaskCreatePinnedToCore(usb_host_task, "usb_host", HOST_TASK_STACK,
                             xTaskGetCurrentTaskHandle(), HOST_TASK_PRIO, NULL, 0);
