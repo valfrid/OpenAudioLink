@@ -446,4 +446,19 @@ void app_main(void)
 
     ESP_ERROR_CHECK(uac2_host_install(&driver_cfg));
     ESP_LOGI(TAG, "waiting for a UAC 2.0 device");
+
+    /* A heartbeat while nothing is attached, for the same reason the frame
+     * counter exists further up: a log that has gone quiet must not be able
+     * to mean two different things. Without this, "the dongle never
+     * enumerated" and "the program died" read identically, and the first is
+     * expected often enough that the second would go unsuspected.
+     *
+     * It stops as soon as a device is in hand, so a working run is not
+     * interrupted by a line saying nothing is happening. */
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        if (!s_probe.busy) {
+            ESP_LOGI(TAG, "still waiting — nothing attached (VBUS is the usual reason)");
+        }
+    }
 }
