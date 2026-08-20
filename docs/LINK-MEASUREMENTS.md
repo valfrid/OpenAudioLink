@@ -694,6 +694,90 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 27: both nodes, one minute apart, for forty-one minutes
+
+**2026-08-20.** The first run in this series with a control. Dongle
+Consumer on **0.16.0** (the pad servo) and the I²S speaker deliberately
+left on **0.14.0**, both in one cast point playing the same source, both
+polled every 60 s — and, new this time, the Hub's own `/api/stream` polled
+on the same line.
+
+### The Hub never starved
+
+`underrunSamples` read **297 120 in all forty rows**. Not one sample of
+source starvation in forty-one minutes, through everything below. The
+counter is a fixed backlog from stream start, and it did not move.
+
+That clears the Hub's *source* — the decoder feeding the encoder. It does
+**not** clear the Hub's send path, which has no counter of its own. Keep
+that distinction; the rest of this entry needs it.
+
+### A twelve-minute storm, on both nodes, at the same time
+
+| window | | dongle 0.16.0 | speaker 0.14.0 |
+| --- | --- | --- | --- |
+| 1300–1724 s | underruns | 18/min | 28/min |
+| | loss (approx.) | 4 100 ppm | 2 100 ppm |
+| **1724–2427 s** | **underruns** | **171/min** | **611/min** |
+| | loss (approx.) | 29 000 ppm | 5 800 ppm |
+| 2427–3754 s | underruns | 11/min | 8/min |
+| | loss (approx.) | 800 ppm | 2 700 ppm |
+
+Loss is differentiated from the cumulative `lossPpm` against 200 pps and
+node uptime, so treat it as a rate, not a reading.
+
+The storm **starts on both nodes in the same minute and ends on both in the
+same minute.** Nothing in either firmware changed at 1724 s or at 2427 s.
+Two nodes, two different output stages, two different firmware versions,
+one event.
+
+### The rings went full before they went empty
+
+At 1789 s the dongle's ring read **9 600** and the speaker's **9 595** —
+both at capacity, in the same sample. Four hundred seconds later the
+dongle read **1**, then **240**.
+
+Full, then empty, then full. That is not loss; steady loss drains a ring
+and keeps it drained. That is delivery **stalling and then flushing** —
+something holds packets and releases them in a burst, twice a minute,
+swinging both nodes across a 200 ms buffer end to end.
+
+Every previous run in this series measured loss and reasoned about loss.
+This is the first one to catch the jitter, and the jitter is bigger than
+the buffer.
+
+### The control node, on old firmware, was hit three times harder
+
+The speaker underran **3.6× more than the dongle** during the storm while
+losing about **five times fewer packets**. The difference between them is
+the pad servo, and this is the first direct evidence that it works: the
+dongle absorbed five times the loss with a quarter of the dropouts, at a
+cost of 75 padded frames per second while it was converging (1.6 ms of
+repeated audio per second, ~1 500 ppm — under three cents of pitch, and it
+falls to 8 frames/s once the storm passes).
+
+The servo does not fix the cause. It buys about a factor of twenty in how
+much loss a node can eat before it is audible.
+
+### What is left
+
+Three candidates survive, and the flat Hub counter kills none of them:
+
+1. **The Hub's send path** — a stall in the sender (scheduling, GC, timer
+   resolution) bursts packets without touching the source counter.
+2. **The access point** — buffering, a background scan, or its own CPU.
+3. **Airtime** — 400 pps of small unicast frames to two stations, with
+   retries on the weaker one stealing time from the other.
+
+The discriminator is **latency, not loss**: run a timestamped ping to both
+nodes alongside the poll. If RTT spikes on both at the moment the rings
+swing, the stall is in the network and the Hub is innocent. If RTT stays
+flat while the rings swing 200 ms, the stall is in the Hub's sender.
+
+That test needs no firmware. Note that five firmware mechanisms have now
+been proposed and eliminated across runs 23–26, and this run's control node
+— untouched, on 0.14.0 — took the worst of it.
+
 ## Run 26: the speaker loses just as much, and that ends the argument
 
 **2026-08-20.** The I²S speaker, `/stream` read while playing, on the same
