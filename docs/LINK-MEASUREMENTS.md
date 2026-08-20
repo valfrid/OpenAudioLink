@@ -694,6 +694,81 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 29: the dongle node beats the speaker
+
+**2026-08-20, 20:22–20:53.** Firmware 0.17.1 on the dongle, speaker still on
+0.14.0 as the control, both streaming, polled every 30 s. `rxBufferBytes`
+reads **92 928** — sixty-four packets, 320 ms. The option that had been
+silently refused since the stream existed is in force.
+
+### Ten minutes, one underrun
+
+The quietest window, 20:43:21 → 20:52:59, 578 seconds:
+
+| | run 28 | run 29 | |
+| --- | --- | --- | --- |
+| dongle underruns | 5.6/min | **0.10/min** | 55× |
+| dongle padded frames | 42/s | **1.03/s** | 41× |
+| dongle ring | ~3 000 (62 ms), wandering | **5 760 (120 ms), pinned** | |
+| dongle ongoing loss | ~3 700 ppm | **~0** | |
+
+`underruns` read **533 across fifteen consecutive polls.** One dropout in
+ten minutes.
+
+And the number that matters most for this whole series — the I²S speaker,
+untouched, over the same 578 seconds: **4.9 underruns per minute.**
+
+**The dongle node is now forty-nine times steadier than the soldered DAC.**
+Every run from 23 to 28 was an attempt to explain why the dongle was worse.
+It is not worse. It was dropping packets it had already received, because a
+`setsockopt` call nobody checked had been failing since the beginning.
+
+`paddedFrames` is the measurement to trust here: it counts how often the
+ring dipped below three quarters of target, computed inside the node,
+independent of any loss accounting. 42/s to 1.03/s.
+
+### The storms are still there, exactly as predicted
+
+Two, in thirty-one minutes:
+
+| | dongle | speaker |
+| --- | --- | --- |
+| **20:32:40**, 68 s | +138 underruns, +4 598 padded | +762 underruns |
+| **20:53:29**, 30 s | +148 underruns, +1 726 padded | +371 underruns |
+
+Run 28's prediction was that this fix would attenuate the storms and not
+remove them — 320 ms of receive queue plus a 200 ms ring is 520 ms of
+absorption against measured stalls of 900 ms. That is what happened. The
+dongle rides them 2.5–5.5× better than the unfixed speaker, and still takes
+a visible excursion.
+
+`+4 598` padded frames in one storm is 96 ms of repeated audio: the servo
+spending everything it has to keep the ring off the floor.
+
+### The poll itself timed out
+
+At **20:32:40** the log reads `POLL FAILED: The operation has timed out.`
+The storm took the *control plane* down with it — an HTTP request from the
+Hub machine to a node, nothing to do with the audio path, could not
+complete inside its timeout.
+
+That is a strong constraint. Whatever stalls the stream also stalls
+unrelated TCP between the same two machines, which puts it in the network
+rather than anywhere in the audio pipeline.
+
+### The open question is the Hub machine's own link
+
+Runs 27–29 all show the same shape: both nodes stalling in the same second,
+RTT spiking to both at once, and now an HTTP timeout too. Every one of
+those observations is taken **from the Hub PC**, over the Hub PC's own link
+to the access point.
+
+If that machine is on Wi-Fi, its uplink entering and leaving power save
+would produce every symptom recorded here — packets held then flushed,
+both nodes affected identically, pings and HTTP spiking together. It is the
+one shared element that has never been tested, and testing it costs
+nothing: put the Hub on Ethernet and run the same poll.
+
 ## Run 28: a hundred and thirty-five underruns, and not one lost packet
 
 **2026-08-20, 19:36–19:56.** Run 27's discriminator, executed: a
