@@ -602,15 +602,32 @@ RSSI says how loud the access point arrives. It says nothing about what
 else is arriving with it.
 
 **And this node has a USB dongle plugged directly into the board, a couple
-of centimetres from the Wi-Fi antenna.** A full-speed USB bus clocking at
-12 MHz, a switching regulator and a headphone amplifier, all inside the
-near field of a 2.4 GHz receiver.
+of centimetres from the Wi-Fi antenna.**
 
-`HARDWARE.md` already gives this caution, for the MAX98357A: *"Keep it away
-from the antenna. A Class-D switching stage beside a Wi-Fi radio is a real
-hazard… If link quality drops when audio plays, this is why."* The warning
-was written for an amplifier module on flying leads. A dongle in the socket
-is the same hazard with no leads to lengthen.
+That is the observation. The mechanism first offered for it was wrong, and
+the correction weakens the case rather than strengthening it:
+
+- **The MAX97220 is Class AB, not Class D.** It is a DirectDrive headphone
+  amplifier — a linear output stage, with a charge pump to make the negative
+  rail that lets it drop the output coupling capacitors. The charge pump is
+  a switcher, but at a few hundred kilohertz; its harmonics at 2.4 GHz are
+  nothing. `HARDWARE.md`'s Class-D caution was written about the MAX98357A
+  and does not transfer to this part.
+- **This is full-speed USB, 12 Mbit/s.** The well-known 2.4 GHz desense
+  stories are USB 3.0, whose 5 Gbit/s signalling puts a fundamental
+  *inside* the band. A 12 MHz bus reaching 2.4 GHz means the two-hundredth
+  harmonic, which is not where the energy is.
+
+So the honest position is that **the radio-noise hypothesis is thinner than
+it was first stated**, and a plausible mechanism has not been identified. It
+also is not dead: coupling into a 5 cm pigtail and a sheet antenna lying
+against the board is conduction and common-mode, not radiation at 2.4 GHz,
+and does not need a harmonic to reach the band.
+
+**And there is a variable nobody has named yet.** The two nodes are in
+different rooms. Different multipath, different neighbours, different
+everything — and the dongle node has been carried around during testing
+while the speaker has sat still for five days.
 
 ### The node could not answer "why that access point"
 
@@ -650,7 +667,11 @@ currently lying beside the board and therefore beside the dongle. That gives
 two independent things to move, and they must be moved separately or a joint
 result says nothing about which mattered.
 
-**0. Unplug the dongle. Costs nothing and needs no parts.** With
+**0. Unplug the dongle. Costs nothing, needs no parts, and is now the test
+that matters most.** It is the only one that holds *everything* constant —
+same room, same antenna, same access point, same minute — and changes only
+whether a dongle is drawing current and moving data. Location, multipath
+and antenna quality all cancel. With
 `output=usb` and no device attached the node still joins, still receives RTP
 and still counts it — `outputReady` goes false and playout leaves the ring
 alone, but `stats` keeps working. So `lossPpm` with the dongle out, against
