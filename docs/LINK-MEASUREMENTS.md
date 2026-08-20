@@ -694,6 +694,58 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 32: a gap of two hundred and twenty-four packets
+
+**2026-08-20, 23:37–23:42.** Both nodes, 154 125 packets each, same Hub,
+same stream, same minutes.
+
+| | lost | gaps | longest gap | jitter |
+| --- | --- | --- | --- | --- |
+| Dongle | 439 (0.285 %) | **94** | **224 packets** | 3.21 ms |
+| PartySpeaker | 3 (0.002 %) | 1 | 3 packets | 1.96 ms |
+
+**224 consecutive packets is 1.12 seconds of audio.** Not scattered loss —
+a hole.
+
+### It is not the Hub, and this time that is proven rather than argued
+
+Across every row from 23:37:03 to 23:41:57, while the dongle was losing
+those packets:
+
+- `worstStallMs` **40**, unchanged in all twenty rows
+- `worstSendMs` **32**, unchanged in all twenty rows
+- `gcPauseMs` +81 ms over 294 s, `gen2Collections` 4 → 5
+- `HUB u` **0** — the source never starved
+
+Nothing at the sender moved. And the speaker, receiving the identical
+packets from the identical socket in the identical seconds, lost **three**.
+
+### It is not the receive queue either
+
+The queue is 64 packets, 320 ms. A queue overflow drops what will not fit
+while the link keeps delivering — scattered singles, which is exactly what
+run 29 cured. It cannot produce 224 *consecutive* missing packets. For 1.12
+seconds nothing arrived at all.
+
+### What did move
+
+| | dongle | speaker |
+| --- | --- | --- |
+| RSSI range over the window | **−46 to −62** | **−47, every row** |
+
+Sixteen decibels of swing against a flat line, on two radios in one house
+listening to one sender. At 23:39:36 the dongle read −62; in that same poll
+`pad` jumped 668 frames and `underruns` 38. At 23:40:23 the poll itself
+timed out, and the next row showed loss at 3 349 ppm.
+
+The dongle is on a different access point, three hops across the mesh
+backhaul (run 31). Its link is fading and recovering on a second timescale.
+That is where the remaining disturbance lives, and neither the Hub nor the
+node's software is involved in it.
+
+`roams` in `/status` would say whether these are fades or re-associations,
+and is still not being printed.
+
 ## Run 31: two consumers, and a confound the whole series may have shared
 
 **2026-08-20, 23:27–23:33.** Both nodes streaming again, Hub 0.20.0, EEE
@@ -716,12 +768,19 @@ The dongle's audio is crossing a **mesh backhaul**. Its packets take three
 hops, share airtime with the backhaul link itself, and inherit that link's
 scheduling. The speaker's do not.
 
-Nothing in runs 23 through 30 recorded which access point each node was
-associated with, and the sticky-BSSID hysteresis in `oal_wifi.c` means a
-node keeps whatever it joined at boot. **Every comparison in this series may
-have been across two different network paths without saying so.** The
-`/wifi/scan` and `/wifi/rejoin` endpoints exist precisely to control this
-and were not used as controls.
+No run in this series recorded which access point each node was associated
+with, and the sticky-BSSID hysteresis in `oal_wifi.c` means a node keeps
+whatever it joined at boot. **Every comparison in this series may have been
+across two different network paths without saying so.**
+
+Not for want of the data. `/status` has reported `bssid`, `channel` and
+`roams` all along, and the comment above `format_wifi` says exactly why:
+*"in a mesh every node advertises the same SSID, so a weak RSSI on its own
+cannot distinguish 'far from the right access point' from 'attached to the
+wrong one'."* Written, shipped, and then left out of every poll line for
+nine runs while RSSI was compared between two nodes as though it meant the
+same thing on both. The `/wifi/scan` and `/wifi/rejoin` endpoints were
+built for this too, and were never used as controls.
 
 That does not overturn the two findings that rest on a node's own
 before-and-after — the receive buffer (run 29) and EEE (run 30) — but any
