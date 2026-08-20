@@ -694,6 +694,62 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 30: Energy Efficient Ethernet, and the end of the GC theory
+
+**2026-08-20, 23:21.** Hub 0.20.0, reporting `gen2Collections` and
+`gcPauseMs` beside the send-loop counters. One change made between the two
+measurements: **Energy Efficient Ethernet off** on the Intel I219-LM, and
+the stream restarted so the high-water marks started clean.
+
+| | EEE on | EEE off | |
+| --- | --- | --- | --- |
+| `worstStallMs` | 145 | **40–45** | 3× |
+| `worstSendMs` | 101 | **11–12** | 8× |
+| late wakes | 4.3/s | 4.5/s | unchanged |
+
+A NIC power-saving setting was costing the sender a hundred milliseconds
+inside a single send. The I219 parks the link into low-power idle between
+bursts, and 200 small packets a second with 5 ms gaps is precisely the
+traffic shape that keeps re-triggering it. Nothing in the Hub, nothing in
+the firmware, nothing on the air.
+
+Note what did **not** change: the *frequency* of late wakes. EEE was making
+each overshoot much worse; it was not making them happen. The loop still
+wakes to find more than one packet due about four and a half times a
+second, and that was true on this machine before any of this started — the
+csproj records the same rate when Workstation GC was chosen.
+
+### The garbage collector is not stopping the sender
+
+Over 106 seconds:
+
+- `gen2Collections` read **3, and never moved**.
+- `gcPauseMs` went 86 → 112: **26 ms of pause in 106 seconds**, largest
+  single 15-second increment **7 ms**.
+
+Against stalls of 40–45 ms. The runtime pauses this process for a quarter
+of a millisecond per second, and no single pause comes close to a stall.
+
+That closes the branch the counters were added to settle. The send loop
+already ran on its own thread at AboveNormal, waited on `Thread.Sleep(1)`
+rather than the thread pool, and held a 1 ms timer; the one thing left that
+could stop it regardless of priority was a blocking collection, and it
+measurably is not happening. **The cause is outside the process** — which
+is exactly where EEE turned out to be.
+
+### Still open
+
+No storm occurred in this window, so this run says nothing about the 900 ms
+events. What it does is remove two candidates and fix one real fault. The
+question that remains is whether `worstStallMs` and `worstSendMs` jump when
+a storm does — and now they can be read cleanly, without a NIC power state
+inflating them.
+
+Suspects still standing, both visible on the same machine: a **Tailscale**
+tunnel adapter, whose filter driver sits in the outbound path of every
+adapter on the host, and general machine pressure — 6.7 of 7.9 GB of RAM in
+use and the CPU running downclocked at 1.89 GHz.
+
 ## Run 29: the dongle node beats the speaker
 
 **2026-08-20, 20:22–20:53.** Firmware 0.17.1 on the dongle, speaker still on
