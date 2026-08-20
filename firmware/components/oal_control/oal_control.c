@@ -199,6 +199,8 @@ static esp_err_t status_handler(httpd_req_t *req)
      * into a margin somebody can watch, and the Hub already polls this
      * every five seconds.
      */
+    const char *arrived = oal_playout_output_arrived_as();
+
     char *body = s_body;
     int len = snprintf(body, sizeof(s_body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
@@ -208,6 +210,12 @@ static esp_err_t status_handler(httpd_req_t *req)
                         * nothing plugged in is receiving, buffering and
                         * silent, and that is the only place it says so. */
                        "\"output\":\"%s\",\"outputReady\":%s,"
+                       /* What the output stage was holding when we opened
+                        * it. A dongle node has no console — its output
+                        * stage owns the USB peripheral the log would use —
+                        * so the line that explains a silent speaker has to
+                        * arrive here or nowhere. */
+                       "\"outputArrivedAs\":%s%s%s,"
                        "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        "\"controller\":%s,\"join\":%s,"
@@ -221,6 +229,8 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (unsigned)oal_playout_volume(),
                        oal_output_name(oal_config_get_output()),
                        oal_playout_output_ready() ? "true" : "false",
+                       arrived ? "\"" : "", arrived ? arrived : "null",
+                       arrived ? "\"" : "",
                        input, s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,

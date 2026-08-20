@@ -81,6 +81,7 @@ static volatile uint8_t s_pending_addr;
 static volatile uint8_t s_pending_iface;
 static volatile bool s_pending;
 static volatile esp_err_t s_install_result;
+static char s_arrived[64] = "no device yet";
 
 static void device_event_cb(uac2_host_device_handle_t dev,
                             const uac2_host_device_event_t event, void *arg)
@@ -155,13 +156,18 @@ static void claim_the_gain(uac2_host_device_handle_t dev)
      * If that is what happened, this line is where it shows.
      */
     bool was_muted = false;
-    if (uac2_host_device_get_mute(dev, 0, &was_muted) == ESP_OK) {
-        ESP_LOGI(TAG, "dongle arrived %s", was_muted ? "MUTED" : "unmuted");
-    }
+    bool know_mute = uac2_host_device_get_mute(dev, 0, &was_muted) == ESP_OK;
     int16_t was_at = 0;
-    if (uac2_host_device_get_volume(dev, 1, &was_at) == ESP_OK) {
-        ESP_LOGI(TAG, "dongle arrived at %.1f dB", was_at / 256.0);
+    bool know_volume = uac2_host_device_get_volume(dev, 1, &was_at) == ESP_OK;
+
+    const char *mute_text = know_mute ? (was_muted ? "MUTED" : "unmuted")
+                                     : "mute unknown";
+    if (know_volume) {
+        snprintf(s_arrived, sizeof(s_arrived), "%s, %.1f dB", mute_text, was_at / 256.0);
+    } else {
+        snprintf(s_arrived, sizeof(s_arrived), "%s, level unknown", mute_text);
     }
+    ESP_LOGI(TAG, "dongle arrived %s", s_arrived);
 
     esp_err_t err = uac2_host_device_set_mute(dev, 0, false);
     if (err != ESP_OK) {
@@ -412,6 +418,11 @@ static esp_err_t usb_write(const void *data, size_t bytes, size_t *written,
     return ESP_OK;
 }
 
+static const char *usb_arrived_as(void)
+{
+    return s_arrived;
+}
+
 const oal_sink_t *oal_sink_usb(void)
 {
     static const oal_sink_t sink = {
@@ -420,6 +431,7 @@ const oal_sink_t *oal_sink_usb(void)
         .close = usb_close,
         .ready = usb_ready,
         .write = usb_write,
+        .arrived_as = usb_arrived_as,
     };
     return &sink;
 }

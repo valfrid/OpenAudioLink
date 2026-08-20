@@ -132,6 +132,14 @@ bool oal_playout_output_ready(void)
     return s_sink != NULL && s_sink->ready();
 }
 
+const char *oal_playout_output_arrived_as(void)
+{
+    if (s_sink == NULL || s_sink->arrived_as == NULL) {
+        return NULL;
+    }
+    return s_sink->arrived_as();
+}
+
 void oal_playout_get(oal_playout_state_t *out)
 {
     if (out == NULL) {

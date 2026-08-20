@@ -82,6 +82,18 @@ typedef struct {
      */
     esp_err_t (*write)(const void *data, size_t bytes, size_t *written,
                        uint32_t timeout_ms);
+
+    /**
+     * What state the hardware was found in, or NULL if the backend has
+     * nothing to say.
+     *
+     * This exists because a dongle node has no console. Its output stage
+     * takes the USB peripheral the log would otherwise use, so the one
+     * line that would explain a silent speaker — what the device was
+     * holding when we opened it — had nowhere to go. It goes in /status
+     * instead, which the Hub already polls.
+     */
+    const char *(*arrived_as)(void);
 } oal_sink_t;
 
 /** I²S to a soldered DAC. Always available. */

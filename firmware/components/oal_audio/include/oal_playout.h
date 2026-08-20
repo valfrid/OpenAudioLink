@@ -144,6 +144,13 @@ bool oal_playout_running(void);
  */
 bool oal_playout_output_ready(void);
 
+/**
+ * What the output stage was found holding, or NULL when it has nothing to
+ * report. See `oal_sink_t::arrived_as` — this is how a node with no
+ * console explains a silent speaker.
+ */
+const char *oal_playout_output_arrived_as(void);
+
 #ifdef __cplusplus
 }
 #endif
