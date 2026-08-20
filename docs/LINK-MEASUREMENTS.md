@@ -612,6 +612,37 @@ hazard… If link quality drops when audio plays, this is why."* The warning
 was written for an amplifier module on flying leads. A dongle in the socket
 is the same hazard with no leads to lengthen.
 
+### The node could not answer "why that access point"
+
+Recorded because it cost a day and a half of wrong conclusions. A node
+carried to within **one metre of one access point, twenty metres from
+another**, kept rejoining the far one — through reboots and a power cycle.
+It only moved when a hand was cupped over the antenna during boot, which
+changed the scan enough to change the outcome.
+
+The selection rule is supposed to prevent exactly that: every boot scans all
+channels and takes the strongest. Something between that intent and the
+radio is not doing what the code says, and **the node had no way to be
+asked.** `/status` reports the access point it landed on and nothing about
+the ones it did not, so in a mesh — one SSID, several radios — the only
+available instrument was walking around the house with the board.
+
+Two endpoints, in firmware 0.15.6:
+
+- **`GET /wifi/scan`** — every access point the node can see, with BSSID,
+  channel, RSSI, and which one it is on. Costs a second of connection, so it
+  is a command and not something to poll.
+- **`POST /wifi/rejoin`** — forget the current access point and join again
+  from a fresh scan. No reboot, no hand.
+
+Neither changes the selection rule. The first makes it observable and the
+second makes it repeatable, which is what was missing when three separate
+explanations were tried on data that could not distinguish them. **Proper
+roaming — leaving an access point because the link is measurably bad rather
+than because it disappeared — is a real question and is still open.** It
+wants the loss counters this node already keeps, not an RSSI threshold; run
+23 and 24 are four demonstrations that RSSI cannot see what matters here.
+
 ### Three tests, cheapest first, one at a time
 
 This node runs an **external antenna** — a 5 cm pigtail to a sheet antenna,

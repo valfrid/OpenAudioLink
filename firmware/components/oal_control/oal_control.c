@@ -506,6 +506,59 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, body, len);
 }
 
+/*
+ * Which radios can this node actually see, and which is it on.
+ *
+ * The question that had no answer until now. `/status` reports the access
+ * point the node landed on and nothing about the alternatives, so in a mesh
+ * — one SSID, several radios — "why is it on that one" could only be
+ * investigated by carrying the board around the house, and once by cupping
+ * a hand over the antenna to make a scan come out differently. This is that
+ * investigation, as a request.
+ *
+ * GET rather than POST despite costing a second of connection, because it
+ * changes nothing. It is still not something to poll: every packet due
+ * while the radio is scanning is lost, and on a playing node that is
+ * audible.
+ */
+static esp_err_t wifi_scan_handler(httpd_req_t *req)
+{
+    static char scan[OAL_WIFI_SCAN_JSON_MAX];
+
+    int len = oal_wifi_scan_json(scan, sizeof(scan));
+    if (len < 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "scan failed");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, scan, len);
+}
+
+/*
+ * Forget the current access point and join again from a fresh scan.
+ *
+ * Measured need: a node carried to within a metre of one access point kept
+ * rejoining one twenty metres away, through reboots and a power cycle. The
+ * sticky rule is right for a speaker on a shelf and cannot know about a
+ * board that has just moved house.
+ *
+ * This does not override the selection rule, and deliberately: it clears
+ * the memory the rule is sticky about and asks for a scan. Landing on the
+ * same access point is a legitimate outcome and worth knowing.
+ */
+static esp_err_t wifi_rejoin_handler(httpd_req_t *req)
+{
+    esp_err_t err = oal_wifi_rejoin();
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "rejoin failed");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req,
+        "{\"status\":\"rejoining\",\"note\":\"read /status in a few seconds for the bssid\"}",
+        HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t stream_start_handler(httpd_req_t *req)
 {
     if ((s_config.roles & OAL_ROLE_PRODUCER) == 0) {
@@ -914,7 +967,11 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;
-    server_config.max_uri_handlers = 12; /* ten registered; the default of eight leaves no room */
+    /* Thirteen registered, and the default of eight silently refuses the
+     * rest — a handler that never registers answers 404 and looks like a
+     * firmware that predates the endpoint. Sized with room to spare so the
+     * next endpoint does not have to remember this. */
+    server_config.max_uri_handlers = 16;
 
     /*
      * Belt as well as braces, after the handlers stopped putting their
@@ -968,9 +1025,15 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t stream_stop =
         { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
     httpd_uri_t peers = { .uri = "/peers", .method = HTTP_GET, .handler = peers_handler };
+    httpd_uri_t wifi_scan =
+        { .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler };
+    httpd_uri_t wifi_rejoin =
+        { .uri = "/wifi/rejoin", .method = HTTP_POST, .handler = wifi_rejoin_handler };
     httpd_uri_t join = { .uri = "/join", .method = HTTP_POST, .handler = join_handler };
     httpd_uri_t destinations =
         { .uri = "/stream/destinations", .method = HTTP_POST, .handler = destinations_handler };
+    httpd_register_uri_handler(server, &wifi_scan);
+    httpd_register_uri_handler(server, &wifi_rejoin);
     httpd_register_uri_handler(server, &status);
     httpd_register_uri_handler(server, &reboot);
     httpd_register_uri_handler(server, &ota);

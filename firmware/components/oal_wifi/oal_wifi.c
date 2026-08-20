@@ -344,6 +344,91 @@ uint32_t oal_wifi_roams(void)
     return s_roams;
 }
 
+int oal_wifi_scan_json(char *out, size_t out_size)
+{
+    /*
+     * A blocking scan. It stops the radio serving the connection for a
+     * second or two, which on a playing node is a real cost — hence the
+     * warning on the declaration, and hence this being a command rather
+     * than something the Hub polls.
+     */
+    wifi_scan_config_t scan = { .show_hidden = false };
+    if (esp_wifi_scan_start(&scan, true) != ESP_OK) {
+        return -1;
+    }
+
+    uint16_t found = 0;
+    if (esp_wifi_scan_get_ap_num(&found) != ESP_OK || found == 0) {
+        return snprintf(out, out_size, "{\"aps\":[]}");
+    }
+
+    /* Enough to see a house's worth of radios without putting a kilobyte
+     * of records on a task stack. */
+    if (found > 12) {
+        found = 12;
+    }
+    wifi_ap_record_t *records = calloc(found, sizeof(*records));
+    if (records == NULL) {
+        esp_wifi_scan_get_ap_num(&found);   /* drain, or the next scan fails */
+        return -1;
+    }
+    if (esp_wifi_scan_get_ap_records(&found, records) != ESP_OK) {
+        free(records);
+        return -1;
+    }
+
+    /* Which one we are on, so the answer to "why that one" is right there
+     * beside the alternatives rather than in another endpoint. */
+    wifi_ap_record_t current;
+    bool have_current = esp_wifi_sta_get_ap_info(&current) == ESP_OK;
+
+    int len = snprintf(out, out_size, "{\"aps\":[");
+    for (uint16_t i = 0; i < found && len > 0 && len < (int)out_size; i++) {
+        const uint8_t *b = records[i].bssid;
+        bool here = have_current && memcmp(b, current.bssid, 6) == 0;
+        len += snprintf(out + len, out_size - (size_t)len,
+                        "%s{\"ssid\":\"%s\","
+                        "\"bssid\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
+                        "\"channel\":%u,\"rssi\":%d,\"current\":%s}",
+                        i ? "," : "", (const char *)records[i].ssid,
+                        b[0], b[1], b[2], b[3], b[4], b[5],
+                        (unsigned)records[i].primary, (int)records[i].rssi,
+                        here ? "true" : "false");
+    }
+    free(records);
+
+    if (len <= 0 || len >= (int)out_size) {
+        return -1;
+    }
+    len += snprintf(out + len, out_size - (size_t)len, "]}");
+    return (len > 0 && len < (int)out_size) ? len : -1;
+}
+
+esp_err_t oal_wifi_rejoin(void)
+{
+    ESP_LOGW(TAG, "forgetting the current access point and scanning again");
+
+    /* Only the memory the sticky rule is sticky about. The rule itself is
+     * right — see the note beside STICKY_ATTEMPTS — and a board that has
+     * been carried to another room is exactly the case it cannot know
+     * about. */
+    s_have_last_bssid = false;
+    s_sticky_attempts = 0;
+
+    wifi_config_t config = { 0 };
+    if (esp_wifi_get_config(WIFI_IF_STA, &config) == ESP_OK) {
+        /* Belt and braces: the driver persists its config, so a directed
+         * join stored earlier must not survive into the scan. */
+        config.sta.bssid_set = false;
+        config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        esp_wifi_set_config(WIFI_IF_STA, &config);
+    }
+
+    esp_wifi_disconnect();
+    return ESP_OK;   /* the disconnect handler schedules the join */
+}
+
 /* ---------- provisioning portal ---------- */
 
 /*
