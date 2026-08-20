@@ -55,7 +55,37 @@ public sealed record StreamStatus(
     /// Reset each reporting window, so a stream that goes quiet shows it
     /// rather than remembering how loud it once was.
     /// </remarks>
-    double? PeakDbfs = null);
+    double? PeakDbfs = null,
+    /// <summary>
+    /// Gen 2 collections since the process started.
+    /// </summary>
+    long Gen2Collections = 0,
+    /// <summary>
+    /// Milliseconds this process has spent paused for garbage collection
+    /// since it started.
+    /// </summary>
+    /// <remarks>
+    /// The one stall <see cref="WorstStallMs"/> cannot explain on its own.
+    ///
+    /// The send loop already runs on its own thread at AboveNormal, waits
+    /// with <see cref="Thread.Sleep(int)"/> rather than the thread pool, and
+    /// holds a 1 ms timer — so it is not waiting on a pool thread and it
+    /// outranks the Hub's other work. None of that helps against a blocking
+    /// collection: the runtime suspends **every** managed thread for one,
+    /// priority included. It is the only mechanism left that can stop this
+    /// loop dead while the machine looks idle.
+    ///
+    /// Read as a delta across a stall. If <see cref="WorstStallMs"/> jumps
+    /// and this jumps by about the same amount in the same window, the
+    /// pause was a collection and the fix is upstream, in whatever the
+    /// source pipeline is allocating per packet. If this stays flat while
+    /// the loop stalls, the runtime was not the cause and the answer is
+    /// outside the process — the OS, a driver, or power management.
+    ///
+    /// Cheap enough to read every reporting window: both are counters the
+    /// runtime already maintains, and neither allocates.
+    /// </remarks>
+    long GcPauseMs = 0);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -604,6 +634,8 @@ public sealed class RtpStreamer : IAsyncDisposable
                     LateWakes = lateWakes,
                     WorstStallMs = worstStallMs,
                     WorstSendMs = worstSendMs,
+                    Gen2Collections = GC.CollectionCount(2),
+                    GcPauseMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
                 };
                 Thread.Sleep(1);
             }
