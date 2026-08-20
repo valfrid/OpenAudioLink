@@ -420,6 +420,11 @@
         // charge with no way to reboot or reconfigure it.
         const actions = d.hardwareProfile === 'windows-hub' ? '' :
           `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
+          // Beside Reboot because that is what people reached for, and it
+          // is the wrong tool: a node one metre from an access point kept
+          // rejoining one twenty metres away through reboots and a power
+          // cycle. This asks for a fresh scan without taking the node down.
+          `<button data-cmd="rejoin" data-id="${esc(d.id)}"${disabled}>Rejoin Wi-Fi</button> ` +
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
@@ -828,6 +833,17 @@
         say('Rebooting device…');
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
         say(response.ok ? 'Device is rebooting.' : 'Reboot request failed.');
+      } else if (button.dataset.cmd === 'rejoin') {
+        // The node scans every channel, which costs it a second or two of
+        // audio and no more. Worth saying which access point it landed on,
+        // because in a mesh that is the whole question and the Wi-Fi column
+        // is the only place the answer appears.
+        say('Asking the node to scan and rejoin…');
+        const response = await fetch(
+          `/api/devices/${encodeURIComponent(id)}/wifi/rejoin`, { method: 'POST' });
+        say(response.ok
+          ? 'Rejoining — watch the Wi-Fi column for the access point it picks.'
+          : 'Rejoin request failed.');
       } else {
         const select = document.getElementById('fw-select');
         const file = select.value;

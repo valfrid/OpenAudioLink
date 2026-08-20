@@ -29,6 +29,27 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Tells a node to forget the access point it is on and join again from
+    /// a fresh scan.
+    /// </summary>
+    /// <remarks>
+    /// A reboot ought to do this and does not: a node carried to within a
+    /// metre of one access point kept rejoining one twenty metres away,
+    /// through reboots and a power cycle. Reboot is the bigger hammer and
+    /// the wrong one — it costs the stream, the claim and thirty seconds,
+    /// and it did not work anyway.
+    ///
+    /// Cheaper than it looks from the outside, too. The node stays up, so
+    /// its claim and configuration survive; what it loses is a second or two
+    /// of audio while the radio scans.
+    /// </remarks>
+    public async Task<bool> RejoinWifiAsync(DeviceRecord device, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Asking {Device} to rejoin Wi-Fi from a fresh scan", device.Name);
+        return await PostAsync(device, "/wifi/rejoin", body: null, cancellationToken);
+    }
+
+    /// <summary>
     /// Stores the roles a node takes (decision 5). They apply at its next
     /// boot, because roles decide which tasks start — changing them under a
     /// running node would mean tearing down live audio.

@@ -259,6 +259,31 @@ app.MapPost("/api/devices/{id}/reboot",
     return ok ? Results.Ok(new { status = "rebooting" }) : Results.StatusCode(502);
 });
 
+/*
+ * Rejoin, beside reboot, because reboot is the wrong tool for this and was
+ * the only one available. See DeviceCommandClient.RejoinWifiAsync.
+ *
+ * Briefly hushed for the same reason an update is: the node's radio stops
+ * serving the connection while it scans, so a poll landing in that window
+ * reads as an offline device and paints the row red for no reason.
+ */
+app.MapPost("/api/devices/{id}/wifi/rejoin",
+    async (string id, DeviceRegistry registry, DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+    registry.Hush(device.Id, TimeSpan.FromSeconds(15));
+    var ok = await commands.RejoinWifiAsync(device, cancellationToken);
+    if (!ok)
+    {
+        registry.Hush(device.Id, TimeSpan.Zero);
+        return Results.StatusCode(502);
+    }
+    return Results.Ok(new { status = "rejoining" });
+});
+
 app.MapPost("/api/devices/{id}/ota",
     async (string id, OtaRequest request, DeviceRegistry registry, FirmwareStore store,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>
