@@ -694,6 +694,60 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 26: the speaker loses just as much, and that ends the argument
+
+**2026-08-20.** The I²S speaker, `/stream` read while playing, on the same
+access point at −49 dBm:
+
+| | speaker | dongle node |
+| --- | --- | --- |
+| `lossPpm` | **1 963** | **2 307** |
+| underrun every | **380 s** | **11 s** |
+| trimmed frames per second | 0.99 | 0.02 |
+| ring | 60 ms | 50 ms |
+
+**The same loss. Thirty-six times the dropouts.** Every mechanism proposed
+across runs 23–25 was an attempt to explain why the dongle node lost more
+packets, and it never did. The network loses about 2 000 ppm to both nodes,
+and has all along.
+
+### What actually differs is how much margin each ring had left
+
+The speaker trims about one frame a second: its fill rides high, so a gap
+eats into depth it can spare. The dongle trims one frame every fifty
+seconds — no surplus — so every gap costs depth **permanently**.
+
+`oal_playout.c` has said why since it was written, in the comment above the
+underrun path: *"sender and DAC run at the same average rate: once the
+margin is spent, only not playing rebuilds it."* At the natural surplus of
+one frame a second, rebuilding 50 ms takes **forty minutes**, and this node
+underran every 10.5 seconds. It is a vicious circle: an underrun inserts
+silence, silence is extra consumption, the ring sinks further.
+
+`ROADMAP.md` records the same gap from the other side — "nothing pulls the
+fill toward the target" — noted there as a ring riding *high* and never
+coming down. The floor is where it bites.
+
+### The fix is the trim, backwards
+
+The trim drops single frames to walk the fill down. Firmware 0.16.0 adds
+the missing half: while the fill is below three quarters of target, repeat
+one frame occasionally. Repeating a frame is consuming slower, which is the
+only thing that rebuilds margin.
+
+Two speeds, because the cost is a pitch error while it converges: one frame
+per chunk when the ring is under half target (0.42 %, about seven cents,
+worth it when it is nearly empty), one per four chunks otherwise (0.10 %,
+under two cents — inaudible, and fifty times the natural surplus).
+
+Counted as `paddedFrames` beside `trimmedFrames`, so the servo is visible
+rather than assumed.
+
+**This changes the speaker too**, whose ring also sits below target, and
+that is deliberate — but it is the first change in this whole sequence to
+touch a node that was working. Watch its underrun rate as well as the
+dongle's.
+
 ## Run 25: a day of it, and five explanations eliminated
 
 **2026-08-20, 7.3 hours continuous.** Dongle Consumer, firmware 0.15.6, on

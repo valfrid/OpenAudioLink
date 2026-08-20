@@ -86,6 +86,7 @@ typedef struct {
     uint32_t dropped_frames;  /* discarded because the ring was full */
     uint32_t underruns;       /* times it ran dry, however long each lasted */
     uint32_t trimmed_frames;  /* single frames dropped to walk the fill back down */
+    uint32_t padded_frames;   /* single frames repeated to walk it back up */
     uint32_t write_errors;    /* the I²S driver refused a write */
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */

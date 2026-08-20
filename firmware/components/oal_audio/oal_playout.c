@@ -113,6 +113,8 @@ static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
  * somewhere to go.
  */
 static size_t s_trim_above;
+static size_t s_pad_below;
+static uint32_t s_pad_phase;
 
 /*
  * Only the consumer task calls oal_playout_submit, so one scratch buffer
@@ -341,6 +343,42 @@ static size_t take_chunk(int32_t *chunk)
         s_available -= OAL_RTP_CHANNELS;
         s_state.trimmed_frames++;
     }
+    /*
+     * And the other direction, which was missing and turned out to matter
+     * more than everything it was mistaken for.
+     *
+     * A lost packet costs the ring 5 ms of depth, and nothing gave it back:
+     * sender and sink run at the same average rate, so once the margin is
+     * spent only *not playing* rebuilds it — as the comment above the
+     * underrun path has said all along. The natural surplus is about one
+     * frame a second, so recovering a 50 ms gap takes forty minutes.
+     *
+     * Measured on two nodes losing the same 2 000 ppm on the same access
+     * point: the one whose ring happened to ride high underran once every
+     * 380 seconds, the one whose ring sat low underran every 10.5. Same
+     * loss, thirty-six times the dropouts, and the difference was entirely
+     * how much margin each had left. Below a threshold it is a vicious
+     * circle — each underrun inserts silence, silence is extra
+     * consumption, and the ring sinks further.
+     *
+     * So: repeat one frame occasionally while the fill is short. Repeating
+     * a frame is consuming slower, which is the only thing that rebuilds
+     * margin, and it is exactly what the trim does in reverse.
+     *
+     * Two speeds, because the cost is a pitch error while it converges.
+     * One frame per chunk is 200 a second — 0.42 %, about seven cents,
+     * audible on a held note and worth it when the ring is nearly empty.
+     * One frame per four chunks is 0.10 %, under two cents, which is not,
+     * and is fifty times faster than the natural surplus.
+     */
+    if (s_available < s_pad_below) {
+        bool urgent = s_available < s_target_samples / 2;
+        if (urgent || (s_pad_phase++ & 3) == 0) {
+            s_read = (s_read + CAPACITY_SAMPLES - OAL_RTP_CHANNELS) % CAPACITY_SAMPLES;
+            s_available += OAL_RTP_CHANNELS;
+            s_state.padded_frames++;
+        }
+    }
 
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
 
@@ -548,6 +586,10 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     s_state.running = true;
     s_state.channel = config->channel;
     s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;
+    /* Three quarters of the target: far enough down to mean the margin has
+     * really been eroded, not a normal swing, and above the level where a
+     * single ordinary gap empties the ring. */
+    s_pad_below = s_target_samples * 3 / 4;
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
     s_state.capacity_frames = CAPACITY_SAMPLES / OAL_RTP_CHANNELS;
