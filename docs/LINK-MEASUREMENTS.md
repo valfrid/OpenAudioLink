@@ -739,6 +739,55 @@ one could have shown it. But it is late by tens of milliseconds, not the
 hundreds a gap needs, and the receivers absorb it. It is a real defect that
 is not the audible one.
 
+### The channel theory, and why it is wrong
+
+Run 33 first concluded that channel 7 was the remaining fault, on the
+reasoning that a partially-overlapping channel collides with neighbours on
+6 and 11 without being able to back off against them. A scan from the
+dongle settles it, and the answer is no.
+
+```
+  1    -85 dBm  ChargeAmps
+  2    -71 dBm  shellyuni-3494547908ED
+  2    -85 dBm  The Matrix
+  6    -94 dBm  PG
+  6    -94 dBm  AP-WH3E-2C3B70002F6B
+  7    -44 dBm  valfrid-n     <-- this node's access point
+  7    -75 dBm  valfrid-n     <-- the other one
+ 10    -92 dBm  Alexius2.4
+ 11    -90 dBm  The Matrix
+```
+
+**There is nothing there.** The strongest radio that is not ours reads
+−71 dBm, twenty-seven decibels below our own access point, and everything
+else sits between −85 and −94 — the noise floor. Channels 1, 6 and 11
+scored 7.0 e−8, 1.8 e−8 and 1.9 e−9; all three are empty in any practical
+sense, and moving would buy a few decibels of a floor nothing is standing
+on.
+
+The air is clean. The channel is not the problem, and neither is the fact
+that both access points share it — with no third party to collide with,
+two nodes of one mesh carrier-sense each other correctly.
+
+### Which leaves the node itself
+
+The same scan reads this node's own access point at **−44 dBm**. That is a
+strong link. And it loses 1 533 ppm while a node on a different access
+point, four decibels weaker, loses **nothing**.
+
+Everything else is now eliminated: the Hub sends on time enough (run 33),
+the garbage collector is idle (runs 30, 31, 33), the receive queue is
+fixed (run 29), the NIC is fixed (run 30), roaming is not happening
+(`roams` 0), and the spectrum is empty (here). What remains is physical and
+specific to the dongle node — its antenna, its placement, or its own
+emissions.
+
+The one experiment that separates those, and it needs no equipment: **put
+the dongle node beside the speaker.** Same room, same distance, same access
+point. If it still loses while the speaker does not, the fault travels with
+the hardware and the answer is the antenna or the dongle's own noise. If
+the loss disappears, it was the location all along.
+
 ### Both access points are on channel 7
 
 ```
@@ -746,12 +795,16 @@ D  ch=7  ap=7c:10:c9:7a:13:b1  rssi=-52
 S  ch=7  ap=7c:10:c9:7a:0b:d0  rssi=-47
 ```
 
-Two access points, different BSSIDs, **the same channel**. They share
-airtime with each other and with everything else on it. Every client of
-either one contends with every client of the other.
+Two access points, different BSSIDs, **the same channel**.
 
-That is a router setting, it costs nothing to change, and no amount of
-firmware will compensate for it.
+Recorded because it is true, not because it matters: the scan above shows
+nothing else on or near channel 7, and an AiMesh keeps its nodes on one
+2.4 GHz channel by design so that clients can roam under a single SSID. Two
+access points of one mesh hear each other perfectly and share airtime the
+way the standard intends. It is not a misconfiguration and, on this
+spectrum, it is not a cost.
+
+The ZenWiFi does not expose a per-node channel in any case.
 
 ### And the gaps are not roaming
 
