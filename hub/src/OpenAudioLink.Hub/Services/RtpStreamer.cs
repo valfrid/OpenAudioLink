@@ -85,7 +85,38 @@ public sealed record StreamStatus(
     /// Cheap enough to read every reporting window: both are counters the
     /// runtime already maintains, and neither allocates.
     /// </remarks>
-    long GcPauseMs = 0);
+    long GcPauseMs = 0,
+    /// <summary>
+    /// The worst stall in the last reporting window, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="WorstStallMs"/> and <see cref="WorstSendMs"/> are lifetime
+    /// high-water marks. They answer "how bad has this ever been" and
+    /// nothing else: once a 145 ms stall has happened the field reads 145
+    /// for the rest of the stream, whether the next hour is flawless or
+    /// catastrophic.
+    ///
+    /// That is the wrong shape for the question that actually matters. When
+    /// a node reports a gap, the thing to know is whether the sender was
+    /// late **at that moment** — and a saturated maximum cannot say. A node
+    /// lost 224 consecutive packets while <c>WorstStallMs</c> read 40, and
+    /// 40 had been set at some unknown earlier time, so the number was
+    /// evidence of nothing.
+    ///
+    /// These three are per-window, on the same one-second cadence as
+    /// <see cref="PeakDbfs"/>, so a poll can be lined up against a node's
+    /// counters and the Hub can be convicted or cleared for each event
+    /// rather than for all time.
+    /// </remarks>
+    long RecentStallMs = 0,
+    /// <summary>
+    /// The worst single send in the last reporting window, in milliseconds.
+    /// </summary>
+    long RecentSendMs = 0,
+    /// <summary>
+    /// Late wakes during the last reporting window.
+    /// </summary>
+    long RecentLateWakes = 0);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -409,6 +440,32 @@ public sealed class RtpStreamer : IAsyncDisposable
         long worstStallMs = 0;
         long worstSendMs = 0;
 
+        /*
+         * The same three, for the last second only.
+         *
+         * A high-water mark answers "how bad has this ever been" and
+         * nothing else. It saturates: once a stall of 145 ms has happened,
+         * the field reads 145 for the rest of the stream whether the next
+         * hour is perfect or catastrophic, and it cannot be lined up
+         * against anything a node reports.
+         *
+         * That cost a real conclusion. A node lost 224 packets in a row
+         * while `WorstStallMs` sat at 40 — but 40 was set at some unknown
+         * earlier moment, so the field could not say whether the sender had
+         * stalled *then*. The question "was the Hub late when this gap
+         * happened" is the one that decides whether a fault is the Hub's,
+         * and lifetime maxima cannot answer it.
+         *
+         * Reset each reporting window, exactly as `peak` already is and for
+         * the reason written there.
+         */
+        long recentStallMs = 0;
+        long recentSendMs = 0;
+        long recentLateWakes = 0;
+        long reportedStallMs = 0;
+        long reportedSendMs = 0;
+        long reportedLateWakes = 0;
+
         // The loudest sample this reporting window, and when the window
         // started. Reset each report so a stream that goes quiet says so
         // instead of remembering how loud it once was.
@@ -441,10 +498,15 @@ public sealed class RtpStreamer : IAsyncDisposable
                 if (behind > 1)
                 {
                     lateWakes++;
+                    recentLateWakes++;
                     long stallMs = (long)(behind * packetMs);
                     if (stallMs > worstStallMs)
                     {
                         worstStallMs = stallMs;
+                    }
+                    if (stallMs > recentStallMs)
+                    {
+                        recentStallMs = stallMs;
                     }
 
                     /*
@@ -551,6 +613,10 @@ public sealed class RtpStreamer : IAsyncDisposable
                     {
                         worstSendMs = sendMs;
                     }
+                    if (sendMs > recentSendMs)
+                    {
+                        recentSendMs = sendMs;
+                    }
 
                     packetsSent++;
                 }
@@ -606,6 +672,15 @@ public sealed class RtpStreamer : IAsyncDisposable
                         ? SilenceDbfs
                         : Math.Max(20 * Math.Log10(peak), SilenceDbfs);
                     peak = 0f;
+
+                    // Same window, same reset, same reason.
+                    reportedStallMs = recentStallMs;
+                    reportedSendMs = recentSendMs;
+                    reportedLateWakes = recentLateWakes;
+                    recentStallMs = 0;
+                    recentSendMs = 0;
+                    recentLateWakes = 0;
+
                     lastPeakReportMs = clock.ElapsedMilliseconds;
                 }
 
@@ -634,6 +709,9 @@ public sealed class RtpStreamer : IAsyncDisposable
                     LateWakes = lateWakes,
                     WorstStallMs = worstStallMs,
                     WorstSendMs = worstSendMs,
+                    RecentStallMs = reportedStallMs,
+                    RecentSendMs = reportedSendMs,
+                    RecentLateWakes = reportedLateWakes,
                     Gen2Collections = GC.CollectionCount(2),
                     GcPauseMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
                 };
