@@ -694,6 +694,115 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 28: a hundred and thirty-five underruns, and not one lost packet
+
+**2026-08-20, 19:36–19:56.** Run 27's discriminator, executed: a
+half-second ping to both nodes logged with timestamps, alongside the
+half-minute poll, with RSSI added. Twenty minutes, both nodes streaming,
+Hub polled on the same line.
+
+### The speaker lost nothing and underran anyway
+
+`lossPpm` read **0** on the speaker for nineteen consecutive polls —
+19:36:34 through 19:54:48, zero lost packets — while `underruns` went from
+9 622 to 9 757.
+
+**135 dropouts with a complete packet sequence.** Every packet arrived.
+The ring emptied anyway.
+
+There is only one way for that to happen: the packets arrived **late**. Not
+lost, not corrupted, not refused — late, and in bursts, with the ring
+drained dry in the gap before the burst landed.
+
+Runs 23 through 26 measured loss and argued about loss. Run 27 caught the
+rings going full before they went empty. This is the confirmation, and it
+comes from the node's own sequence counter rather than from any inference:
+**the problem is latency, and it always was.**
+
+### And the dropouts are one event, not a rate
+
+| window | speaker underruns |
+| --- | --- |
+| 19:36:34 → 19:37:07 | +12 |
+| **19:37:07 → 19:37:37** | **+93** |
+| 19:37:37 → 19:54:48 (17 min) | +30, or 1.8/min |
+
+Ninety-three of the hundred and thirty-five landed in one thirty-second
+window. Here is the ping log across that window:
+
+```
+19:37:05 dongle=  122 spk=  456
+19:37:06 dongle=  468 spk=  885
+19:37:08 dongle=   34 spk=  599
+19:37:09 dongle=   28 spk=  174
+```
+
+Baseline is 2–10 ms. The poll at 19:37:07 caught the speaker's ring at
+`buf=0`.
+
+**A 900 ms round-trip excursion, on both nodes at once, emptied a 200 ms
+buffer.** That is the mechanism, caught in the act, with a clock on both
+logs.
+
+### The buffer is smaller than the stalls
+
+`CAPACITY_PACKETS 40` × 240 frames is **200 ms**, target fill 100 ms. The
+network demonstrably stalls for **900 ms**. No servo, trim or pad rescues a
+ring from a stall four times its own depth; it can only refill faster
+afterwards.
+
+### What the ping does and does not prove
+
+Excursions arrive on both nodes in the same second — 19:37:06, 19:39:08,
+19:51:14, 19:52:45, 19:55:09 — which is a shared cause, not two nodes
+having private trouble. Two independent devices do not stall together.
+
+But an ICMP reply from an ESP32 waits on that node's scheduler, so RTT here
+measures the node as well as the path, and the ping leaves from the Hub PC
+over the Hub PC's own link. **This does not yet separate the Hub's machine
+from the access point.** Adding the gateway as a third ping target does:
+gateway flat while nodes spike puts the stall on the AP→node leg; gateway
+spiking with them puts it at or before the AP.
+
+### The other half: the dongle loses and the speaker does not
+
+In the same twenty minutes, on the same access point:
+
+| | dongle | speaker |
+| --- | --- | --- |
+| RSSI | **−48 dBm** | −52 dBm |
+| `lossPpm` | **3 500–4 000** | **0** |
+| underruns | 5.6/min | 1.8/min |
+| padded frames | 42/s | (no servo on 0.14.0) |
+
+**Better signal, more loss.** Four decibels better, and 3 500 ppm against
+nothing at all. Whatever this is, it is not the radio, and after five
+attributions to the radio that is worth stating plainly.
+
+The comment above the socket setup in `oal_stream_consumer.c` named this
+failure before it was ever seen:
+
+> the drops would be counted as network loss — measuring our own scheduling
+> and calling it Wi-Fi.
+
+It then asked for a receive buffer sixteen packets deep to prevent it — and
+the request was never granted. lwIP compiles `SO_RCVBUF` in only when
+`CONFIG_LWIP_SO_RCVBUF` is set; this build never set it, so `setsockopt`
+returned an error every time, and the return value was discarded. The
+actual ceiling was `CONFIG_LWIP_UDP_RECVMBOX_SIZE` — a handful of packets,
+tens of milliseconds. A node held off the socket for longer than that drops
+what it has already received, and the node hosting a USB stack is held off
+more often than the one driving I²S.
+
+Fixed in firmware 0.17.0: both options set, sixty-four packets (320 ms), and
+the result **logged rather than assumed** — the failure mode here was a
+silent no-op, so the next build reports what it actually got.
+
+That is a node-side attribution, and this document has been wrong about
+five of those. What makes this one different is that it does not rest on a
+theory of the radio: it rests on two nodes measured in the same second,
+where the one with the better signal lost more.
+
 ## Run 27: both nodes, one minute apart, for forty-one minutes
 
 **2026-08-20.** The first run in this series with a control. Dongle

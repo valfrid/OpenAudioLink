@@ -45,9 +45,36 @@ static void consumer_task(void *arg)
      * burst that arrives while this task is descheduled, and the drops
      * would be counted as network loss — measuring our own scheduling and
      * calling it Wi-Fi.
+     *
+     * Which is exactly what run 28 caught it doing. Two nodes on one access
+     * point, same second: the dongle at −48 dBm lost 3 500 ppm while the
+     * speaker at −52 dBm lost *nothing*. Better signal, more loss. Not
+     * radio — the busier node dropping packets it had already received.
+     *
+     * The size below was never in force. lwIP only compiles SO_RCVBUF in
+     * when `CONFIG_LWIP_SO_RCVBUF` is set, and this build did not set it,
+     * so the option was rejected and nobody looked: the return value was
+     * discarded. The real ceiling was `CONFIG_LWIP_UDP_RECVMBOX_SIZE`,
+     * which is a handful of packets — tens of milliseconds.
+     *
+     * Both are set in `sdkconfig.defaults` now, and the result is logged
+     * rather than assumed. Two nodes have been blamed on radio for wanting
+     * a number this file believed it had already asked for.
      */
-    int rx_buffer = OAL_RTP_PACKET_BYTES * 16;
-    setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rx_buffer, sizeof(rx_buffer));
+    int rx_buffer = OAL_RTP_PACKET_BYTES * 64;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rx_buffer, sizeof(rx_buffer)) < 0) {
+        ESP_LOGW(TAG, "SO_RCVBUF rejected (errno %d) — receive depth is "
+                      "CONFIG_LWIP_UDP_RECVMBOX_SIZE alone", errno);
+    } else {
+        int actual = 0;
+        socklen_t len = sizeof(actual);
+        if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &actual, &len) == 0) {
+            ESP_LOGI(TAG, "receive buffer %d bytes, %d packets, %d ms",
+                     actual, actual / OAL_RTP_PACKET_BYTES,
+                     actual / OAL_RTP_PACKET_BYTES * 1000
+                         / (OAL_RTP_SAMPLE_RATE / OAL_RTP_FRAMES_PER_PACKET));
+        }
+    }
 
     struct sockaddr_in bind_addr = {
         .sin_family = AF_INET,

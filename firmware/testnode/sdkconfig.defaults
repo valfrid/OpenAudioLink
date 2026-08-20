@@ -50,6 +50,36 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=64
 # and a log full of accept errors. Sixteen costs a few hundred bytes.
 CONFIG_LWIP_MAX_SOCKETS=16
 
+# The RTP receive queue, which run 28 found was not the size this project
+# thought it was.
+#
+# `oal_stream_consumer.c` asks for a receive buffer several packets deep and
+# has since the stream existed. lwIP only compiles that option in when
+# LWIP_SO_RCVBUF is set, which this build never set, so every call was
+# rejected — and the return value was discarded, so it was rejected quietly
+# for months. The real ceiling was the UDP receive mailbox: a handful of
+# packets, tens of milliseconds.
+#
+# The evidence is a controlled pair. Two nodes, one access point, the same
+# second: the dongle at −48 dBm lost 3 500 ppm while the speaker at −52 dBm
+# lost nothing at all. Better signal, more loss. That is not radio — that is
+# the busier node dropping packets it had already received, which is exactly
+# what the comment in that file warned about.
+#
+# Sixty-four packets is 320 ms, chosen against the same run's measurement:
+# delivery stalls of 900 ms happen on this network, and a queue that cannot
+# hold a stall cannot hand the ring a burst to recover from.
+CONFIG_LWIP_SO_RCVBUF=y
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
+
+# And the driver's receive pool to match, for the same reason the transmit
+# pool above was doubled. A socket queue sixty-four packets deep is a
+# promise the Wi-Fi driver has to keep: queued packets sit in *its* buffers
+# until the consumer task reads them, and its default pool is thirty-two.
+# Raising only the mailbox would move the drop from lwIP into the driver
+# and change nothing a node can measure.
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
+
 # The USB dongle output stage (docs/USB-AUDIO.md), required by
 # esp-uac2-host. The first is large enough for a UAC 2.0 configuration
 # descriptor — the measured dongle's runs well past the 256-byte default —
