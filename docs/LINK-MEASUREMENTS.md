@@ -694,6 +694,84 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 25: a day of it, and five explanations eliminated
+
+**2026-08-20, 7.3 hours continuous.** Dongle Consumer, firmware 0.15.6, on
+the good access point at −49 dBm.
+
+| | |
+| --- | --- |
+| underruns | 2 501 in 26 358 s — one every **10.5 s** |
+| speaker, same AP, lifetime | one every **356 s** — 34× fewer |
+| silence inserted | 60.4 s |
+| audio lost on air | 56.6 s |
+| loss | 2 307 ppm, 4 565 events, only 30 % a single packet |
+| gaps | 2.48 packets mean, **longest 12 — 60 ms** |
+| jitter / `tooLate` | 0.88 ms / **0** |
+
+**The underruns are the loss** for the third measurement running. And the
+shape says what kind of loss: jitter under a millisecond and nothing
+arriving too late, so packets that arrive are on time. This is not a
+marginal link delivering late. A twelve-packet gap is 802.11 retries
+failing repeatedly for **60 milliseconds** — the channel being unavailable,
+not weak.
+
+### And the channel is clean, so that is not it either
+
+`GET /wifi/scan` from the node, the endpoint added the same morning:
+
+| SSID | channel | RSSI | |
+| --- | --- | --- | --- |
+| valfrid-n | 7 | −43 dBm | current |
+| valfrid-n | 7 | −73 dBm | the other mesh radio |
+| shellyuni | 2 | −81 dBm | |
+| The Matrix | 2 | −84 dBm | |
+| The Matrix | 2 | −88 dBm | |
+| ChargeAmps | 11 | −91 dBm | |
+
+**No foreign network on channel 7.** Everything else is 38 dB down and on
+another channel. Co-channel contention from neighbours is eliminated; the
+only company is the house's own second mesh radio.
+
+Worth noting for the network rather than for this: **both mesh radios sit on
+channel 7**, thirty decibels apart. Whether that is deliberate for roaming
+or an artefact, it means every frame either one sends is airtime the other's
+clients defer to.
+
+### Five mechanisms, five eliminated
+
+Recorded together because the pattern is the finding:
+
+| Proposed | Killed by |
+| --- | --- |
+| USB tasks contending on Wi-Fi's core | moving them changed almost nothing |
+| Receive path scheduled onto the USB core | pinning to core 0 changed almost nothing |
+| The access point | 7 s on the bad AP, 7–10 s on the good one |
+| Radio noise from the dongle | Class AB, full-speed USB — no plausible path to 2.4 GHz |
+| Channel congestion | channel 7 is clean |
+
+What every one of them has in common: it was proposed from data that could
+not distinguish it from the alternatives, and each cost a firmware release.
+**The two experiments that would discriminate have still not been run**, and
+both are free.
+
+### The two that are left, and they are not firmware
+
+The node has never been separated from its location or from its dongle.
+
+**Unplug the dongle, ten minutes, same place.** Holds room, antenna,
+access point and minute constant; changes only whether a dongle draws
+current and moves data. `outputReady` goes false and playout leaves the ring
+alone, but the RTP statistics keep counting.
+
+**Carry the node to the speaker's room, dongle attached.** Changes the
+location and nothing else.
+
+Between them: loss that follows the dongle, loss that follows the location,
+or loss that follows the board — and the third is worth naming, because
+**this is a different XIAO from the one in the speaker**, on an external
+antenna the speaker does not have.
+
 ## Run 23: the access point matters, and the signal does not
 
 **2026-08-20.** The dongle Consumer (`docs/USB-AUDIO.md`) against the I²S
