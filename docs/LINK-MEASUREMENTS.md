@@ -571,6 +571,49 @@ The generalisable part is in `ROADMAP.md`: a green build is not a
 measurement, and neither is a plausible chain of reasoning. Nothing here
 was known until something was counted.
 
+## Run 23: the access point matters, and the signal does not
+
+**2026-08-20.** The dongle Consumer (`docs/USB-AUDIO.md`) against the I²S
+speaker in the same house, on the same mesh SSID, same channel 7. Four
+readings, taken over two days while chasing what looked like a fault in the
+USB output stage.
+
+| | AP | RSSI | underrun every | silence |
+| --- | --- | --- | --- | --- |
+| dongle, overnight | `…13:b1` | −47 dBm | 7 s | 0.354 % |
+| dongle, after roaming | `…0b:d0` | −73 dBm | **32 s** | **0.062 %** |
+| dongle, now | `…13:b1` | −74 dBm | 5 s | 0.495 % |
+| speaker, lifetime | `…0b:d0` | −53 dBm | **356 s** | **0.006 %** |
+
+**Four for four on the access point. Nothing on the signal.** −47 dBm on
+`13:b1` is worse than −73 dBm on `0b:d0`, by a factor of five. The two
+readings with the best signal are the two worst results.
+
+This is worth writing down because it wasted most of a day. The dongle node
+and the speaker were compared directly and the dongle came out 61 times
+worse — and that number was attributed to the USB host stack, twice, with
+two firmware changes made on the strength of it. **They were on different
+access points the whole time.** On the same access point the gap is about
+11×, on a short sample, and may yet be nothing.
+
+Method step 1 in this document says to record RSSI before anything else.
+That is no longer sufficient: **record the BSSID too.** A mesh SSID looks
+like one network from the node's status and is not one, and a node that
+roams between two of them changes its link quality without changing
+anything a signal reading would show.
+
+The bad AP is presumably a satellite whose backhaul is the constraint —
+decision 2 already records that shape from run 18, where two nodes three
+hops apart across a mesh lost the occasional sample and it was called a
+network condition rather than a result.
+
+**A second sign, on the node rather than the air.** In the run on `13:b1`
+above, 3.0 s of silence was inserted while packet loss accounts for only
+0.98 s — three times more. The ring simultaneously overflowed (22 463
+frames dropped) and ran dry (112 underruns), sitting *above* its target at
+5 520 of 4 800. Loss alone does not do that. Packets arriving in clumps
+does, which is what a congested backhaul looks like from the far end.
+
 ## Run 22: the best link this project has measured
 
 **2026-08-14, overnight, unattended.** Internet radio through the Hub to
