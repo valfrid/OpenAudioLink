@@ -62,13 +62,15 @@ static void consumer_task(void *arg)
      * a number this file believed it had already asked for.
      */
     int rx_buffer = OAL_RTP_PACKET_BYTES * 64;
+    s_state.rx_buffer_bytes = 0;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rx_buffer, sizeof(rx_buffer)) < 0) {
         ESP_LOGW(TAG, "SO_RCVBUF rejected (errno %d) — receive depth is "
                       "CONFIG_LWIP_UDP_RECVMBOX_SIZE alone", errno);
     } else {
         int actual = 0;
-        socklen_t len = sizeof(actual);
-        if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &actual, &len) == 0) {
+        socklen_t optlen = sizeof(actual);
+        if (getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &actual, &optlen) == 0) {
+            s_state.rx_buffer_bytes = actual;
             ESP_LOGI(TAG, "receive buffer %d bytes, %d packets, %d ms",
                      actual, actual / OAL_RTP_PACKET_BYTES,
                      actual / OAL_RTP_PACKET_BYTES * 1000

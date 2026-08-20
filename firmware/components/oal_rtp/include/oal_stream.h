@@ -97,6 +97,18 @@ void oal_stream_producer_get(oal_stream_producer_state_t *out);
 typedef struct {
     bool listening;
     uint16_t port;
+    /*
+     * Bytes the socket actually got, or 0 if the option was refused.
+     *
+     * In /stream rather than only in the log, because a dongle node has no
+     * console — its output stage takes the USB peripheral the log would use
+     * — and this number belongs to exactly the node that has been losing
+     * packets. The same reason `outputArrivedAs` is in /status.
+     *
+     * Worth reading rather than assuming: the request was refused silently
+     * for months (run 28), and 0 here is what that looks like.
+     */
+    int rx_buffer_bytes;
     oal_rtp_stats_t stats;
     uint32_t payload_errors;   /* samples differing from the pattern */
     uint32_t foreign_packets;  /* not our RTP profile */

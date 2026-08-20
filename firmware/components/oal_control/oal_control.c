@@ -474,6 +474,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
 
         len = snprintf(body, body_size,
                        "{\"role\":\"consumer\",\"listening\":%s,\"port\":%u,"
+                       "\"rxBufferBytes\":%d,"
                        "\"payloadErrors\":%u,\"foreignPackets\":%u,"
                        "\"lastSsrc\":\"%08x\","
                        "\"playout\":{\"running\":%s,\"playing\":%s,\"channel\":\"%s\","
@@ -485,6 +486,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
+                       c.rx_buffer_bytes,
                        (unsigned)c.payload_errors, (unsigned)c.foreign_packets,
                        (unsigned)c.last_ssrc,
                        audio.running ? "true" : "false",
