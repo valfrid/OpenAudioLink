@@ -694,6 +694,71 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 33: the Hub is late every second, and both access points are on channel 7
+
+**2026-08-21, 00:19.** Hub 0.22.0, per-window counters, both consumers.
+
+### Every second is an event
+
+The log was written to print a line only when `recentStallMs` or
+`recentSendMs` was non-zero, on the assumption that most seconds would be
+clean. **Every second printed.**
+
+| | range |
+| --- | --- |
+| `recentStallMs` | **10–30 ms, every second** |
+| `recentSendMs` | 1–6 ms |
+| `recentLateWakes` | 2–9 |
+| `gcPauseMs` | 209 → 214 across 24 s |
+| `gen2Collections` | **4, flat throughout** |
+
+So the send loop is late by 10–30 ms *continuously*. Not during storms —
+always. This machine has not had a clean second all night.
+
+And the garbage collector is exonerated a third time: 5 ms of pause across
+24 seconds in which the loop lost 10–30 ms every one of them. `recentSendMs`
+of 1–6 ms says the sends themselves are not blocking either. The thread is
+simply not being scheduled on time.
+
+### But it is not the storms
+
+The nodes, over the same seconds:
+
+| | `und+` per 10 s | loss |
+| --- | --- | --- |
+| Dongle | 0, then 2 | 1 533 ppm |
+| PartySpeaker | 0, then 1 | **0** |
+
+Three underruns between them while the Hub was late every single second.
+`MaxCatchUpPackets` is 100 ms and the playout ring holds 120 ms; a 30 ms
+stall disappears into that without touching a converter.
+
+**This settles the overload question, and not simply.** The Hub *is*
+chronically late — that intuition was right, and no measurement before this
+one could have shown it. But it is late by tens of milliseconds, not the
+hundreds a gap needs, and the receivers absorb it. It is a real defect that
+is not the audible one.
+
+### Both access points are on channel 7
+
+```
+D  ch=7  ap=7c:10:c9:7a:13:b1  rssi=-52
+S  ch=7  ap=7c:10:c9:7a:0b:d0  rssi=-47
+```
+
+Two access points, different BSSIDs, **the same channel**. They share
+airtime with each other and with everything else on it. Every client of
+either one contends with every client of the other.
+
+That is a router setting, it costs nothing to change, and no amount of
+firmware will compensate for it.
+
+### And the gaps are not roaming
+
+`roams` read **0 on both nodes**. The dongle's 224-packet hole in run 32 was
+not a re-association, so the sticky-BSSID rule is not implicated. Fades or
+interference, on a channel it shares with a second access point.
+
 ## Run 32: a gap of two hundred and twenty-four packets
 
 **2026-08-20, 23:37–23:42.** Both nodes, 154 125 packets each, same Hub,
