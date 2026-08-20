@@ -612,11 +612,35 @@ hazard… If link quality drops when audio plays, this is why."* The warning
 was written for an amplifier module on flying leads. A dongle in the socket
 is the same hazard with no leads to lengthen.
 
-**The test is a USB extension cable.** Twenty centimetres between the dongle
-and the board, nothing else changed, and re-read `lossPpm` and `underruns /
-uptimeS`. If the loss falls, the output stage was never the problem and the
-mechanical elegance of plugging a dongle straight into the socket is the
-problem — which would be an unwelcome answer, and a clear one.
+### Three tests, cheapest first, one at a time
+
+This node runs an **external antenna** — a 5 cm pigtail to a sheet antenna,
+currently lying beside the board and therefore beside the dongle. That gives
+two independent things to move, and they must be moved separately or a joint
+result says nothing about which mattered.
+
+**0. Unplug the dongle. Costs nothing and needs no parts.** With
+`output=usb` and no device attached the node still joins, still receives RTP
+and still counts it — `outputReady` goes false and playout leaves the ring
+alone, but `stats` keeps working. So `lossPpm` with the dongle out, against
+`lossPpm` with it in, is a clean A/B on the same radio, the same minute, with
+no USB traffic at all in one arm. **If loss does not change, the radio noise
+theory is dead** and this document needs a fourth explanation.
+
+**1. Move the antenna, not the dongle.** A longer pigtail — 20 cm — puts the
+receiver out of the near field while the dongle stays in the socket. If this
+works, the deployment everybody prefers survives: a dongle pushed straight
+into a XIAO, with the antenna on a lead where it belongs anyway.
+
+**2. Move the dongle.** A USB extension, antenna unchanged. The same
+question asked from the other end, and worth doing even if test 1 succeeds,
+because knowing *which* body is the noisy one is worth a cable.
+
+What the answer changes: nothing in the firmware. The output stage is
+already doing its job — zero write errors across every run, and silence that
+matches the loss to within 8 %. If this is radio noise, no scheduling
+change, buffer size or access-point rule fixes it, and three attempts at
+exactly those is what this entry exists to stop repeating.
 
 ## Run 23: the access point matters, and the signal does not
 
