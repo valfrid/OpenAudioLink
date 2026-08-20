@@ -571,6 +571,53 @@ The generalisable part is in `ROADMAP.md`: a green build is not a
 measurement, and neither is a plausible chain of reasoning. Nothing here
 was known until something was counted.
 
+## Run 24: the node is jamming its own receiver
+
+**2026-08-20, 21 minutes.** The dongle Consumer on the *good* access point
+at **−45 dBm** — the best signal any of these runs has had.
+
+| | |
+| --- | --- |
+| loss | **3 765 ppm** (0.38 %) |
+| underruns | 168 in 1 254 s — **one every 7.4 s** |
+| silence inserted | 4.33 s |
+| audio lost on air | 4.71 s |
+| gaps | 2.63 packets mean, longest 10 |
+| speaker, same AP, lifetime | one underrun every **356 s** |
+
+**The underruns are the loss**, to within 8 % — nothing is stalling, the
+audio genuinely never arrived. And the loss is 0.38 % at −45 dBm on the same
+radio the speaker uses without trouble.
+
+So it is neither the access point (run 23, corrected above) nor scheduling
+(the core-1 and core-0 moves changed little). **It is this node.**
+
+### RSSI measures the beacon, not the noise floor
+
+Which is the thread running through every measurement here. Four runs, and
+the signal reading has been useless in all of them — −47 dBm worse than
+−73 dBm, −45 dBm no better than −74 dBm. That is not noise in the data; it
+is a measurement answering a different question than the one being asked.
+RSSI says how loud the access point arrives. It says nothing about what
+else is arriving with it.
+
+**And this node has a USB dongle plugged directly into the board, a couple
+of centimetres from the Wi-Fi antenna.** A full-speed USB bus clocking at
+12 MHz, a switching regulator and a headphone amplifier, all inside the
+near field of a 2.4 GHz receiver.
+
+`HARDWARE.md` already gives this caution, for the MAX98357A: *"Keep it away
+from the antenna. A Class-D switching stage beside a Wi-Fi radio is a real
+hazard… If link quality drops when audio plays, this is why."* The warning
+was written for an amplifier module on flying leads. A dongle in the socket
+is the same hazard with no leads to lengthen.
+
+**The test is a USB extension cable.** Twenty centimetres between the dongle
+and the board, nothing else changed, and re-read `lossPpm` and `underruns /
+uptimeS`. If the loss falls, the output stage was never the problem and the
+mechanical elegance of plugging a dongle straight into the socket is the
+problem — which would be an unwelcome answer, and a clear one.
+
 ## Run 23: the access point matters, and the signal does not
 
 **2026-08-20.** The dongle Consumer (`docs/USB-AUDIO.md`) against the I²S
@@ -584,6 +631,14 @@ USB output stage.
 | dongle, after roaming | `…0b:d0` | −73 dBm | **32 s** | **0.062 %** |
 | dongle, now | `…13:b1` | −74 dBm | 5 s | 0.495 % |
 | speaker, lifetime | `…0b:d0` | −53 dBm | **356 s** | **0.006 %** |
+
+> **Corrected the same day, before this entry was a day old.** The good
+> reading below is 193 seconds and six events. A 21-minute run on the *same*
+> good access point, at −45 dBm, gives **one underrun every 7.4 seconds** —
+> the same as the bad one. The access point is not the dominant variable,
+> and the table below reads like it is only because two of its four rows are
+> short samples. What survives the correction is that **RSSI predicts
+> nothing**, which turns out to matter more than the AP did. See run 24.
 
 **Four for four on the access point. Nothing on the signal.** −47 dBm on
 `13:b1` is worse than −73 dBm on `0b:d0`, by a factor of five. The two
