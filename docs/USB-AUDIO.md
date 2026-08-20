@@ -332,7 +332,37 @@ reasoning that the device's default had proved audible. A default is what a
 device holds just after it is powered up, and this one had not been.
 
 So the sink now unmutes and sets unity on every stream start, and logs what
-it found first. That log line is the proof or the refutation: a dongle
+it found first. **That was not the stale state**, as the next few days
+proved: every single OTA still needed the power pulled before sound
+returned, with the gain claim present and running.
+
+### The alternate setting was the stale state
+
+Found by reading the driver rather than guessing again. `esp-uac2-host`
+sends `SET_INTERFACE(alt)` straight out on its start path, and sends
+`SET_INTERFACE(0)` only on its **stop** paths — and an OTA reboot never
+runs a stop path. The ESP simply restarts.
+
+So the device is left in alternate setting 2, streaming, from the previous
+boot. The new host enumerates it and sends `SET_INTERFACE(2)` to an
+interface already in alt 2. The specification would have it re-initialise;
+plenty of audio devices treat a same-value `SET_INTERFACE` as nothing to do
+and leave their internal path where it was — accepting isochronous data
+into a stage no longer connected to the converter.
+
+That accounts for every symptom at once, including the ones that made the
+feature-unit theory look good: enumerates cleanly, `outputReady` true,
+`writeErrors` zero, silent, deterministic on every update, and cured only
+by pulling power — **because power is the one thing that puts the device
+back in alt 0.**
+
+The sink now starts the stream suspended, stops it — which is how to send
+alt 0 through the public API — and starts it again. The real start is then
+a genuine 0 → 2 transition, which is the thing a device cannot ignore.
+
+Worth reporting upstream: a start path that assumes the device is in alt 0
+is only true for a host that has never restarted underneath it, and an
+unswitched VBUS rail makes that assumption false on every firmware update. That log line is the proof or the refutation: a dongle
 reported as arriving `MUTED` after an OTA closes this, and one arriving
 unmuted means the stale state is something else and the search continues.
 

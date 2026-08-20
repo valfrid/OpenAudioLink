@@ -232,6 +232,43 @@ static void attach_task(void *arg)
                 .flags = 0,
             };
 
+            /*
+             * Put the interface through alternate setting 0 before asking
+             * for the one we want.
+             *
+             * This is the fix for "every update needs the power pulled".
+             * VBUS here is unswitched, so an OTA restarts the host and
+             * leaves the device exactly as it was — and what it was, was
+             * streaming in alt 2. The driver's start path sends
+             * SET_INTERFACE(alt) straight out; its stop path is what sends
+             * SET_INTERFACE(0), and a reboot never runs a stop path.
+             *
+             * So the device receives SET_INTERFACE(2) while already in
+             * alt 2. The specification would have it re-initialise; plenty
+             * of audio devices treat a same-value SET_INTERFACE as nothing
+             * to do and leave their internal path where it was — accepting
+             * isochronous data into a stage no longer connected to the
+             * converter. Enumerated, streaming, writes succeeding, silent.
+             * Only a power cycle clears it, because only a power cycle puts
+             * the device back in alt 0.
+             *
+             * start-then-stop is how to say alt 0 through the public API:
+             * the stop sends it. Then the real start is a genuine 0 → 2
+             * transition, which is the thing a device cannot ignore.
+             *
+             * Best effort. If either call fails we carry on to the ordinary
+             * start, which is exactly what happened before this existed.
+             */
+            uac2_host_stream_config_t probe_cfg = stream_cfg;
+            probe_cfg.flags = UAC2_FLAG_STREAM_SUSPEND_AFTER_START;
+            if (uac2_host_device_start(s_dev, &probe_cfg) == ESP_OK) {
+                (void)uac2_host_device_stop(s_dev);
+                ESP_LOGI(TAG, "interface cycled through alt 0");
+            } else {
+                ESP_LOGW(TAG, "could not cycle the interface; "
+                              "a stale alternate setting may keep it silent");
+            }
+
             err = uac2_host_device_start(s_dev, &stream_cfg);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "device_start failed: %s — the dongle may not "
