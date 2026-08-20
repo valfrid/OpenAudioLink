@@ -360,6 +360,20 @@ The sink now starts the stream suspended, stops it — which is how to send
 alt 0 through the public API — and starts it again. The real start is then
 a genuine 0 → 2 transition, which is the thing a device cannot ignore.
 
+**Confirmed 2026-08-20 on 0.15.5: sound returned at the upgrade, with the
+power untouched.** The failure had been deterministic across every update
+for two days, so one clean OTA is enough to call it. `outputArrivedAs` read
+`unmuted, 0.0 dB` on the same boot, which is the other half of the
+evidence: the feature unit was in order, and had been all along.
+
+Two lessons rather than one. The mechanism — that a same-value
+`SET_INTERFACE` need not restart a device's audio path — was found by
+reading the driver's source after the *symptom* said the fault was
+deterministic. Three attempts at it before that were guesses dressed as
+hypotheses, and each cost a firmware release. "It happens every single
+time" was the sentence that ended the guessing, and it had been available
+from the start.
+
 Worth reporting upstream: a start path that assumes the device is in alt 0
 is only true for a host that has never restarted underneath it, and an
 unswitched VBUS rail makes that assumption false on every firmware update. That log line is the proof or the refutation: a dongle
