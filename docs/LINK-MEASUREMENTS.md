@@ -694,6 +694,67 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 31: two consumers, and a confound the whole series may have shared
+
+**2026-08-20, 23:27–23:33.** Both nodes streaming again, Hub 0.20.0, EEE
+off. The trace summary:
+
+| | packets | lost | gaps | jitter |
+| --- | --- | --- | --- | --- |
+| Dongle | 20 533 of 20 534 | **1 (0.005 %)** | 1, isolated | 4.67 ms |
+| PartySpeaker | 20 534 of 20 534 | **0 (0.000 %)** | none | 2.40 ms |
+
+Fifty ppm on a node that read 3 700 this morning.
+
+### The nodes are on different access points
+
+The trace's own footnote: *"Nodes on different access points
+(7c:10:c9:7a:13:b1 and 7c:10:c9:7a:0b:d0) — three hops, across the mesh
+backhaul."*
+
+The dongle's audio is crossing a **mesh backhaul**. Its packets take three
+hops, share airtime with the backhaul link itself, and inherit that link's
+scheduling. The speaker's do not.
+
+Nothing in runs 23 through 30 recorded which access point each node was
+associated with, and the sticky-BSSID hysteresis in `oal_wifi.c` means a
+node keeps whatever it joined at boot. **Every comparison in this series may
+have been across two different network paths without saying so.** The
+`/wifi/scan` and `/wifi/rejoin` endpoints exist precisely to control this
+and were not used as controls.
+
+That does not overturn the two findings that rest on a node's own
+before-and-after — the receive buffer (run 29) and EEE (run 30) — but any
+conclusion drawn from comparing the two *nodes* needs re-reading with this
+in mind.
+
+### The second stream costs the dongle, not the speaker
+
+After 23:29:51 (adding the speaker restarted the stream and reset the
+sender's counters), over 167 seconds:
+
+| | alone (run 29) | with both |
+| --- | --- | --- |
+| dongle underruns | 1.1/min | **9.7/min** |
+| dongle padded frames | 0.63/s | **2.35/s** |
+| speaker underruns | — | **0.5/min** |
+| speaker loss | — | **0** |
+
+The dongle loses margin when a second stream exists; the speaker does not.
+With the topology above, that is what contention on a mesh backhaul would
+look like, and it is no longer necessary to invoke anything about the node.
+
+Hub side across the same window: 3.8 late wakes/s, `worstStallMs` 40,
+`worstSendMs` 12 — unchanged from the single-stream case. **The Hub does not
+care how many consumers there are.** And `gen2Collections` ticked 3 → 4 once,
+costing about 10 ms of `gcPauseMs`: a gen 2 collection measured, and still
+an order of magnitude below a stall.
+
+### The next control
+
+Move both nodes onto the same access point with `/wifi/rejoin` and repeat.
+That is the one comparison this series has never actually run.
+
 ## Run 30: Energy Efficient Ethernet, and the end of the GC theory
 
 **2026-08-20, 23:21.** Hub 0.20.0, reporting `gen2Collections` and
