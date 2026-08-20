@@ -1133,16 +1133,24 @@
       showPath(ids);
     }
 
-    // Stations never talk directly under Wi-Fi infrastructure mode, so a
-    // packet always goes node -> access point -> node. When the two nodes
-    // sit on different mesh points it crosses the backhaul as well, which
-    // is a third hop and a different measurement entirely — twice now that
-    // has quietly turned a channel comparison into a topology comparison.
+    // Stations never talk directly under Wi-Fi infrastructure mode, so the
+    // path always runs through an access point — and which access points
+    // decides whether two runs can be compared at all. Twice that has
+    // quietly turned a channel comparison into a topology comparison.
     //
     // This gets its own line rather than sharing the status paragraph:
     // the status line is transient ("Stopped; counters cleared") and would
     // erase the one fact needed to judge whether the numbers above it mean
     // anything. Which it did, for a whole run.
+    //
+    // What it may say is bounded by what it can see. This page knows each
+    // node's BSSID and channel and nothing else — not how the access points
+    // are linked to each other, and not whether that link is a cable or a
+    // radio. It said "across the mesh backhaul" anyway, in a warning
+    // colour, on a network whose backhaul is wired; and it said it about a
+    // Hub-sourced stream, where there is no link between the access points
+    // in the path at all. Both were inventions. It now reports the topology
+    // and leaves the inference to whoever knows the cabling.
     function showPath(ids) {
       const involved = [...ids]
         .map(id => lastDevices.find(d => d.id === id))
@@ -1153,18 +1161,36 @@
         return;
       }
 
-      const access = [...new Set(involved.map(d => d.status.bssid))];
+      const where = d => d.status.channel
+        ? `${d.status.bssid} ch ${d.status.channel}`
+        : d.status.bssid;
+      const access = [...new Set(involved.map(where))];
+
+      // Empty when the Hub is the source. That is not a detail: a Hub
+      // stream reaches each node over the wire and then one radio hop, so
+      // two nodes on two access points share nothing and never contend.
+      // Node to node, the same two access points have to reach each other,
+      // and that leg is in the audio path.
+      const fromNode = !!document.getElementById('link-producer').value;
+
       path.hidden = false;
+      path.className = 'hint';
       if (access.length === 1) {
-        path.className = 'hint';
-        path.textContent =
-          `Both nodes on one access point (${access[0]}) — two hops.`;
-      } else {
+        path.textContent = fromNode
+          ? `Both nodes on one access point (${access[0]}) — two hops.`
+          : `Both consumers on one access point (${access[0]}), sharing its airtime.`;
+      } else if (fromNode) {
         path.className = 'hint rssi fair';
         path.textContent =
-          `Nodes on different access points (${access.join(' and ')}) — ` +
-          'three hops, across the mesh backhaul. Not comparable with a ' +
-          'same-access-point run.';
+          `Nodes on different access points (${access.join(', ')}) — three hops. ` +
+          'The leg between the two access points carries this audio: negligible ' +
+          'if it is wired, shared with the stream if it is not. Not comparable ' +
+          'with a same-access-point run.';
+      } else {
+        path.textContent =
+          `Consumers on different access points (${access.join(', ')}). ` +
+          'The Hub feeds each one over the wire, so they do not share a radio ' +
+          'or contend for its airtime.';
       }
     }
 

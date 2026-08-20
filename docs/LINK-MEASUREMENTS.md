@@ -738,13 +738,19 @@ listening to one sender. At 23:39:36 the dongle read −62; in that same poll
 `pad` jumped 668 frames and `underruns` 38. At 23:40:23 the poll itself
 timed out, and the next row showed loss at 3 349 ppm.
 
-The dongle is on a different access point, three hops across the mesh
-backhaul (run 31). Its link is fading and recovering on a second timescale.
-That is where the remaining disturbance lives, and neither the Hub nor the
-node's software is involved in it.
+The two nodes are on different access points, but the backhaul is wired and
+this is a Hub-sourced stream, so there is no shared wireless leg to blame
+(see the correction in run 31). Each node is reached over the wire and then
+**one radio hop**. The speaker's hop is flawless; the dongle's is not.
 
-`roams` in `/status` would say whether these are fades or re-associations,
-and is still not being printed.
+So the fault is in the last hop to the dongle and nothing else: its
+antenna, its position, or its access point's channel. It is fading and
+recovering on a second timescale while an identical radio thirty feet away
+reads the same number twenty times running.
+
+`roams` in `/status` says whether these are fades or re-associations, and
+`channel` says whether the two access points are even on the same channel.
+Both have been in `/status` all along and neither is being printed.
 
 ## Run 31: two consumers, and a confound the whole series may have shared
 
@@ -764,9 +770,20 @@ The trace's own footnote: *"Nodes on different access points
 (7c:10:c9:7a:13:b1 and 7c:10:c9:7a:0b:d0) — three hops, across the mesh
 backhaul."*
 
-The dongle's audio is crossing a **mesh backhaul**. Its packets take three
-hops, share airtime with the backhaul link itself, and inherit that link's
-scheduling. The speaker's do not.
+**That footnote was wrong, twice, and the page has been fixed.**
+
+The backhaul on this network is **wired**, which run 20 already recorded.
+The page cannot see how access points are linked to each other and never
+could; it asserted a wireless mesh anyway, in a warning colour.
+
+Worse, this was a **Hub-sourced** stream. There is no leg between the two
+access points in that path at all: the Hub is on the wire, and each node is
+reached over the wire and then one radio hop. Two nodes on two access
+points share nothing. The "three hops" reasoning belongs to node-to-node
+runs, and the page applied it to a case it does not describe.
+
+So different access points is not a defect here. If anything it is an
+advantage — the two consumers are not competing for one radio's airtime.
 
 No run in this series recorded which access point each node was associated
 with, and the sticky-BSSID hysteresis in `oal_wifi.c` means a node keeps
