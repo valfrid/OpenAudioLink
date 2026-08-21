@@ -44,6 +44,27 @@ extern "C" {
 /** Packets in a row before a stream is believed. */
 #define OAL_RTP_MIN_SEQUENTIAL 2
 
+/*
+ * How long a silence between packets counts as late, in RTP timestamp
+ * units. The profile sends one packet every 240 ticks (5 ms at 48 kHz), so
+ * this is three packet intervals.
+ *
+ * Not one interval: Wi-Fi delivers in small clumps as a matter of course,
+ * and a node that flagged every 6 ms gap would report a number that never
+ * changes and means nothing. Three is far enough above the noise to be a
+ * real stall and far below the playout target (100 ms), so it fires while
+ * there is still margin left to spend rather than only once the ring is
+ * already empty.
+ */
+#define OAL_RTP_LATE_GAP_TICKS 720
+
+/*
+ * Beyond this, a silence is not a stall but a stream that stopped and
+ * started again, so the measurement re-baselines rather than recording a
+ * maximum nobody can interpret. One minute at 48 kHz.
+ */
+#define OAL_RTP_ARRIVAL_SANE_TICKS (48000u * 60u)
+
 typedef struct {
     bool     valid;          /* false until probation passes */
     uint16_t probation;      /* packets still needed to believe the stream */
@@ -70,6 +91,27 @@ typedef struct {
     int32_t  transit;        /* last arrival-minus-timestamp, RFC 3550 A.8 */
     bool     transit_known;
     uint32_t jitter_x16;     /* smoothed jitter, scaled by 16 to keep precision */
+
+    /*
+     * Arrival timing, which RFC 3550's jitter deliberately cannot show.
+     *
+     * A.8 is an exponentially smoothed average, designed to be stable:
+     * each sample moves it by a sixteenth. Thousands of on-time packets
+     * therefore drown out a stall, and a node that lost 224 packets in one
+     * 1.12-second hole reported 3.21 ms of jitter through it. That is the
+     * estimator working exactly as specified, and useless for the question
+     * "was the audio delivered when it was needed".
+     *
+     * These count the excursions instead of averaging them away. A gap
+     * longer than OAL_RTP_LATE_GAP_TICKS between one packet and the next
+     * means the ring went that long with nothing to put in it, whether or
+     * not a single packet was lost -- which is the failure run 28 found:
+     * 135 dropouts with a complete sequence.
+     */
+    uint32_t last_arrival;   /* arrival of the previous accepted packet */
+    bool     arrival_known;
+    uint32_t late_arrivals;  /* gaps longer than a packet is worth waiting for */
+    uint32_t max_gap_ticks;  /* the worst one, in RTP timestamp units */
 } oal_rtp_stats_t;
 
 /** Clears everything; call before the first packet. */
@@ -104,6 +146,19 @@ uint32_t oal_rtp_stats_mean_gap_x100(const oal_rtp_stats_t *stats);
 
 /** Smoothed interarrival jitter in RTP timestamp units (RFC 3550 A.8). */
 uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats);
+
+/**
+ * Late arrivals as parts per million of packets received.
+ *
+ * The companion to `oal_rtp_stats_loss_ppm`, and read beside it: one says
+ * what never came, the other says what came too late to be of use. A link
+ * can be perfect by the first measure and unlistenable by the second, and
+ * this project spent six runs measuring only the first.
+ */
+uint32_t oal_rtp_stats_late_ppm(const oal_rtp_stats_t *stats);
+
+/** The worst gap between consecutive arrivals, in RTP timestamp units. */
+uint32_t oal_rtp_stats_max_gap(const oal_rtp_stats_t *stats);
 
 /** Writes a JSON object of the counters. Returns length, or -1 if it will not fit. */
 int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_size);

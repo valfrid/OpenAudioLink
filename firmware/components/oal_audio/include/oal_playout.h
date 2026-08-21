@@ -88,6 +88,28 @@ typedef struct {
     uint32_t trimmed_frames;  /* single frames dropped to walk the fill back down */
     uint32_t padded_frames;   /* single frames repeated to walk it back up */
     uint32_t write_errors;    /* the I²S driver refused a write */
+
+    /*
+     * How close the ring came to empty, and to full, over the last
+     * completed trace window.
+     *
+     * `buffered_frames` is an instant, and an instant is the wrong shape
+     * for this: a poll every fifteen seconds samples one moment in three
+     * thousand, and the moments that matter are the ones nobody was
+     * looking at. A ring that reads a healthy 5760 on every poll may still
+     * be touching zero between them.
+     *
+     * These are the low- and high-water marks the playout task already
+     * computes for its own trace line — which on a USB node goes nowhere,
+     * because the output stage owns the peripheral the console would use.
+     * Publishing them costs two assignments and turns a log message the
+     * affected hardware cannot print into a number the Hub can poll.
+     *
+     * Zero until the first window completes.
+     */
+    uint32_t fill_min_frames;
+    uint32_t fill_max_frames;
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;

@@ -437,6 +437,13 @@ static void trace(void)
     s_fill_max = 0;
     xSemaphoreGive(s_lock);
 
+    /* Published as well as logged. The log line is unreadable on a USB
+     * node -- its output stage owns the peripheral the console would use --
+     * and the low-water mark is exactly what says whether a ring that
+     * polls healthy is touching zero between polls. */
+    s_state.fill_min_frames = (uint32_t)(fill_min / OAL_RTP_CHANNELS);
+    s_state.fill_max_frames = (uint32_t)(fill_max / OAL_RTP_CHANNELS);
+
     uint64_t elapsed_us = now - s_trace_at_us;
     uint64_t played = s_state.frames_played - s_trace_played;
     uint64_t arrived = submitted - s_trace_submitted;

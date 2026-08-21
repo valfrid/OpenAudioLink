@@ -562,6 +562,12 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"silenceFrames\":%u,\"droppedFrames\":%u,"
                        "\"underruns\":%u,\"trimmedFrames\":%u,"
                        "\"paddedFrames\":%u,"
+                       /* The low- and high-water marks of the last trace
+                        * window. bufferedFrames is one instant, and a poll
+                        * every fifteen seconds samples one moment in three
+                        * thousand -- a ring that reads healthy on every
+                        * poll can still be touching zero between them. */
+                       "\"fillMinFrames\":%u,\"fillMaxFrames\":%u,"
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
@@ -576,6 +582,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.silence_frames, (unsigned)audio.dropped_frames,
                        (unsigned)audio.underruns, (unsigned)audio.trimmed_frames,
                        (unsigned)audio.padded_frames,
+                       (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        stats);

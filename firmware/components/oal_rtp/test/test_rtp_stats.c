@@ -328,6 +328,99 @@ static void test_a_clean_stream_reports_no_gaps(void)
     CHECK_EQ(oal_rtp_stats_mean_gap_x100(&s), 0);
 }
 
+/* ---------- arrival timing, which jitter cannot see ---------- */
+
+static void test_even_arrival_is_never_late(void)
+{
+    TEST("even arrival is never late");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 200);
+
+    CHECK_EQ(s.late_arrivals, 0);
+    CHECK_EQ(oal_rtp_stats_late_ppm(&s), 0);
+    /* One packet interval between arrivals, and no more. */
+    CHECK_EQ(oal_rtp_stats_max_gap(&s), FRAMES_PER_PACKET);
+}
+
+static void test_a_stall_is_counted_even_with_no_loss(void)
+{
+    TEST("a stall is counted even with no loss");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    /*
+     * The failure run 28 measured: every packet arrives, in order, none
+     * lost -- but a whole second of them arrive at once after a silence.
+     * Sequence numbers are perfect. The audio is not.
+     */
+    send_clean(&s, 0, 100);
+    uint32_t stalled = 100u * FRAMES_PER_PACKET + 48000u; /* a second later */
+    for (int i = 0; i < 100; i++) {
+        uint16_t seq = (uint16_t)(100 + i);
+        oal_rtp_stats_on_packet(&s, seq, (uint32_t)seq * FRAMES_PER_PACKET,
+                                stalled + (uint32_t)i, SSRC);
+    }
+
+    CHECK_EQ(oal_rtp_stats_lost(&s), 0);
+    CHECK_EQ(oal_rtp_stats_loss_ppm(&s), 0);
+    CHECK_EQ(s.late_arrivals, 1);
+    CHECK(oal_rtp_stats_max_gap(&s) >= 48000u);
+    CHECK(oal_rtp_stats_late_ppm(&s) > 0);
+}
+
+static void test_small_clumps_are_not_late(void)
+{
+    TEST("small clumps are not late");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    /* Wi-Fi delivers in pairs as a matter of course: two packets 1 tick
+     * apart, then a double interval. That is normal and must not be
+     * flagged, or the counter reads high forever and means nothing. */
+    for (int i = 0; i < 100; i += 2) {
+        uint32_t base = (uint32_t)i * FRAMES_PER_PACKET;
+        oal_rtp_stats_on_packet(&s, (uint16_t)i, base, base + 2 * FRAMES_PER_PACKET, SSRC);
+        oal_rtp_stats_on_packet(&s, (uint16_t)(i + 1), base + FRAMES_PER_PACKET,
+                                base + 2 * FRAMES_PER_PACKET + 1, SSRC);
+    }
+
+    CHECK_EQ(s.late_arrivals, 0);
+}
+
+static void test_a_restart_does_not_record_a_giant_gap(void)
+{
+    TEST("a restart does not record a giant gap");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 10);
+    /* Hours later, the same source starts again. That is not a stall. */
+    uint32_t much_later = 10u * FRAMES_PER_PACKET + OAL_RTP_ARRIVAL_SANE_TICKS + 1;
+    oal_rtp_stats_on_packet(&s, 10, 10 * FRAMES_PER_PACKET, much_later, SSRC);
+
+    CHECK_EQ(s.late_arrivals, 0);
+    CHECK_EQ(oal_rtp_stats_max_gap(&s), FRAMES_PER_PACKET);
+}
+
+static void test_late_arrivals_survive_a_source_change(void)
+{
+    TEST("late arrivals survive a source change");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 10);
+    uint32_t stalled = 10u * FRAMES_PER_PACKET + 5000u;
+    oal_rtp_stats_on_packet(&s, 10, 10 * FRAMES_PER_PACKET, stalled, SSRC);
+    CHECK_EQ(s.late_arrivals, 1);
+
+    /* A new source restarts sequence accounting, but the link's timing
+     * history is a property of the link, not of who was talking. */
+    oal_rtp_stats_on_packet(&s, 0, 0, stalled + FRAMES_PER_PACKET, SSRC + 1);
+    CHECK_EQ(s.late_arrivals, 1);
+}
+
 int main(void)
 {
     test_clean_stream_loses_nothing();
@@ -346,6 +439,11 @@ int main(void)
     test_a_clean_stream_reports_no_gaps();
     test_json_reports_the_counters();
     test_nothing_received_reports_nothing();
+    test_even_arrival_is_never_late();
+    test_a_stall_is_counted_even_with_no_loss();
+    test_small_clumps_are_not_late();
+    test_a_restart_does_not_record_a_giant_gap();
+    test_late_arrivals_survive_a_source_change();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);
