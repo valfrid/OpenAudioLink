@@ -575,6 +575,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * population that has not cost anything yet. */
                        "\"packetsSubmitted\":%llu,\"latePackets\":%u,"
                        "\"tightPackets\":%u,\"marginMinFrames\":%u,"
+                       "\"marginWorstFrames\":%u,"
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
@@ -593,6 +594,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned long long)audio.packets_submitted,
                        (unsigned)audio.late_packets, (unsigned)audio.tight_packets,
                        (unsigned)audio.margin_min_frames,
+                       (unsigned)audio.margin_worst_frames,
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        stats);

@@ -98,6 +98,17 @@ static size_t s_fill_max;
 static size_t s_margin_min;
 static size_t s_tight_below;
 
+/*
+ * The worst margin since the stream began, in samples.
+ *
+ * Its own variable rather than a test against the published frame count:
+ * a genuinely late packet drives the published value to zero, and any
+ * "or it is still zero" special case then lets the next healthy packet
+ * overwrite the worst reading with a good one. Sentinel above every real
+ * fill, compared once, no special cases.
+ */
+static size_t s_margin_worst;
+
 static oal_playout_state_t s_state;
 static size_t s_target_samples;
 
@@ -243,6 +254,27 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
         size_t margin = s_available;
         if (margin < s_margin_min) {
             s_margin_min = margin;
+        }
+        /*
+         * And the worst since the stream began.
+         *
+         * `margin_min_frames` is the tightest moment of the last five
+         * seconds, which is the right shape for watching a link live --
+         * measured on hardware it jumps between 30 and 70 ms window to
+         * window, because delivery pauses and catches up rather than
+         * drifting. Every reading is a fresh sample of a fluctuating
+         * quantity, so no single one says how close the design has ever
+         * come to failing.
+         *
+         * This one does. It only falls, which is exactly the wrong
+         * property for a live indicator and exactly the right one for
+         * sizing a buffer: "in three hours the closest this got to silence
+         * was 22 ms" is the number that decides whether 100 ms of target
+         * is generous or barely enough.
+         */
+        if (margin < s_margin_worst) {
+            s_margin_worst = margin;
+            s_state.margin_worst_frames = (uint32_t)(margin / OAL_RTP_CHANNELS);
         }
         if (margin == 0) {
             s_state.late_packets++;
@@ -670,6 +702,8 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
      */
     s_tight_below = s_target_samples / 4;
     s_margin_min = CAPACITY_SAMPLES + 1;
+    s_margin_worst = CAPACITY_SAMPLES + 1;
+    s_state.margin_worst_frames = 0;
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
     s_state.capacity_frames = CAPACITY_SAMPLES / OAL_RTP_CHANNELS;

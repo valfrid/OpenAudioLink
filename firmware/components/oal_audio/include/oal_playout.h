@@ -134,6 +134,23 @@ typedef struct {
     uint32_t tight_packets;   /* arrived with under a quarter of target left */
     uint32_t margin_min_frames; /* the tightest arrival of the last window */
 
+    /*
+     * The tightest since the stream began.
+     *
+     * `margin_min_frames` is the right shape for watching a link live, and
+     * the wrong one for judging it: measured on hardware it jumps between
+     * 30 and 70 ms from window to window, because delivery pauses and
+     * catches up rather than drifting, so every reading is a fresh sample
+     * of a fluctuating quantity and none of them says how close the design
+     * has come to failing.
+     *
+     * This only falls -- exactly wrong for a live indicator, exactly right
+     * for sizing a buffer. "In three hours the closest this came to silence
+     * was 22 ms" is what decides whether a 100 ms target is generous or
+     * barely enough.
+     */
+    uint32_t margin_worst_frames;
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;

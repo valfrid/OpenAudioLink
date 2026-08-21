@@ -1371,11 +1371,28 @@
       const late = p.latePackets ?? 0;
       const ppm = submitted ? Math.round((late / submitted) * 1e6) : 0;
       const level = late === 0 ? 'good' : ppm > 1000 ? 'poor' : 'fair';
+      /*
+       * Two margins, because one cannot do both jobs.
+       *
+       * The live one is the tightest moment of the last five seconds, and
+       * on hardware it jumps between 30 and 70 ms window to window --
+       * delivery pausing and catching up, not drifting. That is the right
+       * shape for watching a link and useless for judging one, since every
+       * reading is a fresh sample of something that fluctuates.
+       *
+       * The worst is the floor since the stream started. It only falls,
+       * which makes it a poor live indicator and the only number that
+       * answers "how close has this ever come" -- the question that
+       * decides whether the 100 ms target is generous or barely enough.
+       */
       const marginMs = p.marginMinFrames != null
         ? Math.round(p.marginMinFrames / 48) : null;
+      const worstMs = p.marginWorstFrames != null
+        ? Math.round(p.marginWorstFrames / 48) : null;
       const tight = p.tightPackets ?? 0;
       const detail = [
         marginMs === null ? null : `${marginMs} ms margin`,
+        worstMs === null ? null : `worst ${worstMs} ms`,
         tight ? `${tight.toLocaleString()} tight` : null,
       ].filter(Boolean).join(' \u00b7 ');
       return `<span class="rssi ${level}">` +
