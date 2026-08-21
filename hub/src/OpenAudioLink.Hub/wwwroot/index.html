@@ -1390,9 +1390,32 @@
       const worstMs = p.marginWorstFrames != null
         ? Math.round(p.marginWorstFrames / 48) : null;
       const tight = p.tightPackets ?? 0;
+      /*
+       * The shape, not another point.
+       *
+       * A window minimum that lands anywhere from 1 to 100 ms cannot
+       * distinguish "almost everything arrives with the full cushion and
+       * once a minute one does not" from "half of them arrive with nothing
+       * to spare". Those are a healthy link and a failing one and they
+       * produce identical minima. The share of packets that arrived with
+       * three quarters of the cushion intact says which, in one number.
+       */
+      const buckets = p.marginBuckets;
+      let shape = null;
+      if (Array.isArray(buckets)) {
+        const total = buckets.reduce((a, b) => a + b, 0);
+        if (total > 0) {
+          const healthy = (buckets[4] / total) * 100;
+          const scraping = (buckets[0] / total) * 100;
+          shape = `${healthy.toFixed(1)}% full cushion` +
+            (scraping >= 0.05 ? `, ${scraping.toFixed(2)}% scraping` : '');
+        }
+      }
+
       const detail = [
-        marginMs === null ? null : `${marginMs} ms margin`,
+        marginMs === null ? null : `${marginMs} ms now`,
         worstMs === null ? null : `worst ${worstMs} ms`,
+        shape,
         tight ? `${tight.toLocaleString()} tight` : null,
       ].filter(Boolean).join(' \u00b7 ');
       return `<span class="rssi ${level}">` +

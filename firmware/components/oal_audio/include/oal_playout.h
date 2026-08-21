@@ -151,6 +151,32 @@ typedef struct {
      */
     uint32_t margin_worst_frames;
 
+    /*
+     * How the margins were distributed, because a minimum is one draw.
+     *
+     * Measured on hardware the window minimum lands anywhere between 1 and
+     * 100 ms with no visible pattern, which makes any single reading a
+     * sample rather than a measurement -- the next poll would have said
+     * something else. A minimum cannot tell "almost every packet arrives
+     * with the full cushion and once a minute one does not" from "half of
+     * them arrive with nothing to spare". Those are a healthy link and a
+     * failing one, and they produce identical minima.
+     *
+     * Five buckets of arrival margin, as a fraction of the playout target:
+     *
+     *   [0] under 10%   -- a hair from silence
+     *   [1] 10 to 25%
+     *   [2] 25 to 50%
+     *   [3] 50 to 75%
+     *   [4] 75% and over -- arrived with the cushion intact
+     *
+     * Cumulative, so ratios between them are what to read. A link whose
+     * packets sit overwhelmingly in [4] is healthy however low its worst
+     * moment went; one with a fat [0] is living on the buffer whatever its
+     * loss says.
+     */
+    uint32_t margin_buckets[5];
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;

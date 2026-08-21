@@ -576,6 +576,11 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"packetsSubmitted\":%llu,\"latePackets\":%u,"
                        "\"tightPackets\":%u,\"marginMinFrames\":%u,"
                        "\"marginWorstFrames\":%u,"
+                       /* Where the packets actually landed, as fractions
+                        * of the target cushion: under 10%, 10-25, 25-50,
+                        * 50-75, 75 and over. A minimum is one draw; this
+                        * is the shape. */
+                       "\"marginBuckets\":[%u,%u,%u,%u,%u],"
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
@@ -595,6 +600,9 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.late_packets, (unsigned)audio.tight_packets,
                        (unsigned)audio.margin_min_frames,
                        (unsigned)audio.margin_worst_frames,
+                       (unsigned)audio.margin_buckets[0], (unsigned)audio.margin_buckets[1],
+                       (unsigned)audio.margin_buckets[2], (unsigned)audio.margin_buckets[3],
+                       (unsigned)audio.margin_buckets[4],
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        stats);

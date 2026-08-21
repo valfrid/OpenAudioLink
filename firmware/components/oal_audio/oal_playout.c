@@ -276,6 +276,16 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
             s_margin_worst = margin;
             s_state.margin_worst_frames = (uint32_t)(margin / OAL_RTP_CHANNELS);
         }
+
+        /* Against the target rather than capacity: the target is the
+         * cushion the design intends this packet to find, and capacity is
+         * a separate decision about how much burst to survive. */
+        size_t tenths = s_target_samples ? (margin * 100u) / s_target_samples : 100u;
+        size_t bucket = tenths < 10 ? 0u
+                      : tenths < 25 ? 1u
+                      : tenths < 50 ? 2u
+                      : tenths < 75 ? 3u : 4u;
+        s_state.margin_buckets[bucket]++;
         if (margin == 0) {
             s_state.late_packets++;
         } else if (margin < s_tight_below) {
