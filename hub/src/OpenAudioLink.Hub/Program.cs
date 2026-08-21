@@ -284,6 +284,39 @@ app.MapPost("/api/devices/{id}/wifi/rejoin",
     return Results.Ok(new { status = "rejoining" });
 });
 
+/*
+ * What a node can hear, on demand.
+ *
+ * The companion to rejoin: that endpoint reports whether the node accepted
+ * the instruction, which is not the same as whether it did anything useful.
+ * A node stuck on a distant access point through repeated rejoins is either
+ * passing over a better one or cannot hear it, and only a scan separates
+ * those.
+ *
+ * Hushed like rejoin, and for longer, because the node leaves its channel
+ * to sweep the others: a status poll landing mid-scan reads as an offline
+ * device and paints the row red for no reason.
+ *
+ * Passed through as the node's own JSON. Nothing here is better placed to
+ * interpret a radio's view of a room than the radio.
+ */
+app.MapGet("/api/devices/{id}/wifi/scan",
+    async (string id, DeviceRegistry registry, DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+    registry.Hush(device.Id, TimeSpan.FromSeconds(20));
+    var json = await commands.ScanWifiAsync(device, cancellationToken);
+    if (json is null)
+    {
+        registry.Hush(device.Id, TimeSpan.Zero);
+        return Results.StatusCode(502);
+    }
+    return Results.Content(json, "application/json");
+});
+
 app.MapPost("/api/devices/{id}/ota",
     async (string id, OtaRequest request, DeviceRegistry registry, FirmwareStore store,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>

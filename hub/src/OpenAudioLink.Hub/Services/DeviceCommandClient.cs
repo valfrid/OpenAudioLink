@@ -50,6 +50,46 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// What access points a node can hear, as the node hears them.
+    /// </summary>
+    /// <remarks>
+    /// Rejoin asks a node to choose again and answers only whether the
+    /// request was accepted — not what it chose, and not what it was
+    /// choosing between. When a rejoin does not fix a node stuck on a
+    /// distant access point, that difference is the whole question: whether
+    /// the better one was there to be picked and was passed over, or was
+    /// never on the list.
+    ///
+    /// Returned as the node's own JSON rather than reshaped here. It is a
+    /// radio's opinion of the room, taken at one instant, and every hop it
+    /// passes through is a chance to average away the thing worth seeing.
+    ///
+    /// Slower than the other calls: a scan sweeps every channel, so the
+    /// node is off its own for a second or two and this can take most of
+    /// ten. That is also why it is never called on a timer.
+    /// </remarks>
+    public async Task<string?> ScanWifiAsync(DeviceRecord device, CancellationToken cancellationToken)
+    {
+        var uri = $"http://{device.Address}:{device.ControlPort}/wifi/scan";
+        try
+        {
+            using var response = await _http.GetAsync(uri, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Scan on {Device} returned {Status}", device.Name, (int)response.StatusCode);
+                return null;
+            }
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Scan on {Device} failed", device.Name);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Stores the roles a node takes (decision 5). They apply at its next
     /// boot, because roles decide which tasks start — changing them under a
     /// running node would mean tearing down live audio.

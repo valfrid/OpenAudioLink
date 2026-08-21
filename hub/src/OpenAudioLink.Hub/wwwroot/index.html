@@ -99,6 +99,36 @@
   </table>
   <p id="devices-empty" class="empty">No devices discovered yet.</p>
 
+  <!--
+    What a node can hear, and what a rejoin did about it.
+
+    Rejoin has always reported only that the node accepted the instruction.
+    When it does not fix a node stuck on a distant access point — which it
+    sometimes does not — the useful question is whether a better one was on
+    the list and passed over, or was never heard at all. Those need opposite
+    responses and the Wi-Fi column cannot tell them apart, because it shows
+    one BSSID and no alternatives.
+
+    Kept out of the device row and out of the poll: a scan takes the node
+    off its channel for a second or two, so it happens when somebody asks
+    for it and not on a timer.
+  -->
+  <section id="scan-panel" hidden>
+    <h2>Wi-Fi — <span id="scan-device"></span></h2>
+    <p>
+      <button id="scan-again">Scan again</button>
+      <button id="scan-rejoin">Rejoin and scan</button>
+      <button id="scan-close">Close</button>
+    </p>
+    <p id="scan-note" class="hint"></p>
+    <table id="scan-results" hidden>
+      <thead>
+        <tr><th>Network</th><th>Access point</th><th>Ch</th><th>Signal</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <h2>Cast points</h2>
   <p class="hint">
     A named place to send audio. A room and a group are the same thing —
@@ -266,6 +296,163 @@
         `<br><code class="muted">${esc(status.bssid ?? '?')}</code>`;
     }
 
+    /* ---------------------------------------------------------------
+     * The Wi-Fi panel.
+     *
+     * A node is provisioned onto one SSID and, before that, serves its own
+     * "OpenAudioLink-XXXXXX" setup network. Those two are the ones a node
+     * can actually join; every other radio in the list is a neighbour and
+     * matters only as noise. So they sort to the top and the rest is kept
+     * but dimmed — a room with nothing else in it is itself a finding, as
+     * run 33 turned out to be.
+     * --------------------------------------------------------------- */
+    let scanDeviceId = null;
+
+    const scanNote = text => {
+      document.getElementById('scan-note').textContent = text;
+    };
+
+    function joinable(ap, ownSsid) {
+      return (ownSsid && ap.ssid === ownSsid) || /^OpenAudioLink-/.test(ap.ssid ?? '');
+    }
+
+    function renderScan(aps, ownSsid) {
+      const table = document.getElementById('scan-results');
+      table.hidden = aps.length === 0;
+
+      // Ours first, then by signal. Within one SSID that ranks the mesh's
+      // access points exactly as a node choosing between them would.
+      const sorted = [...aps].sort((a, b) => {
+        const mine = joinable(b, ownSsid) - joinable(a, ownSsid);
+        return mine !== 0 ? mine : (b.rssi ?? -127) - (a.rssi ?? -127);
+      });
+
+      table.querySelector('tbody').innerHTML = sorted.map(ap => {
+        const rssi = ap.rssi ?? -127;
+        const level = rssi >= -65 ? 'good' : rssi >= -75 ? 'fair' : 'poor';
+        const mine = joinable(ap, ownSsid);
+        return `<tr${mine ? '' : ' class="empty"'}>` +
+          `<td>${esc(ap.ssid ?? '')}</td>` +
+          `<td class="rssi">${esc(ap.bssid ?? '')}</td>` +
+          `<td>${esc(ap.channel ?? '')}</td>` +
+          `<td><span class="rssi ${level}">${esc(rssi)} dBm</span></td>` +
+          `<td>${ap.current ? '<strong>on this one</strong>' : ''}</td>` +
+          '</tr>';
+      }).join('');
+    }
+
+    /**
+     * Reads the scan and says what it means, which is the point of the
+     * panel: whether the node is on the best access point it can hear.
+     *
+     * Returns the BSSID it is on, so a rejoin can be judged by whether that
+     * changed rather than by whether the request was accepted.
+     */
+    async function runScan(id, ownSsid) {
+      scanNote('Scanning — the node leaves its channel for a second or two…');
+      let data;
+      try {
+        const response = await fetch(
+          `/api/devices/${encodeURIComponent(id)}/wifi/scan`, { cache: 'no-store' });
+        if (!response.ok) {
+          scanNote(response.status === 404
+            ? 'This node is too old to scan — /wifi/scan arrived in firmware 0.15.'
+            : `The node did not answer the scan (${response.status}).`);
+          document.getElementById('scan-results').hidden = true;
+          return null;
+        }
+        data = await response.json();
+      } catch {
+        scanNote('Could not reach the node.');
+        document.getElementById('scan-results').hidden = true;
+        return null;
+      }
+
+      const aps = data.aps ?? [];
+      renderScan(aps, ownSsid);
+
+      const here = aps.find(a => a.current);
+      const options = aps.filter(a => joinable(a, ownSsid));
+      const best = options.reduce(
+        (a, b) => ((b.rssi ?? -127) > (a?.rssi ?? -127) ? b : a), null);
+
+      if (!here) {
+        scanNote(`${aps.length} networks heard.`);
+      } else if (best && best.bssid !== here.bssid) {
+        // The whole reason this panel exists. A rejoin that keeps choosing
+        // this one is choosing it over something better, and that is a
+        // different problem from not hearing anything better.
+        scanNote(
+          `On ${here.bssid} at ${here.rssi} dBm, but ${best.bssid} is ` +
+          `${best.rssi - here.rssi} dB stronger. A rejoin has something to move to.`);
+      } else {
+        scanNote(
+          `On ${here.bssid} at ${here.rssi} dBm — the strongest of ` +
+          `${options.length} it can join. Nothing to move to.`);
+      }
+      return here?.bssid ?? null;
+    }
+
+    async function openScanPanel(id) {
+      scanDeviceId = id;
+      const device = lastDevices.find(d => d.id === id);
+      document.getElementById('scan-device').textContent = device?.name ?? id;
+      document.getElementById('scan-panel').hidden = false;
+      document.getElementById('scan-results').hidden = true;
+      await runScan(id, device?.status?.ssid);
+    }
+
+    document.getElementById('scan-close').addEventListener('click', () => {
+      document.getElementById('scan-panel').hidden = true;
+      scanDeviceId = null;
+    });
+
+    document.getElementById('scan-again').addEventListener('click', async () => {
+      if (!scanDeviceId) return;
+      const device = lastDevices.find(d => d.id === scanDeviceId);
+      await runScan(scanDeviceId, device?.status?.ssid);
+    });
+
+    /*
+     * Rejoin, then look. The sequence nobody could see before: what it was
+     * on, what it moved to, and whether that was an improvement.
+     *
+     * The wait is not politeness. The node drops its association, scans
+     * every channel and associates again, and a scan asked for during that
+     * gets no answer at all — the Hub hushes the device for fifteen seconds
+     * on rejoin for exactly this reason.
+     */
+    document.getElementById('scan-rejoin').addEventListener('click', async () => {
+      if (!scanDeviceId) return;
+      const id = scanDeviceId;
+      const device = lastDevices.find(d => d.id === id);
+      const ownSsid = device?.status?.ssid;
+
+      const before = device?.status?.bssid ?? null;
+      scanNote('Asking the node to rejoin…');
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(id)}/wifi/rejoin`, { method: 'POST' });
+      if (!response.ok) {
+        scanNote('The node refused the rejoin.');
+        return;
+      }
+
+      for (let left = 16; left > 0; left--) {
+        scanNote(`Rejoining — scanning again in ${left}s…`);
+        await new Promise(r => setTimeout(r, 1000));
+        if (scanDeviceId !== id) return;   // panel closed or switched
+      }
+
+      const after = await runScan(id, ownSsid);
+      if (after && before && after !== before) {
+        scanNote(`${document.getElementById('scan-note').textContent} ` +
+                 `Moved from ${before}.`);
+      } else if (after && before) {
+        scanNote(`${document.getElementById('scan-note').textContent} ` +
+                 'Rejoined the same access point.');
+      }
+    });
+
     // Coloured by what the number means for a stream: below about -75 dBm
     // a 2.4 Mbit/s unicast has no margin left, and -65 is where it stops
     // being comfortable.
@@ -425,6 +612,9 @@
           // rejoining one twenty metres away through reboots and a power
           // cycle. This asks for a fresh scan without taking the node down.
           `<button data-cmd="rejoin" data-id="${esc(d.id)}"${disabled}>Rejoin Wi-Fi</button> ` +
+          // And the same question with its answer visible: what the node
+          // can hear, and whether a rejoin changed which one it picked.
+          `<button data-cmd="wifi" data-id="${esc(d.id)}"${disabled}>Wi-Fi…</button> ` +
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
@@ -833,6 +1023,8 @@
         say('Rebooting device…');
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/reboot`, { method: 'POST' });
         say(response.ok ? 'Device is rebooting.' : 'Reboot request failed.');
+      } else if (button.dataset.cmd === 'wifi') {
+        await openScanPanel(id);
       } else if (button.dataset.cmd === 'rejoin') {
         // The node scans every channel, which costs it a second or two of
         // audio and no more. Worth saying which access point it landed on,
