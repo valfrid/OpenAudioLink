@@ -229,6 +229,7 @@
     <thead>
       <tr>
         <th>Node</th><th>Role</th><th>Sent / received</th><th>Lost</th>
+        <th>In time</th>
         <th>Loss shape</th><th>Jitter</th><th>Dup / reorder</th><th>Payload errors</th>
       </tr>
     </thead>
@@ -1327,6 +1328,49 @@
         `<br><span class="muted">${mean} packets per gap</span>`;
     }
 
+    /*
+     * Whether the audio was there when the speaker needed it, which is the
+     * only question a listener can hear the answer to.
+     *
+     * Beside Lost on purpose: those two are the pair. Loss says what never
+     * came; this says what came too late to use, and a link can read
+     * 0.000 % on the first while being unlistenable by the second — 135
+     * dropouts with a complete packet sequence, measured in run 28.
+     *
+     * The node measures it where it is exact rather than inferring it:
+     * whatever is queued in front of an arriving payload is what the
+     * speaker plays before reaching it, so the ring's fill at that instant
+     * is that packet's margin. Zero means it arrived to find silence
+     * already playing.
+     *
+     * Margin is the leading half. Late packets are damage already done;
+     * the low-water margin says how close the next one is, and a node
+     * holding 100 ms has never been in danger while one touching 10 ms is
+     * one bad second away whatever its history says.
+     */
+    function timingCell(stream) {
+      const p = stream.playout ?? {};
+      // Firmware older than 0.22.0 does not measure this. Say so, rather
+      // than showing a confident zero that only means nobody counted.
+      if (p.packetsSubmitted == null) {
+        return '<span class="muted">not measured</span>';
+      }
+      const submitted = p.packetsSubmitted || 0;
+      const late = p.latePackets ?? 0;
+      const ppm = submitted ? Math.round((late / submitted) * 1e6) : 0;
+      const level = late === 0 ? 'good' : ppm > 1000 ? 'poor' : 'fair';
+      const marginMs = p.marginMinFrames != null
+        ? Math.round(p.marginMinFrames / 48) : null;
+      const tight = p.tightPackets ?? 0;
+      const detail = [
+        marginMs === null ? null : `${marginMs} ms margin`,
+        tight ? `${tight.toLocaleString()} tight` : null,
+      ].filter(Boolean).join(' \u00b7 ');
+      return `<span class="rssi ${level}">` +
+        (late === 0 ? 'all in time' : `${late.toLocaleString()} late (${ppm} ppm)`) +
+        '</span>' + (detail ? `<br><span class="muted">${detail}</span>` : '');
+    }
+
     // Why the radio refused, and whether retrying helped. Three firmware
     // revisions were spent guessing at this from the refusal count alone,
     // while the node had been reporting both facts all along.
@@ -1384,7 +1428,7 @@
         // row was the more interesting half of the result.
         if (error) {
           rows.push(`<tr><td>${esc(name)}</td><td>—</td>` +
-            `<td colspan="6"><span class="rssi poor">no answer</span> ` +
+            `<td colspan="7"><span class="rssi poor">no answer</span> ` +
             `<span class="muted">— the Hub could not read this node's ` +
             `counters (${esc(error)}). Its numbers ` +
             `are missing, not zero.</span></td></tr>`);
@@ -1410,7 +1454,7 @@
               ? `<span class="rssi ${refusedClass}">${esc(refused)} refused (${refusedPct}%)</span>`
               : '—'}</td>` +
             `<td>${refusalCell(stream)}</td>` +
-            `<td>—</td><td>—</td><td>—</td></tr>`);
+            `<td>—</td><td>—</td><td>—</td><td>—</td></tr>`);
         } else {
           const st = stream.stats ?? {};
           const lossPct = ((st.lossPpm ?? 0) / 10000).toFixed(3);
@@ -1423,6 +1467,7 @@
             `${(st.expected ?? 0).toLocaleString()}</td>` +
             `<td><span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
             ` (${lossPct}%)</span></td>` +
+            `<td>${timingCell(stream)}</td>` +
             `<td>${shapeCell(st)}</td>` +
             `<td>${jitterMs} ms</td>` +
             `<td>${esc(st.duplicates ?? 0)} / ${esc(st.reordered ?? 0)}</td>` +
