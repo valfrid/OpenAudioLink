@@ -469,13 +469,24 @@
       return here?.bssid ?? null;
     }
 
-    async function openScanPanel(id) {
+    /**
+     * @param scanNow false when a rejoin is about to follow.
+     *
+     * Every scan takes the node off its channel and costs a gap in the
+     * audio, so the rejoin path does not open with one: the "before" it
+     * compares against is the BSSID in /status, not anything a scan
+     * returns, and the scan afterwards shows the alternatives just as well.
+     * Opening with a scan there would buy nothing and cost a dropout.
+     */
+    async function openScanPanel(id, scanNow = true) {
       scanDeviceId = id;
       const device = lastDevices.find(d => d.id === id);
       document.getElementById('scan-device').textContent = device?.name ?? id;
       document.getElementById('scan-panel').hidden = false;
       hideScanTables();
-      await runScan(id, device?.status?.ssid);
+      if (scanNow) {
+        await runScan(id, device?.status?.ssid);
+      }
     }
 
     document.getElementById('scan-close').addEventListener('click', () => {
@@ -498,9 +509,7 @@
      * gets no answer at all — the Hub hushes the device for fifteen seconds
      * on rejoin for exactly this reason.
      */
-    document.getElementById('scan-rejoin').addEventListener('click', async () => {
-      if (!scanDeviceId) return;
-      const id = scanDeviceId;
+    async function rejoinAndScan(id) {
       const device = lastDevices.find(d => d.id === id);
       const ownSsid = device?.status?.ssid;
 
@@ -527,6 +536,10 @@
         scanNote(`${document.getElementById('scan-note').textContent} ` +
                  'Rejoined the same access point.');
       }
+    }
+
+    document.getElementById('scan-rejoin').addEventListener('click', () => {
+      if (scanDeviceId) rejoinAndScan(scanDeviceId);
     });
 
     // Coloured by what the number means for a stream: below about -75 dBm
@@ -688,9 +701,9 @@
           // rejoining one twenty metres away through reboots and a power
           // cycle. This asks for a fresh scan without taking the node down.
           `<button data-cmd="rejoin" data-id="${esc(d.id)}"${disabled}>Rejoin Wi-Fi</button> ` +
-          // And the same question with its answer visible: what the node
-          // can hear, and whether a rejoin changed which one it picked.
-          `<button data-cmd="wifi" data-id="${esc(d.id)}"${disabled}>Wi-Fi…</button> ` +
+          // The same panel without touching the association: what the node
+          // can hear right now, and whether it is on the best of it.
+          `<button data-cmd="wifi" data-id="${esc(d.id)}"${disabled}>Signals…</button> ` +
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
@@ -1102,16 +1115,24 @@
       } else if (button.dataset.cmd === 'wifi') {
         await openScanPanel(id);
       } else if (button.dataset.cmd === 'rejoin') {
-        // The node scans every channel, which costs it a second or two of
-        // audio and no more. Worth saying which access point it landed on,
-        // because in a mesh that is the whole question and the Wi-Fi column
-        // is the only place the answer appears.
-        say('Asking the node to scan and rejoin…');
-        const response = await fetch(
-          `/api/devices/${encodeURIComponent(id)}/wifi/rejoin`, { method: 'POST' });
-        say(response.ok
-          ? 'Rejoining — watch the Wi-Fi column for the access point it picks.'
-          : 'Rejoin request failed.');
+        /*
+         * Into the panel, not a status line.
+         *
+         * This button used to fire the request and print "watch the Wi-Fi
+         * column for the access point it picks" — which is an instruction
+         * to go and do the work by hand, in a column showing one BSSID and
+         * no alternatives, with no signal strengths and nothing to compare
+         * against. The one question worth asking about a rejoin is whether
+         * there was anything better to move to, and that answer was never
+         * on this page.
+         *
+         * So it opens the panel and runs the sequence there, where the
+         * before, the wait, the after and the alternatives all show. One
+         * path, and it ends in an answer rather than in homework.
+         */
+        say('');
+        await openScanPanel(id, false);
+        await rejoinAndScan(id);
       } else {
         const select = document.getElementById('fw-select');
         const file = select.value;
