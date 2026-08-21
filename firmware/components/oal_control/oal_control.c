@@ -550,17 +550,43 @@ static esp_err_t wifi_scan_handler(httpd_req_t *req)
  * the memory the rule is sticky about and asks for a scan. Landing on the
  * same access point is a legitimate outcome and worth knowing.
  */
+/*
+ * Deferred, for the reason `restart_task` is: this request is answered
+ * over the association it is about to drop.
+ *
+ * The first version called `oal_wifi_rejoin()` — which disconnects — and
+ * only then sent the response. The response then had no link to leave by,
+ * so the Hub saw the request fail and reported "Rejoin request failed"
+ * while the node went ahead and rejoined perfectly. Worse than a plain
+ * bug: it told the operator the opposite of what happened, on the one
+ * screen built to say what happened.
+ *
+ * It was a race rather than a certainty, which is why it ever looked like
+ * it worked — on an idle node the bytes sometimes reached the wire first.
+ * The same 500 ms reboot uses is far longer than that needs.
+ */
+static void rejoin_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(500));
+    (void)oal_wifi_rejoin();
+    vTaskDelete(NULL);
+}
+
 static esp_err_t wifi_rejoin_handler(httpd_req_t *req)
 {
-    esp_err_t err = oal_wifi_rejoin();
-    if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "rejoin failed");
-        return ESP_FAIL;
-    }
+    ESP_LOGW(TAG, "rejoin requested");
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req,
+    esp_err_t sent = httpd_resp_send(req,
         "{\"status\":\"rejoining\",\"note\":\"read /status in a few seconds for the bssid\"}",
         HTTPD_RESP_USE_STRLEN);
+
+    /* Only after the answer is on its way, and only if it got there. A
+     * node that drops its link for a request nobody received has done the
+     * disruptive half of the job and none of the useful half. */
+    if (sent == ESP_OK) {
+        xTaskCreate(rejoin_task, "oal_rejoin", 3072, NULL, 5, NULL);
+    }
+    return sent;
 }
 
 static esp_err_t stream_start_handler(httpd_req_t *req)
