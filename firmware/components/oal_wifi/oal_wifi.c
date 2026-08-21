@@ -180,8 +180,15 @@ esp_err_t oal_wifi_set_party(const char *ssid, const char *password)
     }
     esp_err_t err = store_pair("party_ssid", "party_pass", ssid, password);
     if (err == ESP_OK) {
-        ESP_LOGW(TAG, ssid[0] == '\0' ? "party network forgotten"
-                                      : "party network stored; it applies at the next boot");
+        /* Two calls rather than one with a ternary. ESP-IDF's log macros
+         * concatenate the format into a larger literal, so the argument has
+         * to *be* a literal — a const char * chosen at runtime breaks the
+         * concatenation, and -Werror=format catches it as a stray %s. */
+        if (ssid[0] == '\0') {
+            ESP_LOGW(TAG, "party network forgotten");
+        } else {
+            ESP_LOGW(TAG, "party network stored; it applies at the next boot");
+        }
     } else {
         ESP_LOGE(TAG, "storing the party network failed: %s", esp_err_to_name(err));
     }
