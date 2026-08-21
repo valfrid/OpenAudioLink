@@ -17,6 +17,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_ROLES "roles"
 #define NVS_KEY_NAME  "name"
 #define NVS_KEY_CHANNEL "channel"
+#define NVS_KEY_DELAY_MS "delay_ms"
 #define NVS_KEY_VOLUME "volume"
 #define NVS_KEY_OUTPUT "output"
 
@@ -207,6 +208,53 @@ esp_err_t oal_config_set_roles(oal_roles_t roles)
  * the enum value, so a stored setting survives the enum being reordered
  * and can be read out of an NVS dump without a lookup table.
  */
+/*
+ * Extra playout delay for this node, in milliseconds.
+ *
+ * Per node and not per installation, because it corrects a difference
+ * *between* nodes: a USB dongle plays tens of milliseconds later than an
+ * I²S DAC given the same packet, so the DAC has to be held back to meet
+ * it. Which node needs the trim depends on what is plugged into it, which
+ * is exactly the kind of fact decision 5 keeps in NVS rather than in a
+ * build.
+ *
+ * Only ever positive. Nothing can play a sample before it arrives.
+ */
+uint32_t oal_config_get_delay_ms(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return 0;
+    }
+    uint32_t stored = 0;
+    esp_err_t err = nvs_get_u32(nvs, NVS_KEY_DELAY_MS, &stored);
+    nvs_close(nvs);
+    if (err != ESP_OK || stored > OAL_DELAY_MS_MAX) {
+        return 0;
+    }
+    return stored;
+}
+
+esp_err_t oal_config_set_delay_ms(uint32_t delay_ms)
+{
+    if (delay_ms > OAL_DELAY_MS_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = nvs_set_u32(nvs, NVS_KEY_DELAY_MS, delay_ms);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
 oal_channel_t oal_config_get_channel(void)
 {
     nvs_handle_t nvs;

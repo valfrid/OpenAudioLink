@@ -218,6 +218,29 @@ void oal_playout_get(oal_playout_state_t *out);
 void oal_playout_set_volume(uint8_t percent);
 
 /** The level last set, 0-100. */
+/**
+ * Changes the playout target while running, in milliseconds.
+ *
+ * Two speakers playing one stream through different output stages do not
+ * come out together. A USB dongle carries the host driver's ring, 1 ms USB
+ * frames and its own internal buffering on top of the playout; an I²S DAC
+ * carries four DMA descriptors. The difference is tens of milliseconds and
+ * it is obvious the moment both play in one room.
+ *
+ * Only ever *added*, and always to the early node: nothing can play a
+ * sample before it arrives, so alignment means holding the fast one back
+ * to meet the slow one.
+ *
+ * Takes effect gradually -- the pad/trim servo walks the ring to the new
+ * depth at a tenth of a percent, about a second of delay per thirty
+ * seconds of music, under two cents of pitch error. Deliberate: this is
+ * tuned by ear, and a value that jumped would have to be re-judged after
+ * every nudge.
+ *
+ * Capped at half the ring's capacity.
+ */
+esp_err_t oal_playout_set_target_ms(uint32_t target_ms);
+
 uint8_t oal_playout_volume(void);
 
 /** True once the I²S peripheral is up. */

@@ -42,7 +42,25 @@ static const char *TAG = "oal_playout";
  * not the average one, and 15 KB of RAM is a cheap way to stop caring
  * about the difference.
  */
-#define CAPACITY_PACKETS 40
+/*
+ * Doubled to 80 packets -- 400 ms -- so a node can be *delayed* on purpose.
+ *
+ * The target is capped at half the capacity, which at 40 packets made
+ * 100 ms both the default and the ceiling: there was no room to add any.
+ * And delay has to be addable, because two speakers playing the same
+ * stream through different output stages do not come out together. The
+ * USB path carries the driver's ring, 1 ms USB frames and the dongle's own
+ * buffering on top of the playout, where I2S carries four DMA descriptors;
+ * this file has been claiming both are "about 20 ms" and they are not.
+ *
+ * Only ever addable. Nothing can play a sample earlier than it arrives, so
+ * alignment means holding the *early* node back to meet the late one.
+ *
+ * The cost is 38 kB more of int32 ring on a board with 8 MB of PSRAM, and
+ * it buys burst headroom as well: last night's margins reached down toward
+ * a millisecond on a 100 ms target.
+ */
+#define CAPACITY_PACKETS 80
 #define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
 
 /*
@@ -131,6 +149,49 @@ static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
  */
 static size_t s_trim_above;
 static size_t s_pad_below;
+
+/** The rate the target was computed against, so it can be recomputed. */
+static uint32_t s_rate;
+
+/*
+ * Everything the target implies, in one place.
+ *
+ * Four levels are derived from it — where to trim, where to pad, what
+ * counts as a tight arrival, and what /stream reports as the goal — and
+ * they were computed inline at startup. That was fine while the target was
+ * fixed at boot. It is not fine now that a node can be told to hold back
+ * to meet a slower speaker, because a target changed without its
+ * dependants is a servo aiming at one number and judging itself by four
+ * others.
+ */
+static void apply_target(uint32_t rate, uint32_t target_ms)
+{
+    s_rate = rate;
+    s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
+    if (s_target_samples > CAPACITY_SAMPLES / 2) {
+        /* Leave room to absorb a burst above the target; a target equal to
+         * the capacity means the ring is full whenever it is working. */
+        s_target_samples = CAPACITY_SAMPLES / 2;
+    }
+
+    s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;
+    /* Three quarters of the target: far enough down to mean the margin has
+     * really been eroded, not a normal swing, and above the level where a
+     * single ordinary gap empties the ring. */
+    s_pad_below = s_target_samples * 3 / 4;
+
+    /*
+     * A quarter of the target: 25 ms against a 100 ms goal.
+     *
+     * Not a fraction of capacity, because capacity is a buffer-sizing
+     * decision and this is a deadline question. A packet arriving with a
+     * quarter of the intended cushion left has not caused a glitch and is
+     * one bad moment from causing one, which is exactly the population
+     * worth counting before it becomes audible.
+     */
+    s_tight_below = s_target_samples / 4;
+    s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
+}
 static uint32_t s_pad_phase;
 
 /*
@@ -185,6 +246,39 @@ void oal_playout_set_volume(uint8_t percent)
     s_gain_q16 = oal_pcm_gain_q16(percent);
     s_volume = percent;
     ESP_LOGI(TAG, "volume %u%%", (unsigned)percent);
+}
+
+/*
+ * Move the target while the music plays.
+ *
+ * The servo already knows how: it pads a frame when the fill is below
+ * target and trims one when it is above, so raising the target makes the
+ * node consume very slightly slower until the ring is deeper, and lowering
+ * it does the reverse. Convergence is about a second of delay per thirty
+ * seconds of music, at a tenth of a percent of pitch error -- under two
+ * cents, inaudible, which is why the servo was built that way.
+ *
+ * The gradualness is the feature. Alignment gets tuned by ear against
+ * another speaker, and a setting that jumped would have to be re-judged
+ * from scratch after every nudge; one that slides lets you hear it close.
+ *
+ * Under the lock, because the playout task compares against every level
+ * this recomputes.
+ */
+esp_err_t oal_playout_set_target_ms(uint32_t target_ms)
+{
+    if (!s_state.running || s_lock == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    apply_target(s_rate ? s_rate : OAL_RTP_SAMPLE_RATE, target_ms);
+    size_t frames = s_target_samples / OAL_RTP_CHANNELS;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "playout target now %" PRIu32 " ms (%u frames)",
+             target_ms, (unsigned)frames);
+    return ESP_OK;
 }
 
 uint8_t oal_playout_volume(void)
@@ -659,12 +753,7 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
      * reboots for an update. */
     oal_playout_set_volume(config->volume);
 
-    s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
-    if (s_target_samples > CAPACITY_SAMPLES / 2) {
-        /* Leave room to absorb a burst above the target; a target equal to
-         * the capacity means the ring is full whenever it is working. */
-        s_target_samples = CAPACITY_SAMPLES / 2;
-    }
+    apply_target(rate, target_ms);
 
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) {
@@ -695,22 +784,6 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
 
     s_state.running = true;
     s_state.channel = config->channel;
-    s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;
-    /* Three quarters of the target: far enough down to mean the margin has
-     * really been eroded, not a normal swing, and above the level where a
-     * single ordinary gap empties the ring. */
-    s_pad_below = s_target_samples * 3 / 4;
-
-    /*
-     * A quarter of the target: 25 ms against a 100 ms goal.
-     *
-     * Not a fraction of capacity, because capacity is a buffer-sizing
-     * decision and this is a deadline question. A packet arriving with a
-     * quarter of the intended cushion left has not caused a glitch and is
-     * one bad moment from causing one, which is exactly the population
-     * worth counting before it becomes audible.
-     */
-    s_tight_below = s_target_samples / 4;
     s_margin_min = CAPACITY_SAMPLES + 1;
     s_margin_worst = CAPACITY_SAMPLES + 1;
     s_state.margin_worst_frames = 0;

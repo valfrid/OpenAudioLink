@@ -239,7 +239,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        /* Whether, never what. This document is polled by
                         * the Hub, the switchboard and every node's own
                         * page; a passphrase does not belong in it. */
-                       "\"partyReady\":%s,"
+                       "\"partyReady\":%s,\"delayMs\":%u,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
@@ -257,6 +257,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
+                       (unsigned)oal_config_get_delay_ms(),
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {
@@ -312,17 +313,26 @@ static esp_err_t config_handler(httpd_req_t *req)
     /* Which fields were present, recorded now. Everything below happens
      * after the tree is freed, and testing a pointer into a freed tree is
      * the kind of bug that works until the allocator is under pressure. */
+    const cJSON *delay = cJSON_GetObjectItemCaseSensitive(root, "delayMs");
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
+    const bool has_delay = cJSON_IsNumber(delay);
+    const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
 
     /* Either may be set alone: changing a speaker from stereo to mono has
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
-    if (!has_roles && !has_channel && !has_party) {
+    if (!has_roles && !has_channel && !has_party && !has_delay) {
         cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "expected roles, channel or party");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "expected roles, channel, delayMs or party");
+        return ESP_FAIL;
+    }
+    if (has_delay && (delay->valueint < 0 || delay->valueint > OAL_DELAY_MS_MAX)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delayMs out of range");
         return ESP_FAIL;
     }
 
@@ -401,6 +411,22 @@ static esp_err_t config_handler(httpd_req_t *req)
     if (has_channel && oal_config_set_channel(wanted) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channel not stored");
         return ESP_FAIL;
+    }
+    /*
+     * Stored and applied at once, unlike roles and channel.
+     *
+     * Those two decide which tasks exist and what the playout does with
+     * each frame, so they wait for a reboot. This one only moves a target
+     * the servo is already chasing, and it is tuned by ear against another
+     * speaker in the room — a value that needed a reboot to hear would
+     * make that a twenty-minute job instead of a two-minute one.
+     */
+    if (has_delay) {
+        if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delay not stored");
+            return ESP_FAIL;
+        }
+        (void)oal_playout_set_target_ms(CONFIG_OAL_PLAYOUT_MS + delay_ms);
     }
     if (has_party && oal_wifi_set_party(party_ssid, party_password) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party network not stored");

@@ -75,6 +75,31 @@ esp_err_t oal_config_set_roles(oal_roles_t roles);
  */
 
 /** Stored channel profile, or stereo when unset or unreadable. */
+/**
+ * Most extra delay a node will accept, in milliseconds.
+ *
+ * The playout caps its target at half the ring anyway; this refuses the
+ * request outright so a typo comes back as an error rather than as a
+ * silently clamped setting nobody can see.
+ */
+#define OAL_DELAY_MS_MAX 200
+
+/**
+ * Extra playout delay for this node, in milliseconds, or 0.
+ *
+ * Corrects a difference *between* nodes rather than a property of the
+ * installation: given the same packet, a USB dongle plays tens of
+ * milliseconds later than an I²S DAC, so the DAC has to be held back to
+ * meet it. Which node needs the trim depends on what is plugged into it.
+ *
+ * Only ever positive — nothing can play a sample before it arrives, so
+ * alignment is always the early node waiting.
+ */
+uint32_t oal_config_get_delay_ms(void);
+
+/** Stores it. Applied immediately by the caller and again at next boot. */
+esp_err_t oal_config_set_delay_ms(uint32_t delay_ms);
+
 oal_channel_t oal_config_get_channel(void);
 
 /** Persists the channel profile. Rejects values outside the enum. */
