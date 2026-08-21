@@ -149,6 +149,29 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Sets this node's extra playout delay, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Applies immediately and persists on the node, like volume rather
+    /// than like roles. The node's pad/trim servo walks the ring to the new
+    /// depth at a tenth of a percent — about a second of delay per thirty
+    /// seconds of music, under two cents of pitch error — so the change
+    /// slides in rather than jumping.
+    ///
+    /// That is deliberate and it is why this is worth a button: alignment
+    /// is judged by ear against another speaker in the room, and a value
+    /// that jumped would have to be re-judged from scratch after every
+    /// nudge.
+    /// </remarks>
+    public async Task<bool> SetDelayAsync(
+        DeviceRecord device, int delayMs, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Setting delay on {Device} to {DelayMs} ms", device.Name, delayMs);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { delayMs }), cancellationToken);
+    }
+
+    /// <summary>
     /// Sets the device's playback level, 0-100. Applies immediately on the
     /// node and persists there.
     /// </summary>

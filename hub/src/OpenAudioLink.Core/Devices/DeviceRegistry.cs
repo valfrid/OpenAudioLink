@@ -26,6 +26,22 @@ public sealed record DeviceStatus
     public int? Rssi { get; init; }
 
     /// <summary>
+    /// Extra playout delay this node holds, in milliseconds, or null from
+    /// firmware that predates it.
+    /// </summary>
+    /// <remarks>
+    /// Per node, because it corrects a difference *between* nodes rather
+    /// than a property of the installation: given the same packet a USB
+    /// dongle plays tens of milliseconds later than an I²S DAC, so the DAC
+    /// has to be held back to meet it. Which one needs the trim depends on
+    /// what is plugged into it.
+    ///
+    /// Only ever positive — nothing plays a sample before it arrives, so
+    /// alignment is always the early node waiting for the late one.
+    /// </remarks>
+    public int? DelayMs { get; init; }
+
+    /// <summary>
     /// Which of the stream's two channels this node plays: stereo, mono,
     /// left or right (decision 10). Read from /status rather than the
     /// announce, so the multicast every device hears stays lean.

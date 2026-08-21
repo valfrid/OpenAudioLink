@@ -728,7 +728,12 @@
           // does. This one is for balancing a pair, or for a kitchen speaker
           // that is simply louder than the rest of its cast point.
           `<button data-cmd="volume" data-id="${esc(d.id)}" ` +
-          `data-volume="${esc(d.status?.volume ?? '')}"${disabled}>Volume…</button>`;
+          `data-volume="${esc(d.status?.volume ?? '')}"${disabled}>Volume…</button> ` +
+          // Alignment between speakers, not a property of one. Beside
+          // Volume because it is the same shape of setting: a number typed
+          // once that the node keeps and applies immediately.
+          `<button data-cmd="delay" data-id="${esc(d.id)}" ` +
+          `data-delay="${esc(d.status?.delayMs ?? '')}"${disabled}>Delay…</button>`;
         const s = d.status;
         /* The running version travels on the row so the update button can
          * see what it would be replacing, and refuse a silent downgrade. */
@@ -1122,6 +1127,48 @@
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the volume: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'delay') {
+        /*
+         * Why this exists at all: two speakers playing one stream through
+         * different output stages do not come out together. A USB dongle
+         * carries the host driver's ring, 1 ms USB frames and its own
+         * buffering on top of the playout; an I²S DAC carries four DMA
+         * descriptors. The gap is tens of milliseconds and obvious in a
+         * room.
+         *
+         * One-sided on purpose, and the prompt says so, because the first
+         * instinct is to speed the slow one up and that is not available:
+         * nothing plays a sample before it arrives. Only the early node
+         * can move, and only later.
+         */
+        const current = button.dataset.delay;
+        const answer = prompt(
+          'Extra playback delay for this speaker, 0 to 200 ms.\n\n' +
+          'For lining up speakers that use different output stages — a USB\n' +
+          'dongle plays later than a soldered DAC, so add delay to the one\n' +
+          'that is early. Delay can only be added; nothing can play sooner.\n\n' +
+          'Applies immediately and slides in over about half a minute, so\n' +
+          'you can hear it close. Blank means firmware older than 0.25.',
+          current);
+        if (answer === null) return;
+        const delayMs = Number(answer.trim());
+        if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 200) {
+          say('Give a whole number of milliseconds from 0 to 200.');
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/delay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delayMs }),
+        });
+        if (response.ok) {
+          say(delayMs === 0
+            ? 'Delay removed; it will slide back over about half a minute.'
+            : `Holding this speaker back ${delayMs} ms — listen as it settles.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the delay: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');

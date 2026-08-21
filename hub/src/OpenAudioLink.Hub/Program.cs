@@ -382,6 +382,45 @@ app.MapPost("/api/devices/{id}/roles",
         : Results.StatusCode(502);
 });
 
+/*
+ * Extra playout delay, per node.
+ *
+ * Exists because two speakers playing one stream through different output
+ * stages do not come out together: the USB path carries the host driver's
+ * ring, 1 ms USB frames and the dongle's own buffering on top of the
+ * playout, where I²S carries four DMA descriptors. Tens of milliseconds,
+ * and obvious the moment both play in one room.
+ *
+ * Bounds checked here as well as on the node so the operator gets the
+ * range rather than a bare 400 relayed from firmware — and because the
+ * useful half of the message is *why* it is one-sided: nothing can play a
+ * sample before it arrives, so alignment is always the early node waiting.
+ */
+app.MapPost("/api/devices/{id}/delay",
+    async (string id, DelayRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var delay = request.DelayMs ?? -1;
+    if (delay < 0 || delay > 200)
+    {
+        return Results.BadRequest(new
+        {
+            error = "delayMs must be 0 to 200; delay is only ever added, to whichever "
+                  + "node plays early",
+        });
+    }
+
+    var ok = await commands.SetDelayAsync(device, delay, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", delayMs = delay })
+        : Results.StatusCode(502);
+});
+
 app.MapPost("/api/devices/{id}/channel",
     async (string id, ChannelRequest request, DeviceRegistry registry,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>
@@ -1365,6 +1404,7 @@ internal sealed record NodeStreamRequest(
 internal sealed record JoinRequest(string? Id, int? Port);
 
 internal sealed record ChannelRequest(string? Channel);
+internal sealed record DelayRequest(int? DelayMs);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 
