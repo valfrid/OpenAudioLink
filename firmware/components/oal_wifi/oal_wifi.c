@@ -684,6 +684,82 @@ static void log_tx_power(void)
  * unrecoverable in the field, so it must say which call failed instead of
  * aborting silently.
  */
+/*
+ * Whether the portal is up because the network was missing, or because the
+ * node has never been told what network to look for. Only the first is
+ * worth retrying: there is nothing to retry towards when NVS is empty.
+ */
+static bool s_had_credentials;
+
+/* The network being retried towards, kept for the log line that says so.
+ * The copy in `oal_wifi_start` is a local and gone by the time the timer
+ * fires. */
+static char s_ssid[33];
+
+/* Long enough that a household router is back before the second attempt,
+ * short enough that nobody stands in front of a silent speaker wondering. */
+#define PORTAL_RETRY_US (180 * 1000000ULL)
+
+static esp_timer_handle_t s_portal_retry_timer;
+
+/*
+ * Try the network again by starting over.
+ *
+ * The portal cannot simply add a station interface and look: `start_portal`
+ * runs a plain AP on purpose, because with AP+STA up the access point's
+ * DHCP server stops handing out leases and a phone joins to no address.
+ * Tearing the AP down, trying the station, and rebuilding it on failure is
+ * three states to get wrong.
+ *
+ * Rebooting is one. The boot path already tries the station properly —
+ * every channel, strongest first, ten attempts — and already falls back
+ * here if that fails, so a restart *is* the retry, using the code most
+ * exercised in the project rather than a second implementation of it.
+ *
+ * Why this is needed at all: the portal used to be terminal. A power cut
+ * takes the router and the nodes down together, the nodes boot in fifteen
+ * seconds and give up at thirty, and the router is still coming up a minute
+ * later — so every node in the house ended up in a setup portal, and
+ * nothing recovered them but rebooting each one by hand.
+ *
+ * Never while somebody is connected. A phone on the portal is a person
+ * halfway through typing a password, and cutting that off to go and look
+ * for a network they are in the middle of telling us about would be its own
+ * kind of stupid.
+ */
+static void portal_retry_fired(void *arg)
+{
+    wifi_sta_list_t stations;
+    if (esp_wifi_ap_get_sta_list(&stations) == ESP_OK && stations.num > 0) {
+        ESP_LOGI(TAG, "portal has %d client(s); not retrying the network yet",
+                 (int)stations.num);
+        return;
+    }
+
+    ESP_LOGW(TAG, "nobody on the portal — restarting to try \"%s\" again", s_ssid);
+    esp_restart();
+}
+
+static void start_portal_retry(void)
+{
+    if (!s_had_credentials) {
+        ESP_LOGI(TAG, "no stored credentials, so nothing to retry towards");
+        return;
+    }
+
+    const esp_timer_create_args_t args = {
+        .callback = portal_retry_fired,
+        .name = "oal_portal_retry",
+    };
+    if (esp_timer_create(&args, &s_portal_retry_timer) != ESP_OK) {
+        ESP_LOGE(TAG, "could not create the portal retry timer");
+        return;
+    }
+    esp_timer_start_periodic(s_portal_retry_timer, PORTAL_RETRY_US);
+    ESP_LOGI(TAG, "will retry the stored network every %d s while the portal is idle",
+             (int)(PORTAL_RETRY_US / 1000000ULL));
+}
+
 static void start_portal(void)
 {
     esp_err_t err;
@@ -767,6 +843,8 @@ static void start_portal(void)
 
     ESP_LOGW(TAG, "provisioning portal up: connect to \"%s\" and open http://192.168.4.1/",
              (char *)config.ap.ssid);
+
+    start_portal_retry();
 }
 
 /* ---------- entry point ---------- */
@@ -794,7 +872,10 @@ oal_wifi_result_t oal_wifi_start(const char *fallback_ssid, const char *fallback
         }
     }
 
-    if (ssid[0] != '\0' && try_station(ssid, password)) {
+    s_had_credentials = ssid[0] != '\0';
+    strlcpy(s_ssid, ssid, sizeof(s_ssid));
+
+    if (s_had_credentials && try_station(ssid, password)) {
         return OAL_WIFI_STA;
     }
 
