@@ -328,21 +328,45 @@ static esp_err_t config_handler(httpd_req_t *req)
     /* Which fields were present, recorded now. Everything below happens
      * after the tree is freed, and testing a pointer into a freed tree is
      * the kind of bug that works until the allocator is under pressure. */
+    const cJSON *output = cJSON_GetObjectItemCaseSensitive(root, "output");
     const cJSON *delay = cJSON_GetObjectItemCaseSensitive(root, "delayMs");
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
+    const bool has_output = cJSON_IsString(output);
     const bool has_delay = cJSON_IsNumber(delay);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
 
     /* Either may be set alone: changing a speaker from stereo to mono has
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
-    if (!has_roles && !has_channel && !has_party && !has_delay) {
+    if (!has_roles && !has_channel && !has_party && !has_delay && !has_output) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "expected roles, channel, delayMs or party");
+                            "expected roles, channel, output, delayMs or party");
+        return ESP_FAIL;
+    }
+
+    /*
+     * The output stage, and the reason it is settable from here at all.
+     *
+     * `oal_config_set_output` existed from the day the USB sink did, and
+     * nothing ever called it: the stage was written during provisioning
+     * and after that a node was whatever it had been told to be. That was
+     * fine until a firmware change left a USB node short of heap -- the
+     * dongle would not open, and neither would OTA, because
+     * esp_https_ota allocates from the same pool. A node that cannot be
+     * fixed remotely because of the fault being fixed.
+     *
+     * This is the way out. Telling a starved node to come up on I²S costs
+     * it nothing to receive, and the reboot that follows leaves the USB
+     * host stack uninstalled and the heap free enough to take an update.
+     */
+    oal_output_t wanted_output = OAL_OUTPUT_DEFAULT;
+    if (has_output && !oal_output_parse(output->valuestring, &wanted_output)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown output");
         return ESP_FAIL;
     }
     if (has_delay && (delay->valueint < 0 || delay->valueint > OAL_DELAY_MS_MAX)) {
@@ -436,6 +460,13 @@ static esp_err_t config_handler(httpd_req_t *req)
      * speaker in the room — a value that needed a reboot to hear would
      * make that a twenty-minute job instead of a two-minute one.
      */
+    /* At the next boot, like roles: the sink is chosen when playout
+     * starts, and swapping it under a running stream would mean tearing
+     * down live audio to change something that describes the box. */
+    if (has_output && oal_config_set_output(wanted_output) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "output not stored");
+        return ESP_FAIL;
+    }
     if (has_delay) {
         if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delay not stored");
@@ -453,8 +484,10 @@ static esp_err_t config_handler(httpd_req_t *req)
     oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
                      "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
-                     "\"partyReady\":%s,\"appliesAt\":\"reboot\"}",
+                     "\"output\":\"%s\",\"partyReady\":%s,"
+                     "\"appliesAt\":\"reboot\"}",
                      stored, oal_channel_name(oal_config_get_channel()),
+                     oal_output_name(oal_config_get_output()),
                      oal_wifi_has_party() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, n);
