@@ -264,6 +264,50 @@ is only meaningful once the buffer has settled, and repeat runs will differ
 by whatever the buffer is doing. Measure after a stream has been running
 long enough to converge, and treat a single reading as approximate.
 
+## Aligning two speakers needs far less than this
+
+The full cycle above exists to derive room correction. Measuring the
+*offset between two speakers* is a much smaller problem, and worth
+separating because it can ship long before any DSP does.
+
+**Play the same signal to both at once and autocorrelate one capture.**
+The recording contains two copies of the signal separated by exactly the
+offset, so the autocorrelation has a peak at that lag. No reference clock,
+no known send time, no deconvolution — the measurement is self-contained in
+a single capture from a single microphone.
+
+It needs a signal with a sharp autocorrelation peak: a click, an MLS
+sequence, or the same sweep the rest of this document uses. A sine will not
+do, because a periodic signal correlates with itself at every period.
+
+**Microphone placement is forgiving here, unlike for room response.** Sound
+covers 34 cm per millisecond, and the offsets being corrected are tens of
+milliseconds: half a metre of asymmetry is 1.5 ms of error against a 30 ms
+quantity. Stand the microphone roughly between the two speakers and the
+geometry is a rounding error. Absolute room measurements are not so kind,
+which is why the rest of this proposal is careful about where the node
+stands and this part need not be.
+
+### There is now something to apply the answer to
+
+Firmware 0.25.0 added `delayMs`, a per-node playout trim in NVS, set from
+the Hub and applied live. That is the actuator this measurement was always
+going to need, and it arrived for an unrelated reason: two speakers playing
+one stream through different output stages do not come out together.
+
+The gap is a property of the output stage. A USB dongle carries the host
+driver's ring, 1 ms USB frames and its own internal buffering on top of the
+playout; an I²S DAC carries four DMA descriptors. Measured by ear the
+difference is tens of milliseconds — enough to be obvious in a room, and
+this file previously assumed both were "about 20 ms".
+
+Which suggests an order of work. Measure one CX31993 properly, once, and
+the number becomes a sensible **default** for `output = usb` rather than
+something every installation discovers by ear. Per-node trim then handles
+what remains: a different dongle, a powered speaker with its own DSP, a
+listening position that is not equidistant. Measure to find the constant,
+trim to handle the variance.
+
 ## The measurement cycle
 
 Started by a person, from the setup page, against one cast point.

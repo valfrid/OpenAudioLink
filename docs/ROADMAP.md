@@ -400,7 +400,12 @@ Priority is intentionally not fixed:
 - Home Assistant integration
 - Bluetooth input
 - DSP — including automatic speaker and room calibration with a
-  measurement microphone, proposed in `ROOM-CALIBRATION.md`
+  measurement microphone, proposed in `ROOM-CALIBRATION.md`. The same
+  microphone measures the offset *between* speakers, which is a much
+  smaller job than room correction and could ship first: one capture with
+  both playing, autocorrelated, has a peak at exactly the offset. The
+  actuator already exists — `delayMs`, added in firmware 0.25.0 because a
+  USB dongle and an I²S DAC do not play together.
 - more hardware profiles
 - alternative Consumers: USB Audio Class DAC on an ESP32-S3 in host mode —
   now an isolated experimental track with the dongle in hand and its
