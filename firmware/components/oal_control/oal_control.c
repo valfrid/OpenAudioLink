@@ -138,7 +138,18 @@ static char s_wifi[192];
 static char s_controller[160];
 static char s_join[96];
 static char s_input[112];
-static char s_body[1024];
+/*
+ * /status, sized against its measured worst case rather than by eye.
+ *
+ * 1 060 bytes with every field saturated -- a 32-character id, a long
+ * node name, a full-length SSID, and the partyReady and delayMs fields
+ * added since this was 1 024. It had not failed yet only because the
+ * names in this house are short, which is not a property to rely on.
+ *
+ * Same lesson as s_stream_body below, found in the same hour: measure the
+ * format, do not estimate it.
+ */
+static char s_body[1536];
 
 /* ---------- GET / ---------- */
 
@@ -261,6 +272,10 @@ static esp_err_t status_handler(httpd_req_t *req)
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {
+        /* Loud: from outside, a response that will not fit looks exactly
+         * like a node that has stopped answering. */
+        ESP_LOGE(TAG, "status needs %d bytes, buffer is %u",
+                 len, (unsigned)sizeof(s_body));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "status too large");
         return ESP_FAIL;
     }
@@ -513,7 +528,26 @@ static esp_err_t volume_handler(httpd_req_t *req)
  * stream. The crash showed up on a producer, which is the branch below
  * that carries both a destination list and the counters.
  */
-static char s_stream_body[832];
+/*
+ * Sized against the measured worst case, not by eye.
+ *
+ * The consumer branch renders 1 100 bytes with every counter at its
+ * widest: the stats object alone is 345, and the playout object has grown
+ * a receive-buffer size, two fill marks, three deadline counters, two
+ * margins and five distribution buckets since this was 832.
+ *
+ * It did not fail on the first packet, which is what made it confusing.
+ * The numbers widen with uptime -- packetsSubmitted, framesPlayed and the
+ * buckets all gain digits -- so a node played correctly for minutes and
+ * then started answering 500, and the Hub reported it as a node that had
+ * stopped talking rather than as a response that no longer fitted.
+ *
+ * Measured by extracting the snprintf onto the host and rendering it with
+ * every field saturated. Re-measure before adding another field; this is
+ * the third time a fixed buffer or format string in this file has cost a
+ * debugging session.
+ */
+static char s_stream_body[1536];
 
 static esp_err_t stream_get_handler(httpd_req_t *req)
 {
@@ -635,6 +669,10 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
     }
 
     if (len <= 0 || len >= (int)body_size) {
+        /* Loud, because from outside this is indistinguishable from a
+         * node that has stopped answering. */
+        ESP_LOGE(TAG, "stream status needs %d bytes, buffer is %u",
+                 len, (unsigned)body_size);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "stream status too large");
         return ESP_FAIL;
     }
