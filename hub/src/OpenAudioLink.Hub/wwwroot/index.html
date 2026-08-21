@@ -1355,7 +1355,19 @@
       if (p.packetsSubmitted == null) {
         return '<span class="muted">not measured</span>';
       }
+      /*
+       * Nothing arrived, so nothing was in time or out of it.
+       *
+       * Without this a node receiving no stream at all renders a green
+       * "all in time" with 0 ms of margin -- perfect health for a speaker
+       * that is not in the cast point. Zero packets is the absence of a
+       * measurement, and this table has one job: never to let those two
+       * look alike.
+       */
       const submitted = p.packetsSubmitted || 0;
+      if (submitted === 0) {
+        return '<span class="muted">nothing received</span>';
+      }
       const late = p.latePackets ?? 0;
       const ppm = submitted ? Math.round((late / submitted) * 1e6) : 0;
       const level = late === 0 ? 'good' : ppm > 1000 ? 'poor' : 'fair';
@@ -1459,14 +1471,20 @@
           const st = stream.stats ?? {};
           const lossPct = ((st.lossPpm ?? 0) / 10000).toFixed(3);
           const lossClass = st.lossPpm > 10000 ? 'poor' : st.lossPpm > 1000 ? 'fair' : 'good';
+          // Same trap as the timing cell, and older: with nothing expected,
+          // "0 (0.000%)" in green is a perfect score for a node that has
+          // not been sent anything.
+          const nothingYet = (st.expected ?? 0) === 0;
           // Jitter arrives in RTP ticks; at 48 kHz, milliseconds are what
           // a buffer is actually sized in.
           const jitterMs = ((st.jitter ?? 0) / 48).toFixed(2);
           rows.push(`<tr><td>${esc(name)}</td><td>consumer</td>` +
             `<td>${(st.received ?? 0).toLocaleString()} of ` +
             `${(st.expected ?? 0).toLocaleString()}</td>` +
-            `<td><span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
-            ` (${lossPct}%)</span></td>` +
+            `<td>${nothingYet
+              ? '<span class="muted">—</span>'
+              : `<span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
+                ` (${lossPct}%)</span>`}</td>` +
             `<td>${timingCell(stream)}</td>` +
             `<td>${shapeCell(st)}</td>` +
             `<td>${jitterMs} ms</td>` +
