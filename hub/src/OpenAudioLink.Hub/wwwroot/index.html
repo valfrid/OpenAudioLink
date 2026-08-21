@@ -121,12 +121,36 @@
       <button id="scan-close">Close</button>
     </p>
     <p id="scan-note" class="hint"></p>
+
+    <!--
+      The networks this node may actually join: the SSID it was provisioned
+      onto, and the OpenAudioLink-XXXXXX setup network a node serves before
+      it has one. Every access point advertising those is a real choice the
+      node had, and the only reason to ask which it picked.
+    -->
     <table id="scan-results" hidden>
       <thead>
         <tr><th>Network</th><th>Access point</th><th>Ch</th><th>Signal</th><th></th></tr>
       </thead>
       <tbody></tbody>
     </table>
+    <p id="scan-none" class="empty" hidden></p>
+
+    <!--
+      Everything else is a neighbour. It cannot be joined and matters only
+      as noise, so it is folded away — but kept, because an empty band is a
+      finding in its own right: run 33 blamed a channel until a scan showed
+      nothing else was on it.
+    -->
+    <details id="scan-others" hidden>
+      <summary class="hint"></summary>
+      <table>
+        <thead>
+          <tr><th>Network</th><th>Access point</th><th>Ch</th><th>Signal</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </details>
   </section>
 
   <h2>Cast points</h2>
@@ -300,11 +324,15 @@
      * The Wi-Fi panel.
      *
      * A node is provisioned onto one SSID and, before that, serves its own
-     * "OpenAudioLink-XXXXXX" setup network. Those two are the ones a node
-     * can actually join; every other radio in the list is a neighbour and
-     * matters only as noise. So they sort to the top and the rest is kept
-     * but dimmed — a room with nothing else in it is itself a finding, as
-     * run 33 turned out to be.
+     * "OpenAudioLink-XXXXXX" setup network. Those two are the approved
+     * group: every access point advertising one of them is a choice the
+     * node really had, and they are the whole reason to ask which it took.
+     * They get the table.
+     *
+     * Everything else is a neighbour the node cannot join. Folded into a
+     * disclosure rather than deleted, because an empty band is a finding
+     * too — run 33 blamed a channel until a scan showed nothing else was
+     * on it.
      * --------------------------------------------------------------- */
     let scanDeviceId = null;
 
@@ -312,33 +340,81 @@
       document.getElementById('scan-note').textContent = text;
     };
 
+    // Every failure path clears all three, so a stale list from the last
+    // node never sits under a fresh error about this one.
+    function hideScanTables() {
+      document.getElementById('scan-results').hidden = true;
+      document.getElementById('scan-none').hidden = true;
+      document.getElementById('scan-others').hidden = true;
+    }
+
+    /*
+     * An access point named by the last byte of its BSSID.
+     *
+     * A mesh hands every node the same OUI and the same first five bytes,
+     * so "7c:10:c9:7a:13:b1" and "7c:10:c9:7a:0b:d0" differ in a place the
+     * eye has to hunt for — and these get read side by side, in a table, to
+     * answer "is it on the same one it was". The last byte is the part that
+     * varies. The full address stays in the title attribute for the times
+     * it is genuinely needed.
+     */
+    const apId = bssid => (bssid ?? '').split(':').pop()?.toUpperCase() || '?';
+
     function joinable(ap, ownSsid) {
       return (ownSsid && ap.ssid === ownSsid) || /^OpenAudioLink-/.test(ap.ssid ?? '');
     }
 
-    function renderScan(aps, ownSsid) {
-      const table = document.getElementById('scan-results');
-      table.hidden = aps.length === 0;
+    // Strongest first, which is the order a node choosing between them
+    // would rank them in.
+    const byStrength = (a, b) => (b.rssi ?? -127) - (a.rssi ?? -127);
 
-      // Ours first, then by signal. Within one SSID that ranks the mesh's
-      // access points exactly as a node choosing between them would.
-      const sorted = [...aps].sort((a, b) => {
-        const mine = joinable(b, ownSsid) - joinable(a, ownSsid);
-        return mine !== 0 ? mine : (b.rssi ?? -127) - (a.rssi ?? -127);
-      });
-
-      table.querySelector('tbody').innerHTML = sorted.map(ap => {
+    function scanRows(aps) {
+      return aps.map(ap => {
         const rssi = ap.rssi ?? -127;
         const level = rssi >= -65 ? 'good' : rssi >= -75 ? 'fair' : 'poor';
-        const mine = joinable(ap, ownSsid);
-        return `<tr${mine ? '' : ' class="empty"'}>` +
+        return '<tr>' +
           `<td>${esc(ap.ssid ?? '')}</td>` +
-          `<td class="rssi">${esc(ap.bssid ?? '')}</td>` +
+          `<td class="rssi" title="${esc(ap.bssid ?? '')}">${esc(apId(ap.bssid))}</td>` +
           `<td>${esc(ap.channel ?? '')}</td>` +
           `<td><span class="rssi ${level}">${esc(rssi)} dBm</span></td>` +
           `<td>${ap.current ? '<strong>on this one</strong>' : ''}</td>` +
           '</tr>';
       }).join('');
+    }
+
+    function renderScan(aps, ownSsid) {
+      const mine = aps.filter(a => joinable(a, ownSsid)).sort(byStrength);
+      const others = aps.filter(a => !joinable(a, ownSsid)).sort(byStrength);
+
+      const table = document.getElementById('scan-results');
+      const none = document.getElementById('scan-none');
+      table.hidden = mine.length === 0;
+      none.hidden = mine.length !== 0;
+      if (mine.length === 0) {
+        /*
+         * Worth saying out loud rather than showing an empty table. A node
+         * answering this request is joined to something by definition — it
+         * replied over Wi-Fi — so hearing none of its own access points
+         * means the scan missed them, not that they are gone.
+         *
+         * The firmware keeps the first twelve records the driver returns,
+         * in the order it returns them rather than by signal, so in a dense
+         * band a node's own network can fall off the end.
+         */
+        none.textContent = others.length
+          ? `None of the ${others.length} networks heard are ones this node can join — ` +
+            'the scan keeps only the first twelve it finds, so in a crowded ' +
+            'band its own can be crowded out. Scan again.'
+          : 'The scan came back empty.';
+      }
+      table.querySelector('tbody').innerHTML = scanRows(mine);
+
+      const details = document.getElementById('scan-others');
+      details.hidden = others.length === 0;
+      details.querySelector('summary').textContent =
+        `${others.length} other network${others.length === 1 ? '' : 's'} heard — ` +
+        'neighbours, which this node cannot join';
+      details.querySelector('tbody').innerHTML = scanRows(others);
     }
 
     /**
@@ -358,13 +434,13 @@
           scanNote(response.status === 404
             ? 'This node is too old to scan — /wifi/scan arrived in firmware 0.15.'
             : `The node did not answer the scan (${response.status}).`);
-          document.getElementById('scan-results').hidden = true;
+          hideScanTables();
           return null;
         }
         data = await response.json();
       } catch {
         scanNote('Could not reach the node.');
-        document.getElementById('scan-results').hidden = true;
+        hideScanTables();
         return null;
       }
 
@@ -383,11 +459,11 @@
         // this one is choosing it over something better, and that is a
         // different problem from not hearing anything better.
         scanNote(
-          `On ${here.bssid} at ${here.rssi} dBm, but ${best.bssid} is ` +
+          `On ${apId(here.bssid)} at ${here.rssi} dBm, but ${apId(best.bssid)} is ` +
           `${best.rssi - here.rssi} dB stronger. A rejoin has something to move to.`);
       } else {
         scanNote(
-          `On ${here.bssid} at ${here.rssi} dBm — the strongest of ` +
+          `On ${apId(here.bssid)} at ${here.rssi} dBm — the strongest of ` +
           `${options.length} it can join. Nothing to move to.`);
       }
       return here?.bssid ?? null;
@@ -398,7 +474,7 @@
       const device = lastDevices.find(d => d.id === id);
       document.getElementById('scan-device').textContent = device?.name ?? id;
       document.getElementById('scan-panel').hidden = false;
-      document.getElementById('scan-results').hidden = true;
+      hideScanTables();
       await runScan(id, device?.status?.ssid);
     }
 
@@ -446,7 +522,7 @@
       const after = await runScan(id, ownSsid);
       if (after && before && after !== before) {
         scanNote(`${document.getElementById('scan-note').textContent} ` +
-                 `Moved from ${before}.`);
+                 `Moved from ${apId(before)}.`);
       } else if (after && before) {
         scanNote(`${document.getElementById('scan-note').textContent} ` +
                  'Rejoined the same access point.');
