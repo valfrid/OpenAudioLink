@@ -1482,3 +1482,81 @@ hardware profile. Roles are already how this project says what a box is for.
   microphone built into a speaker, which this decision forbids.
 - Anything spoken back into a room collides with one stream at a time
   (decision 2). Recorded in `LISTENING.md`; not solved here.
+
+---
+
+## 17. The jitter buffer needs room to grow, and internal RAM has none left
+
+**Date:** 2026-08-21
+**Status:** proposed — direction agreed, nothing implemented
+
+### The position
+
+The playout ring is 200 ms of internal DRAM and the target is 100 ms. Both
+are at their practical limits: `s_ring` is 75 kB of a chip that also holds
+a Wi-Fi stack, an lwIP receive queue raised to 64 buffers, and — on a
+dongle node — a USB host stack. Doubling the ring took 75 kB more, and the
+USB node lost its dongle and its ability to accept an OTA, because
+`usb_host_install` and `esp_https_ota` allocate from what was taken.
+
+So the ceiling is not a number in a header. It is the memory map.
+
+### Why that matters more than it looked
+
+Comparable systems buffer an order of magnitude deeper. Snapcast defaults
+to around a second, AirPlay to about two. This project chose 5 ms packets
+at 200 per second — professional-grade timing, AES67 territory — and put
+them on Wi-Fi behind 100 ms of buffer.
+
+The measurements say the comparison is the right way round. Run 32 caught a
+**1.12-second** delivery gap. Run 33 found the ring's low-water mark jumping
+between 30 and 70 ms window to window. A comment in `oal_playout.c` calls
+200 ms "far longer than any gap a working sender leaves"; that is not true
+on this medium, and the projects that came before chose a second because
+somebody measured the same thing.
+
+*(Those figures are from recollection and want checking against Snapcast's
+documentation before anything is designed around them.)*
+
+### The direction
+
+**Leave headroom for a deeper buffer**, rather than tuning the last
+milliseconds out of a ring that has none. The 50 ms delay trim added today
+is a real improvement and it is also the whole remaining budget: 100 ms
+default plus 50 ms maximum is exactly three quarters of the ring, now
+enforced by static assertion in two files.
+
+PSRAM is the obvious lever and is **not enabled**. The XIAO carries 8 MB;
+`CONFIG_SPIRAM` is unset, and the only mention of PSRAM anywhere in the
+configuration was a comment — which was read and repeated as though it were
+a setting. A second of stereo is 384 kB, impossible in DRAM and unremarkable
+in PSRAM.
+
+### What has to happen first
+
+Not the PSRAM switch. **OTA rollback**, which is also off.
+
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` plus a mark-valid call once a node
+is demonstrably healthy means a bad image reverts itself at the next
+reboot. Without it, a memory-map change that does not boot is a cable trip
+to every node — and the partition table already records that a table change
+cannot be delivered over the air at all.
+
+The rollback change has its own sharp edge: with it enabled, an image that
+never calls `esp_ota_mark_app_valid_cancel_rollback()` reverts *every*
+time, including a good one. It deserves its own release and its own
+careful placement.
+
+Order: rollback, prove it. Then cable-flash **one** node with PSRAM and
+confirm. Then OTA a second and find out whether the bootloader matters,
+with a net under it.
+
+### Open
+
+- Whether an OTA-only PSRAM upgrade boots. The bootloader is never
+  replaced by OTA, `esp_psram_init` runs in the app, and flash SPI mode
+  lives in the bootloader. Untested, and cheap to test once rollback exists.
+- What target a deeper ring should actually aim at, measured rather than
+  copied.
+- What latency is acceptable. House playback does not care; a DJ at a
+  turntable in standalone mode might.
