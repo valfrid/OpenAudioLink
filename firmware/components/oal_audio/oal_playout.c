@@ -63,6 +63,14 @@ static const char *TAG = "oal_playout";
 #define CAPACITY_PACKETS 40
 #define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
 
+/* The published ceiling has to *be* the one apply_target enforces below.
+ * Two numbers describing one limit is how the Hub came to offer 0-200 ms
+ * against a real maximum of 50. */
+_Static_assert(CAPACITY_SAMPLES * 3 / 4
+                   == (size_t)OAL_RTP_SAMPLE_RATE * OAL_PLAYOUT_MAX_TARGET_MS
+                      / 1000 * OAL_RTP_CHANNELS,
+               "OAL_PLAYOUT_MAX_TARGET_MS must equal three quarters of the ring");
+
 /*
  * How long the ring may stay empty before playout treats the stream as
  * finished rather than stumbling. 200 ms: far longer than any gap a

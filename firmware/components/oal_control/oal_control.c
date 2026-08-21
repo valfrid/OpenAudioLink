@@ -30,6 +30,12 @@ static const char *TAG = "oal_control";
 #define CONTROL_PORT 41001
 #define PROTOCOL_VERSION "0.1"
 
+/* A node must not accept a delay the ring cannot hold. The alternative is
+ * silent clamping: a setting that reads back differently from what was
+ * asked for, on the one screen built to say what a node is doing. */
+_Static_assert(CONFIG_OAL_PLAYOUT_MS + OAL_DELAY_MS_MAX <= OAL_PLAYOUT_MAX_TARGET_MS,
+               "default playout target plus OAL_DELAY_MS_MAX must fit the ring");
+
 static oal_control_config_t s_config;
 
 /* ---------- GET /status ---------- */
