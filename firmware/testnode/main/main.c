@@ -218,10 +218,20 @@ void app_main(void)
             .ws_gpio     = CONFIG_OAL_I2S_WS_GPIO,
             .dout_gpio   = CONFIG_OAL_I2S_DOUT_GPIO,
             .sample_rate = OAL_RTP_SAMPLE_RATE,
-            /* Plus this node's own trim, so a DAC can be held back to
-             * meet a dongle that plays later through the same stream. */
-            .target_ms   = CONFIG_OAL_PLAYOUT_MS + oal_config_get_delay_ms(),
+            .target_ms   = CONFIG_OAL_PLAYOUT_MS,
         };
+        /*
+         * Plus this node's own trim, so a DAC can be held back to meet a
+         * dongle that plays later through the same stream.
+         *
+         * Assigned rather than initialised, because `playout` is static
+         * and a static initialiser has to be a constant expression -- the
+         * same reason the three reads below are assignments. Written as an
+         * initialiser first, which does not compile, and the file already
+         * had the answer three lines further down.
+         */
+        playout.target_ms += oal_config_get_delay_ms();
+
         /* Read once at boot: /config stores a channel change and reports
          * that it applies at reboot, so this is where it takes effect. */
         playout.channel = oal_config_get_channel();
