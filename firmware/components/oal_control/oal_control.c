@@ -568,6 +568,13 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * thousand -- a ring that reads healthy on every
                         * poll can still be touching zero between them. */
                        "\"fillMinFrames\":%u,\"fillMaxFrames\":%u,"
+                       /* Whether packets made their deadline, which is the
+                        * only question that decides what a listener hears.
+                        * latePackets means the ring was already dry when
+                        * the payload arrived; tightPackets is the warning
+                        * population that has not cost anything yet. */
+                       "\"packetsSubmitted\":%llu,\"latePackets\":%u,"
+                       "\"tightPackets\":%u,\"marginMinFrames\":%u,"
                        "\"framesPlayed\":%llu,\"writeErrors\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
@@ -583,6 +590,9 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.underruns, (unsigned)audio.trimmed_frames,
                        (unsigned)audio.padded_frames,
                        (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
+                       (unsigned long long)audio.packets_submitted,
+                       (unsigned)audio.late_packets, (unsigned)audio.tight_packets,
+                       (unsigned)audio.margin_min_frames,
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        stats);

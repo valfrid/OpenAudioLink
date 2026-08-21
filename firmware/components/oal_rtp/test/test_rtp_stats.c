@@ -328,25 +328,25 @@ static void test_a_clean_stream_reports_no_gaps(void)
     CHECK_EQ(oal_rtp_stats_mean_gap_x100(&s), 0);
 }
 
-/* ---------- arrival timing, which jitter cannot see ---------- */
+/* ---------- arrival gaps: burstiness of the wire, which jitter\n   smooths away. Not the same as missing a deadline -- that is a\n   question about the playout ring, and lives there. ---------- */
 
-static void test_even_arrival_is_never_late(void)
+static void test_even_arrival_has_no_gaps(void)
 {
-    TEST("even arrival is never late");
+    TEST("even arrival has no gaps");
     oal_rtp_stats_t s;
     oal_rtp_stats_reset(&s);
 
     send_clean(&s, 0, 200);
 
-    CHECK_EQ(s.late_arrivals, 0);
-    CHECK_EQ(oal_rtp_stats_late_ppm(&s), 0);
+    CHECK_EQ(s.arrival_gaps, 0);
+    CHECK_EQ(oal_rtp_stats_gap_ppm(&s), 0);
     /* One packet interval between arrivals, and no more. */
     CHECK_EQ(oal_rtp_stats_max_gap(&s), FRAMES_PER_PACKET);
 }
 
-static void test_a_stall_is_counted_even_with_no_loss(void)
+static void test_a_stall_shows_as_a_gap_with_no_loss(void)
 {
-    TEST("a stall is counted even with no loss");
+    TEST("a stall shows as a gap with no loss");
     oal_rtp_stats_t s;
     oal_rtp_stats_reset(&s);
 
@@ -365,14 +365,14 @@ static void test_a_stall_is_counted_even_with_no_loss(void)
 
     CHECK_EQ(oal_rtp_stats_lost(&s), 0);
     CHECK_EQ(oal_rtp_stats_loss_ppm(&s), 0);
-    CHECK_EQ(s.late_arrivals, 1);
+    CHECK_EQ(s.arrival_gaps, 1);
     CHECK(oal_rtp_stats_max_gap(&s) >= 48000u);
-    CHECK(oal_rtp_stats_late_ppm(&s) > 0);
+    CHECK(oal_rtp_stats_gap_ppm(&s) > 0);
 }
 
-static void test_small_clumps_are_not_late(void)
+static void test_small_clumps_are_not_gaps(void)
 {
-    TEST("small clumps are not late");
+    TEST("small clumps are not gaps");
     oal_rtp_stats_t s;
     oal_rtp_stats_reset(&s);
 
@@ -386,7 +386,7 @@ static void test_small_clumps_are_not_late(void)
                                 base + 2 * FRAMES_PER_PACKET + 1, SSRC);
     }
 
-    CHECK_EQ(s.late_arrivals, 0);
+    CHECK_EQ(s.arrival_gaps, 0);
 }
 
 static void test_a_restart_does_not_record_a_giant_gap(void)
@@ -400,25 +400,25 @@ static void test_a_restart_does_not_record_a_giant_gap(void)
     uint32_t much_later = 10u * FRAMES_PER_PACKET + OAL_RTP_ARRIVAL_SANE_TICKS + 1;
     oal_rtp_stats_on_packet(&s, 10, 10 * FRAMES_PER_PACKET, much_later, SSRC);
 
-    CHECK_EQ(s.late_arrivals, 0);
+    CHECK_EQ(s.arrival_gaps, 0);
     CHECK_EQ(oal_rtp_stats_max_gap(&s), FRAMES_PER_PACKET);
 }
 
-static void test_late_arrivals_survive_a_source_change(void)
+static void test_arrival_gaps_survive_a_source_change(void)
 {
-    TEST("late arrivals survive a source change");
+    TEST("arrival gaps survive a source change");
     oal_rtp_stats_t s;
     oal_rtp_stats_reset(&s);
 
     send_clean(&s, 0, 10);
     uint32_t stalled = 10u * FRAMES_PER_PACKET + 5000u;
     oal_rtp_stats_on_packet(&s, 10, 10 * FRAMES_PER_PACKET, stalled, SSRC);
-    CHECK_EQ(s.late_arrivals, 1);
+    CHECK_EQ(s.arrival_gaps, 1);
 
     /* A new source restarts sequence accounting, but the link's timing
      * history is a property of the link, not of who was talking. */
     oal_rtp_stats_on_packet(&s, 0, 0, stalled + FRAMES_PER_PACKET, SSRC + 1);
-    CHECK_EQ(s.late_arrivals, 1);
+    CHECK_EQ(s.arrival_gaps, 1);
 }
 
 int main(void)
@@ -439,11 +439,11 @@ int main(void)
     test_a_clean_stream_reports_no_gaps();
     test_json_reports_the_counters();
     test_nothing_received_reports_nothing();
-    test_even_arrival_is_never_late();
-    test_a_stall_is_counted_even_with_no_loss();
-    test_small_clumps_are_not_late();
+    test_even_arrival_has_no_gaps();
+    test_a_stall_shows_as_a_gap_with_no_loss();
+    test_small_clumps_are_not_gaps();
     test_a_restart_does_not_record_a_giant_gap();
-    test_late_arrivals_survive_a_source_change();
+    test_arrival_gaps_survive_a_source_change();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);

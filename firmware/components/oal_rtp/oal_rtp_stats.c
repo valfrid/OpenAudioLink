@@ -115,7 +115,7 @@ bool oal_rtp_stats_on_packet(
         uint32_t duplicates = stats->duplicates;
         uint32_t reordered = stats->reordered;
         uint32_t too_late = stats->too_late;
-        uint32_t late_arrivals = stats->late_arrivals;
+        uint32_t arrival_gaps = stats->arrival_gaps;
         uint32_t max_gap = stats->max_gap_ticks;
         oal_rtp_stats_reset(stats);
         /* Counters that describe the link survive: a source restarting
@@ -124,7 +124,7 @@ bool oal_rtp_stats_on_packet(
         stats->duplicates = duplicates;
         stats->reordered = reordered;
         stats->too_late = too_late;
-        stats->late_arrivals = late_arrivals;
+        stats->arrival_gaps = arrival_gaps;
         stats->max_gap_ticks = max_gap;
         stats->ssrc = ssrc;
         stats->ssrc_known = true;
@@ -152,8 +152,8 @@ bool oal_rtp_stats_on_packet(
             if (gap > stats->max_gap_ticks) {
                 stats->max_gap_ticks = gap;
             }
-            if (gap > OAL_RTP_LATE_GAP_TICKS) {
-                stats->late_arrivals++;
+            if (gap > OAL_RTP_ARRIVAL_GAP_TICKS) {
+                stats->arrival_gaps++;
             }
         }
     }
@@ -280,7 +280,7 @@ uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats)
     return (stats == NULL) ? 0 : (stats->jitter_x16 >> 4);
 }
 
-uint32_t oal_rtp_stats_late_ppm(const oal_rtp_stats_t *stats)
+uint32_t oal_rtp_stats_gap_ppm(const oal_rtp_stats_t *stats)
 {
     if (stats == NULL || stats->received == 0) {
         return 0;
@@ -288,7 +288,7 @@ uint32_t oal_rtp_stats_late_ppm(const oal_rtp_stats_t *stats)
     /* Against packets *received*, not expected: this measures the timing
      * of what arrived, and dividing it by what did not is a different
      * quantity wearing the same units. */
-    return (uint32_t)(((uint64_t)stats->late_arrivals * 1000000u) / stats->received);
+    return (uint32_t)(((uint64_t)stats->arrival_gaps * 1000000u) / stats->received);
 }
 
 uint32_t oal_rtp_stats_max_gap(const oal_rtp_stats_t *stats)
@@ -311,7 +311,7 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                        /* What arrived, but not when it was needed. Read
                         * beside lossPpm: a link can be flawless by that
                         * measure and unlistenable by this one. */
-                       "\"lateArrivals\":%u,\"latePpm\":%u,\"maxGapTicks\":%u}",
+                       "\"arrivalGaps\":%u,\"arrivalGapPpm\":%u,\"maxArrivalGapTicks\":%u}",
                        (unsigned)stats->received, (unsigned)oal_rtp_stats_expected(stats),
                        (unsigned)oal_rtp_stats_lost(stats), (unsigned)oal_rtp_stats_loss_ppm(stats),
                        (unsigned)stats->duplicates, (unsigned)stats->reordered,
@@ -320,8 +320,8 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                        (unsigned)stats->loss_events, (unsigned)stats->single_losses,
                        (unsigned)stats->longest_gap,
                        (unsigned)oal_rtp_stats_mean_gap_x100(stats),
-                       (unsigned)stats->late_arrivals,
-                       (unsigned)oal_rtp_stats_late_ppm(stats),
+                       (unsigned)stats->arrival_gaps,
+                       (unsigned)oal_rtp_stats_gap_ppm(stats),
                        (unsigned)oal_rtp_stats_max_gap(stats));
 
     return (len > 0 && (size_t)len < out_size) ? len : -1;

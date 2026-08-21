@@ -92,6 +92,12 @@ static uint64_t s_trace_submitted;
 static size_t s_fill_min;
 static size_t s_fill_max;
 
+/* Margin found by arriving packets: the smallest this window, and the
+ * threshold under which a packet is close enough to its deadline to be
+ * worth counting. */
+static size_t s_margin_min;
+static size_t s_tight_below;
+
 static oal_playout_state_t s_state;
 static size_t s_target_samples;
 
@@ -193,6 +199,35 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
 
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
         return;
+    }
+
+    /*
+     * Was this packet in time?
+     *
+     * The ring answers it exactly, with no clock comparison and no
+     * timestamp arithmetic: whatever is already queued in front of this
+     * payload is what the speaker will play before reaching it, so the
+     * fill at this instant *is* this packet's margin. 4800 frames means it
+     * arrived 100 ms early. Zero means it arrived to find the speaker
+     * already playing silence, and no buffer anywhere can un-play that.
+     *
+     * This is the measurement the others were proxies for. Loss, bursts,
+     * jitter, clock drift and buffer depth are five ways of arriving with
+     * less margin, and each was chased separately across runs 23 to 33
+     * while the quantity they all reduce went unmeasured.
+     *
+     * Counted before the overflow trim below, so the margin recorded is
+     * the one this packet actually found.
+     */
+    s_state.packets_submitted++;
+    size_t margin = s_available;
+    if (margin < s_margin_min) {
+        s_margin_min = margin;
+    }
+    if (margin == 0) {
+        s_state.late_packets++;
+    } else if (margin < s_tight_below) {
+        s_state.tight_packets++;
     }
 
     /*
@@ -424,13 +459,17 @@ static void trace(void)
         return;
     }
 
-    size_t fill_min, fill_max, fill_now;
+    size_t fill_min, fill_max, fill_now, margin_min;
     uint64_t submitted;
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
         return;
     }
     fill_min = s_fill_min > CAPACITY_SAMPLES ? s_available : s_fill_min;
     fill_max = s_fill_max;
+    /* No packet arrived this window, so the honest answer is the fill
+     * rather than the re-armed sentinel. */
+    margin_min = s_margin_min > CAPACITY_SAMPLES ? s_available : s_margin_min;
+    s_margin_min = CAPACITY_SAMPLES + 1;
     fill_now = s_available;
     submitted = s_submitted_frames;
     s_fill_min = CAPACITY_SAMPLES + 1; /* re-armed above any real fill */
@@ -443,6 +482,7 @@ static void trace(void)
      * polls healthy is touching zero between polls. */
     s_state.fill_min_frames = (uint32_t)(fill_min / OAL_RTP_CHANNELS);
     s_state.fill_max_frames = (uint32_t)(fill_max / OAL_RTP_CHANNELS);
+    s_state.margin_min_frames = (uint32_t)(margin_min / OAL_RTP_CHANNELS);
 
     uint64_t elapsed_us = now - s_trace_at_us;
     uint64_t played = s_state.frames_played - s_trace_played;
@@ -597,6 +637,18 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
      * really been eroded, not a normal swing, and above the level where a
      * single ordinary gap empties the ring. */
     s_pad_below = s_target_samples * 3 / 4;
+
+    /*
+     * A quarter of the target: 25 ms against a 100 ms goal.
+     *
+     * Not a fraction of capacity, because capacity is a buffer-sizing
+     * decision and this is a deadline question. A packet arriving with a
+     * quarter of the intended cushion left has not caused a glitch and is
+     * one bad moment from causing one, which is exactly the population
+     * worth counting before it becomes audible.
+     */
+    s_tight_below = s_target_samples / 4;
+    s_margin_min = CAPACITY_SAMPLES + 1;
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
     s_state.capacity_frames = CAPACITY_SAMPLES / OAL_RTP_CHANNELS;

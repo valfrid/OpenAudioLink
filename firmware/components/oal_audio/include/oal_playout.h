@@ -110,6 +110,30 @@ typedef struct {
     uint32_t fill_min_frames;
     uint32_t fill_max_frames;
 
+    /*
+     * Whether packets arrived in time, which is the only question that
+     * decides what a listener hears.
+     *
+     * Measured where it is exact: the ring's fill when a packet is
+     * submitted is that packet's margin, because everything already queued
+     * in front of it is what the speaker plays before reaching it. No
+     * timestamps, no clock comparison, nothing to drift.
+     *
+     * `late_packets` is unambiguous — the ring was empty, so the speaker
+     * was already inserting silence when this payload arrived, and no
+     * buffer anywhere can un-play that. `tight_packets` is the warning
+     * population: arrived with under a quarter of the intended cushion,
+     * caused nothing yet, one bad moment from causing something.
+     *
+     * Loss, bursts, jitter, clock drift and buffer depth are five ways of
+     * arriving with less margin. Runs 23 to 33 chased each of them
+     * separately without ever measuring the quantity they all reduce.
+     */
+    uint64_t packets_submitted;
+    uint32_t late_packets;    /* arrived to find the ring already dry */
+    uint32_t tight_packets;   /* arrived with under a quarter of target left */
+    uint32_t margin_min_frames; /* the tightest arrival of the last window */
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;

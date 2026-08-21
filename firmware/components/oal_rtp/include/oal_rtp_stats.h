@@ -56,7 +56,7 @@ extern "C" {
  * there is still margin left to spend rather than only once the ring is
  * already empty.
  */
-#define OAL_RTP_LATE_GAP_TICKS 720
+#define OAL_RTP_ARRIVAL_GAP_TICKS 720
 
 /*
  * Beyond this, a silence is not a stall but a stream that stopped and
@@ -103,14 +103,14 @@ typedef struct {
      * "was the audio delivered when it was needed".
      *
      * These count the excursions instead of averaging them away. A gap
-     * longer than OAL_RTP_LATE_GAP_TICKS between one packet and the next
+     * longer than OAL_RTP_ARRIVAL_GAP_TICKS between one packet and the next
      * means the ring went that long with nothing to put in it, whether or
      * not a single packet was lost -- which is the failure run 28 found:
      * 135 dropouts with a complete sequence.
      */
     uint32_t last_arrival;   /* arrival of the previous accepted packet */
     bool     arrival_known;
-    uint32_t late_arrivals;  /* gaps longer than a packet is worth waiting for */
+    uint32_t arrival_gaps;  /* gaps longer than a packet is worth waiting for */
     uint32_t max_gap_ticks;  /* the worst one, in RTP timestamp units */
 } oal_rtp_stats_t;
 
@@ -148,14 +148,19 @@ uint32_t oal_rtp_stats_mean_gap_x100(const oal_rtp_stats_t *stats);
 uint32_t oal_rtp_stats_jitter(const oal_rtp_stats_t *stats);
 
 /**
- * Late arrivals as parts per million of packets received.
+ * Arrival gaps as parts per million of packets received.
  *
- * The companion to `oal_rtp_stats_loss_ppm`, and read beside it: one says
- * what never came, the other says what came too late to be of use. A link
- * can be perfect by the first measure and unlistenable by the second, and
- * this project spent six runs measuring only the first.
+ * Describes the *wire*: how often delivery stopped for longer than a
+ * packet is worth waiting for. Read beside `oal_rtp_stats_loss_ppm` —
+ * one says what never came, this says that what came, came in clumps.
+ *
+ * Not the same thing as being late, and deliberately not named as though
+ * it were. Whether a packet made its deadline is a question about the
+ * playout ring's margin, not about the wire, and `oal_playout_state_t`
+ * answers it exactly. A burst that a full ring absorbs is visible here and
+ * harmless there, which is the distinction that matters.
  */
-uint32_t oal_rtp_stats_late_ppm(const oal_rtp_stats_t *stats);
+uint32_t oal_rtp_stats_gap_ppm(const oal_rtp_stats_t *stats);
 
 /** The worst gap between consecutive arrivals, in RTP timestamp units. */
 uint32_t oal_rtp_stats_max_gap(const oal_rtp_stats_t *stats);
