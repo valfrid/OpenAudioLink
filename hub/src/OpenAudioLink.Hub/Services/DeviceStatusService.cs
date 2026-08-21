@@ -98,6 +98,19 @@ public sealed class DeviceStatusService : BackgroundService
                 Output = status.Output,
                 OutputReady = status.OutputReady,
                 Volume = status.Volume,
+                /*
+                 * Read here as well as declared on DeviceStatus.
+                 *
+                 * This service does not deserialise into DeviceStatus; it
+                 * builds one field by field from a DTO. So adding a
+                 * property to the record does nothing on its own, which is
+                 * how delayMs came to be always null: the node reported it,
+                 * the record had a place for it, and nothing carried it
+                 * across. The Delay dialog opened blank on a node that was
+                 * holding 50 ms, which reads as "not set" and is worse than
+                 * showing nothing at all.
+                 */
+                DelayMs = status.DelayMs,
                 Input = status.Input is { } input
                     ? new InputLevel(input.LeftDb, input.RightDb, input.Hz, input.ReadErrors)
                     : null,
@@ -141,6 +154,13 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("volume")]
         public int? Volume { get; init; }
+
+        /// <summary>
+        /// Extra playout delay this node holds, or null from firmware that
+        /// predates it.
+        /// </summary>
+        [JsonPropertyName("delayMs")]
+        public int? DelayMs { get; init; }
 
         /// <summary>How audio leaves the board: "i2s" or "usb".</summary>
         [JsonPropertyName("output")]

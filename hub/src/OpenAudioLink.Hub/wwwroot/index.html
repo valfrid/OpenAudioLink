@@ -732,8 +732,17 @@
           // Alignment between speakers, not a property of one. Beside
           // Volume because it is the same shape of setting: a number typed
           // once that the node keeps and applies immediately.
+          //
+          // The value is on the button, not only inside the dialog. A trim
+          // that has been set and a trim that has not look identical from
+          // outside — the speaker just plays — so "which of these is
+          // holding back, and by how much" is a question the row should
+          // answer without being opened. Nothing else on this page has a
+          // state this invisible.
           `<button data-cmd="delay" data-id="${esc(d.id)}" ` +
-          `data-delay="${esc(d.status?.delayMs ?? '')}"${disabled}>Delay…</button>`;
+          `data-delay="${esc(d.status?.delayMs ?? '')}"${disabled}>` +
+          `${d.status?.delayMs ? `Delay ${esc(d.status.delayMs)} ms…` : 'Delay…'}` +
+          `</button>`;
         const s = d.status;
         /* The running version travels on the row so the update button can
          * see what it would be replacing, and refuse a silent downgrade. */
