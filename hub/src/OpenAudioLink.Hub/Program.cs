@@ -405,12 +405,14 @@ app.MapPost("/api/devices/{id}/delay",
         return Results.NotFound();
     }
 
+    // Fifty is what the ring can give: the node holds 200 ms and caps its
+    // target at three quarters, so a 100 ms default leaves 50 ms to add.
     var delay = request.DelayMs ?? -1;
-    if (delay < 0 || delay > 200)
+    if (delay < 0 || delay > 50)
     {
         return Results.BadRequest(new
         {
-            error = "delayMs must be 0 to 200; delay is only ever added, to whichever "
+            error = "delayMs must be 0 to 50; delay is only ever added, to whichever "
                   + "node plays early",
         });
     }

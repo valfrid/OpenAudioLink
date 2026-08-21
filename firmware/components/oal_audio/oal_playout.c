@@ -43,24 +43,24 @@ static const char *TAG = "oal_playout";
  * about the difference.
  */
 /*
- * Doubled to 80 packets -- 400 ms -- so a node can be *delayed* on purpose.
+ * Forty packets, 200 ms. Briefly eighty, and that was a mistake.
  *
- * The target is capped at half the capacity, which at 40 packets made
- * 100 ms both the default and the ceiling: there was no room to add any.
- * And delay has to be addable, because two speakers playing the same
- * stream through different output stages do not come out together. The
- * USB path carries the driver's ring, 1 ms USB frames and the dongle's own
- * buffering on top of the playout, where I2S carries four DMA descriptors;
- * this file has been claiming both are "about 20 ms" and they are not.
+ * `s_ring` is a static int32 array in internal DRAM: at 40 packets it is
+ * 75 kB, and doubling it took 75 kB more. The commit that did so justified
+ * it as "38 kB on a board with 8 MB of PSRAM" and was wrong on both counts
+ * -- the arithmetic, and the memory. PSRAM is not enabled in this build at
+ * all; the only mention of it in the configuration is a comment.
  *
- * Only ever addable. Nothing can play a sample earlier than it arrives, so
- * alignment means holding the *early* node back to meet the late one.
+ * The node that paid was the USB one, which is the only one carrying a USB
+ * host stack: `usb_host_install` and the driver's transfer buffers come
+ * from the heap that 75 kB was taken out of, and a dongle that cannot be
+ * opened is a node that is online, joined, streaming and silent.
  *
- * The cost is 38 kB more of int32 ring on a board with 8 MB of PSRAM, and
- * it buys burst headroom as well: last night's margins reached down toward
- * a millisecond on a 100 ms target.
+ * Delay is made room for by relaxing the *cap* instead, below. That costs
+ * burst headroom rather than RAM, which is a trade the margin buckets now
+ * make visible rather than mysterious.
  */
-#define CAPACITY_PACKETS 80
+#define CAPACITY_PACKETS 40
 #define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
 
 /*
@@ -168,10 +168,22 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
 {
     s_rate = rate;
     s_target_samples = (size_t)rate * target_ms / 1000 * OAL_RTP_CHANNELS;
-    if (s_target_samples > CAPACITY_SAMPLES / 2) {
-        /* Leave room to absorb a burst above the target; a target equal to
-         * the capacity means the ring is full whenever it is working. */
-        s_target_samples = CAPACITY_SAMPLES / 2;
+    /*
+     * Three quarters, not half.
+     *
+     * Something above the target has to stay free to absorb a burst -- a
+     * target equal to capacity means the ring is full whenever it is
+     * working. Half left 100 ms of headroom above a 100 ms target and made
+     * 100 ms the ceiling too, so no node could be delayed at all.
+     *
+     * Three quarters allows a 150 ms target in the same 200 ms ring, which
+     * covers the 20-40 ms an output stage differs by with room to spare,
+     * and keeps 50 ms above it. Using the delay therefore *spends* burst
+     * headroom, which is a real cost and a visible one: the margin buckets
+     * say how much of it was ever needed.
+     */
+    if (s_target_samples > CAPACITY_SAMPLES * 3 / 4) {
+        s_target_samples = CAPACITY_SAMPLES * 3 / 4;
     }
 
     s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;

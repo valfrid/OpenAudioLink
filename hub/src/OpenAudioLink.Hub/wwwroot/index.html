@@ -1144,7 +1144,7 @@
          */
         const current = button.dataset.delay;
         const answer = prompt(
-          'Extra playback delay for this speaker, 0 to 200 ms.\n\n' +
+          'Extra playback delay for this speaker, 0 to 50 ms.\n\n' +
           'For lining up speakers that use different output stages — a USB\n' +
           'dongle plays later than a soldered DAC, so add delay to the one\n' +
           'that is early. Delay can only be added; nothing can play sooner.\n\n' +
@@ -1153,8 +1153,8 @@
           current);
         if (answer === null) return;
         const delayMs = Number(answer.trim());
-        if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 200) {
-          say('Give a whole number of milliseconds from 0 to 200.');
+        if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 50) {
+          say('Give a whole number of milliseconds from 0 to 50.');
           return;
         }
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/delay`, {

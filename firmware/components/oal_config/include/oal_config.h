@@ -78,11 +78,16 @@ esp_err_t oal_config_set_roles(oal_roles_t roles);
 /**
  * Most extra delay a node will accept, in milliseconds.
  *
- * The playout caps its target at half the ring anyway; this refuses the
- * request outright so a typo comes back as an error rather than as a
- * silently clamped setting nobody can see.
+ * Fifty, because that is what the ring can actually give. The playout
+ * holds 200 ms and caps its target at three quarters of it, so a 100 ms
+ * default leaves 50 ms to add before the cap silently clamps instead.
+ *
+ * Refused here rather than clamped there, so a value the node cannot
+ * honour comes back as an error instead of as a setting that reads back
+ * differently from what was asked for. This was 200 while the ring was
+ * briefly twice the size, and that ring cost the USB node its dongle.
  */
-#define OAL_DELAY_MS_MAX 200
+#define OAL_DELAY_MS_MAX 50
 
 /**
  * Extra playout delay for this node, in milliseconds, or 0.
