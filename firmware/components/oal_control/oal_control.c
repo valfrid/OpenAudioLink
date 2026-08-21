@@ -13,6 +13,8 @@
 #include "oal_playout.h"
 #include "oal_stream.h"
 #include "oal_wifi.h"
+
+#include "node_page.h"
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "esp_https_ota.h"
@@ -137,6 +139,22 @@ static char s_controller[160];
 static char s_join[96];
 static char s_input[112];
 static char s_body[1024];
+
+/* ---------- GET / ---------- */
+
+/*
+ * A node's own page, so it can be operated with nothing else present.
+ *
+ * Static: everything on it is fetched by its own script from /status,
+ * /peers and /stream. Formatting HTML in C is how this project produced
+ * four red builds from one misordered snprintf, and a page that renders
+ * itself from the same endpoints the Hub uses cannot drift away from them.
+ */
+static esp_err_t root_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, NODE_PAGE, HTTPD_RESP_USE_STRLEN);
+}
 
 static esp_err_t status_handler(httpd_req_t *req)
 {
@@ -1055,6 +1073,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t stream_stop =
         { .uri = "/stream/stop", .method = HTTP_POST, .handler = stream_stop_handler };
     httpd_uri_t peers = { .uri = "/peers", .method = HTTP_GET, .handler = peers_handler };
+    httpd_uri_t root = { .uri = "/", .method = HTTP_GET, .handler = root_handler };
     httpd_uri_t wifi_scan =
         { .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler };
     httpd_uri_t wifi_rejoin =
@@ -1062,6 +1081,7 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
     httpd_uri_t join = { .uri = "/join", .method = HTTP_POST, .handler = join_handler };
     httpd_uri_t destinations =
         { .uri = "/stream/destinations", .method = HTTP_POST, .handler = destinations_handler };
+    httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &wifi_scan);
     httpd_register_uri_handler(server, &wifi_rejoin);
     httpd_register_uri_handler(server, &status);
