@@ -220,14 +220,35 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
      * the one this packet actually found.
      */
     s_state.packets_submitted++;
-    size_t margin = s_available;
-    if (margin < s_margin_min) {
-        s_margin_min = margin;
-    }
-    if (margin == 0) {
-        s_state.late_packets++;
-    } else if (margin < s_tight_below) {
-        s_state.tight_packets++;
+    /*
+     * Only once the ring is primed.
+     *
+     * Before that it is *deliberately* below target: the playout holds
+     * silence until it has collected `s_target_samples`, because playing
+     * the first frames as they arrive would empty it again immediately and
+     * click through the whole first second. Every packet of that fill
+     * arrives to a short ring, and the first arrives to an empty one, by
+     * design.
+     *
+     * Counting those was measuring the buffer doing its job. It cost about
+     * one late and twenty tight per prime -- and a prime happens again
+     * after every underrun, so the refill following a dropout was scored
+     * as twenty further near-misses on top of the dropout already counted.
+     * The first hardware reading showed 10 late and 119 tight on a link
+     * with zero loss, no gaps, 1.10 ms of jitter and a 100 ms low-water
+     * margin: four measurements saying nothing was wrong, and one saying
+     * something was, because it was counting the recoveries.
+     */
+    if (s_primed) {
+        size_t margin = s_available;
+        if (margin < s_margin_min) {
+            s_margin_min = margin;
+        }
+        if (margin == 0) {
+            s_state.late_packets++;
+        } else if (margin < s_tight_below) {
+            s_state.tight_packets++;
+        }
     }
 
     /*
