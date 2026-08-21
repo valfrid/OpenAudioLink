@@ -236,6 +236,10 @@ static esp_err_t status_handler(httpd_req_t *req)
                        "\"outputArrivedAs\":%s%s%s,"
                        "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
+                       /* Whether, never what. This document is polled by
+                        * the Hub, the switchboard and every node's own
+                        * page; a passphrase does not belong in it. */
+                       "\"partyReady\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
@@ -252,6 +256,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        input, s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
+                       oal_wifi_has_party() ? "true" : "false",
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {
@@ -266,17 +271,28 @@ static esp_err_t status_handler(httpd_req_t *req)
 /* ---------- POST /config ---------- */
 
 /*
- * Sets what this node is and what it plays:
- * {"roles":["consumer"],"channel":"mono"}. Either field alone is valid.
+ * Sets what this node is, what it plays, and where it goes when home is
+ * not there:
+ * {"roles":["consumer"],"channel":"mono","party":{"ssid":..,"password":..}}
+ * Any field alone is valid.
  *
  * Stored in NVS and applied at the next boot. Roles decide which tasks
  * start, and the channel decides what the playout does with each frame;
  * changing either under a running stream would mean tearing down live
  * audio, and a reboot is both simpler and more honest about what happened.
+ *
+ * The party network is the same pair on every node in a group (decision
+ * 4). It is written here rather than through the provisioning portal
+ * because both nodes must hold *identical* credentials, and two people
+ * typing one passphrase into two phones is precisely how that fails. The
+ * Hub generates it once and pushes it to everything while it is all still
+ * on the desk.
+ *
+ * An empty ssid forgets it, which is how a node leaves a group.
  */
 static esp_err_t config_handler(httpd_req_t *req)
 {
-    char body[256];
+    char body[384];
     int len = httpd_req_recv(req, body, sizeof(body) - 1);
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
@@ -296,16 +312,56 @@ static esp_err_t config_handler(httpd_req_t *req)
     /* Which fields were present, recorded now. Everything below happens
      * after the tree is freed, and testing a pointer into a freed tree is
      * the kind of bug that works until the allocator is under pressure. */
+    const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
+    const bool has_party = cJSON_IsObject(party);
 
     /* Either may be set alone: changing a speaker from stereo to mono has
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
-    if (!has_roles && !has_channel) {
+    if (!has_roles && !has_channel && !has_party) {
         cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "expected roles or channel");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "expected roles, channel or party");
         return ESP_FAIL;
+    }
+
+    /*
+     * Copied out before the tree is freed, and sized to what the radio
+     * accepts rather than to what arrived: an over-long SSID silently
+     * truncated is a node that joins nothing and cannot say why.
+     */
+    char party_ssid[33] = { 0 };
+    char party_password[65] = { 0 };
+    if (has_party) {
+        const cJSON *pssid = cJSON_GetObjectItemCaseSensitive(party, "ssid");
+        const cJSON *ppass = cJSON_GetObjectItemCaseSensitive(party, "password");
+        if (!cJSON_IsString(pssid)) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party needs an ssid");
+            return ESP_FAIL;
+        }
+        if (strlen(pssid->valuestring) >= sizeof(party_ssid)) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party ssid too long");
+            return ESP_FAIL;
+        }
+        /* Empty ssid forgets the network, and then a password is neither
+         * required nor meaningful. */
+        if (pssid->valuestring[0] != '\0') {
+            if (!cJSON_IsString(ppass)) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party needs a password");
+                return ESP_FAIL;
+            }
+            if (strlen(ppass->valuestring) >= sizeof(party_password)) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party password too long");
+                return ESP_FAIL;
+            }
+            strlcpy(party_password, ppass->valuestring, sizeof(party_password));
+        }
+        strlcpy(party_ssid, pssid->valuestring, sizeof(party_ssid));
     }
 
     oal_roles_t roles = OAL_ROLE_NONE;
@@ -346,14 +402,19 @@ static esp_err_t config_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "channel not stored");
         return ESP_FAIL;
     }
+    if (has_party && oal_wifi_set_party(party_ssid, party_password) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party network not stored");
+        return ESP_FAIL;
+    }
 
     char stored[OAL_ROLES_STR_MAX];
     char response[192];
     oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
                      "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
-                     "\"appliesAt\":\"reboot\"}",
-                     stored, oal_channel_name(oal_config_get_channel()));
+                     "\"partyReady\":%s,\"appliesAt\":\"reboot\"}",
+                     stored, oal_channel_name(oal_config_get_channel()),
+                     oal_wifi_has_party() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, n);
 }

@@ -92,7 +92,23 @@ static esp_timer_handle_t s_reconnect_timer;
 
 /* ---------- credentials ---------- */
 
-static esp_err_t load_credentials(char *ssid, size_t ssid_len, char *password, size_t password_len)
+/*
+ * One reader for two networks.
+ *
+ * A node holds up to two sets of credentials: the network it was
+ * provisioned onto, and the party network of decision 4's standalone mode
+ * — the same SSID and passphrase on every node in a group, so that
+ * equipment carried to a venue finds itself without anybody configuring
+ * anything on the day.
+ *
+ * Only the *producer* is told it is hosting a party. A consumer never
+ * needs to know: "try home, then try the other one" is the same rule in
+ * the living room and at the venue, so it holds no mode and needs no
+ * preparation before an event or cleaning up after one.
+ */
+static esp_err_t load_pair(const char *ssid_key, const char *pass_key,
+                          char *ssid, size_t ssid_len,
+                          char *password, size_t password_len)
 {
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs);
@@ -101,23 +117,48 @@ static esp_err_t load_credentials(char *ssid, size_t ssid_len, char *password, s
         return err;
     }
 
-    err = nvs_get_str(nvs, "wifi_ssid", ssid, &ssid_len);
+    err = nvs_get_str(nvs, ssid_key, ssid, &ssid_len);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "no stored SSID (nvs_get_str: %s)", esp_err_to_name(err));
         nvs_close(nvs);
         return err;
     }
 
-    err = nvs_get_str(nvs, "wifi_pass", password, &password_len);
+    err = nvs_get_str(nvs, pass_key, password, &password_len);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "stored SSID but no password (nvs_get_str: %s)", esp_err_to_name(err));
+        ESP_LOGW(TAG, "%s is set but %s is not", ssid_key, pass_key);
         nvs_close(nvs);
         return err;
     }
 
-    ESP_LOGI(TAG, "loaded stored credentials for \"%s\"", ssid);
     nvs_close(nvs);
     return ESP_OK;
+}
+
+static esp_err_t store_pair(const char *ssid_key, const char *pass_key,
+                           const char *ssid, const char *password)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* An empty SSID means forget this network, which is the only way to
+     * take a party credential back off a node that has left the group. */
+    if (ssid[0] == '\0') {
+        nvs_erase_key(nvs, ssid_key);
+        nvs_erase_key(nvs, pass_key);
+    } else {
+        err = nvs_set_str(nvs, ssid_key, ssid);
+        if (err == ESP_OK) {
+            err = nvs_set_str(nvs, pass_key, password);
+        }
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
 }
 
 esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password)
@@ -125,26 +166,35 @@ esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password)
     if (ssid == NULL || ssid[0] == '\0' || password == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = nvs_set_str(nvs, "wifi_ssid", ssid);
-    if (err == ESP_OK) {
-        err = nvs_set_str(nvs, "wifi_pass", password);
-    }
-    if (err == ESP_OK) {
-        err = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-
+    esp_err_t err = store_pair("wifi_ssid", "wifi_pass", ssid, password);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "storing credentials failed: %s", esp_err_to_name(err));
     }
     return err;
+}
+
+esp_err_t oal_wifi_set_party(const char *ssid, const char *password)
+{
+    if (ssid == NULL || password == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = store_pair("party_ssid", "party_pass", ssid, password);
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, ssid[0] == '\0' ? "party network forgotten"
+                                      : "party network stored; it applies at the next boot");
+    } else {
+        ESP_LOGE(TAG, "storing the party network failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+bool oal_wifi_has_party(void)
+{
+    char ssid[33] = { 0 };
+    char password[65] = { 0 };
+    return load_pair("party_ssid", "party_pass",
+                     ssid, sizeof(ssid), password, sizeof(password)) == ESP_OK
+           && ssid[0] != '\0';
 }
 
 /* ---------- station mode ---------- */
@@ -865,18 +915,45 @@ oal_wifi_result_t oal_wifi_start(const char *fallback_ssid, const char *fallback
 
     char ssid[33] = { 0 };
     char password[65] = { 0 };
-    if (load_credentials(ssid, sizeof(ssid), password, sizeof(password)) != ESP_OK) {
+    if (load_pair("wifi_ssid", "wifi_pass", ssid, sizeof(ssid),
+                  password, sizeof(password)) != ESP_OK) {
         if (fallback_ssid != NULL && fallback_ssid[0] != '\0') {
             strlcpy(ssid, fallback_ssid, sizeof(ssid));
             strlcpy(password, fallback_password != NULL ? fallback_password : "", sizeof(password));
         }
     }
 
-    s_had_credentials = ssid[0] != '\0';
-    strlcpy(s_ssid, ssid, sizeof(s_ssid));
+    char party_ssid[33] = { 0 };
+    char party_password[65] = { 0 };
+    (void)load_pair("party_ssid", "party_pass", party_ssid, sizeof(party_ssid),
+                    party_password, sizeof(party_password));
 
-    if (s_had_credentials && try_station(ssid, password)) {
+    s_had_credentials = ssid[0] != '\0' || party_ssid[0] != '\0';
+    strlcpy(s_ssid, ssid[0] != '\0' ? ssid : party_ssid, sizeof(s_ssid));
+
+    /*
+     * Home first, then the party network. Order is the whole design.
+     *
+     * At home the second attempt never happens, because the first
+     * succeeds. At a venue the first cannot succeed — the house network is
+     * miles away — so the node spends its thirty seconds failing and then
+     * finds the island. Same rule in both places, which is why a consumer
+     * needs no mode, no flag, and nothing done to it before an event or
+     * after one.
+     *
+     * The thirty seconds are the price, paid once at power-up at the venue
+     * and never at home. Cheaper than a state a person has to remember to
+     * set and remember to unset.
+     */
+    if (ssid[0] != '\0' && try_station(ssid, password)) {
         return OAL_WIFI_STA;
+    }
+
+    if (party_ssid[0] != '\0') {
+        ESP_LOGW(TAG, "falling back to the party network \"%s\"", party_ssid);
+        if (try_station(party_ssid, party_password)) {
+            return OAL_WIFI_STA;
+        }
     }
 
     start_portal();

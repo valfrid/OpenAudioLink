@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,32 @@ oal_wifi_result_t oal_wifi_start(const char *fallback_ssid, const char *fallback
 
 /** Persists Wi-Fi credentials in NVS (namespace "oal"). */
 esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password);
+
+/**
+ * Persists the group's party network — decision 4's standalone mode.
+ *
+ * Every node in a group holds the same pair, and a node tries it only
+ * after the network it was provisioned onto has failed. That ordering is
+ * the entire design: at home the fallback never runs because the first
+ * attempt succeeds, and at a venue the first cannot succeed, so the same
+ * unconditional rule does the right thing in both places. A consumer
+ * therefore holds no mode, needs nothing set before an event and nothing
+ * cleared after one.
+ *
+ * An empty @p ssid forgets it, which is how a node leaves a group.
+ *
+ * Applies at the next boot; a node already on a network is not disturbed.
+ */
+esp_err_t oal_wifi_set_party(const char *ssid, const char *password);
+
+/**
+ * Whether a party network is stored.
+ *
+ * Deliberately a yes-or-no. The Hub needs to show which nodes are ready
+ * for an event, and that question is answered without ever putting a
+ * passphrase into a status document that half a dozen things poll.
+ */
+bool oal_wifi_has_party(void);
 
 /**
  * How many times this node has landed on a different access point than the
