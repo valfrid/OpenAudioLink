@@ -482,8 +482,22 @@
       scanDeviceId = id;
       const device = lastDevices.find(d => d.id === id);
       document.getElementById('scan-device').textContent = device?.name ?? id;
-      document.getElementById('scan-panel').hidden = false;
+      const panel = document.getElementById('scan-panel');
+      panel.hidden = false;
       hideScanTables();
+
+      /*
+       * Bring it into view, because it is not where the click was.
+       *
+       * The panel lives under the devices table and the button that opens
+       * it is in a row's Actions column. On a phone, or any window narrower
+       * than the table is wide, that puts the answer well below the fold
+       * while the only thing visible is the status line beside the button —
+       * which says nothing about access points. It reads exactly like the
+       * button did nothing.
+       */
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scanNote('Opening…');
       if (scanNow) {
         await runScan(id, device?.status?.ssid);
       }
