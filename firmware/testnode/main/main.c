@@ -285,6 +285,12 @@ void app_main(void)
          */
         playout.target_ms += oal_config_get_delay_ms();
 
+        /* How much room the target has to move in, which is a different
+         * question from where the target sits and is answered by an
+         * allocation rather than a servo. Read here, at boot, because that
+         * is the only moment the ring can be sized. */
+        playout.ring_ms = oal_config_get_ring_ms();
+
         /* Read once at boot: /config stores a channel change and reports
          * that it applies at reboot, so this is where it takes effect. */
         playout.channel = oal_config_get_channel();

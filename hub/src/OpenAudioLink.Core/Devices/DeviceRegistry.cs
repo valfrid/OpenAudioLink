@@ -42,6 +42,34 @@ public sealed record DeviceStatus
     public int? DelayMs { get; init; }
 
     /// <summary>
+    /// How much audio this node's ring holds, in milliseconds, as actually
+    /// allocated — capacity, not the target depth. Null from firmware that
+    /// predates a settable ring.
+    /// </summary>
+    /// <remarks>
+    /// Capacity and target are separate on purpose. The target is where the
+    /// buffer normally sits and moves while playing; this is how much room
+    /// exists above and below it, and it can only change at a reboot because
+    /// it is an allocation.
+    /// </remarks>
+    public int? RingMs { get; init; }
+
+    /// <summary>Three quarters of the ring: the deepest target it will hold.</summary>
+    public int? MaxTargetMs { get; init; }
+
+    /// <summary>
+    /// The largest delay this node will accept, as the node reports it.
+    /// </summary>
+    /// <remarks>
+    /// Always read, never assumed. The Delay dialog offered 0-200 ms for two
+    /// releases against a real ceiling of 50, because one limit was written
+    /// in two places. Once the ring became a setting no single constant
+    /// could be right anyway: the ceiling is 50 on a 200 ms ring and 650 on
+    /// a 1000 ms one, on nodes sitting side by side.
+    /// </remarks>
+    public int? MaxDelayMs { get; init; }
+
+    /// <summary>
     /// Which app slot is running, and whether the image in it is confirmed.
     /// </summary>
     /// <remarks>

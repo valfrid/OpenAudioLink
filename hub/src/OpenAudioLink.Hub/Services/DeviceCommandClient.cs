@@ -172,6 +172,30 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Sets how much audio this node's ring holds, in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// Capacity, not target — how much room the buffer has, not where it
+    /// normally sits. Applies at the next boot, unlike the delay, because
+    /// the ring is an allocation and resizing it under a running playout
+    /// would mean freeing the buffer the audio task is reading from.
+    ///
+    /// Worth exposing at all because the right value is not knowable from
+    /// here. This project runs a 100 ms target in a 200 ms ring where
+    /// Snapcast runs 1000 ms, on a network measured leaving 900 ms holes
+    /// that no 200 ms ring can absorb. Which size actually sounds best is an
+    /// experiment, and an experiment needs a knob rather than a rebuild and
+    /// a cable — particularly for the node that is awkward to reach.
+    /// </remarks>
+    public async Task<bool> SetRingAsync(
+        DeviceRecord device, int ringMs, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Setting ring on {Device} to {RingMs} ms", device.Name, ringMs);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { ringMs }), cancellationToken);
+    }
+
+    /// <summary>
     /// Sets the device's playback level, 0-100. Applies immediately on the
     /// node and persists there.
     /// </summary>

@@ -111,6 +111,13 @@ public sealed class DeviceStatusService : BackgroundService
                  * showing nothing at all.
                  */
                 DelayMs = status.DelayMs,
+                // Same lesson as delayMs immediately above: declared on the
+                // record is not carried across. Three assignments, because
+                // three fields, and forgetting one shows up as a control
+                // that silently offers the wrong range.
+                RingMs = status.RingMs,
+                MaxTargetMs = status.MaxTargetMs,
+                MaxDelayMs = status.MaxDelayMs,
                 OtaSlot = status.Ota?.Slot,
                 OtaState = status.Ota?.State,
                 OtaOtherState = status.Ota?.OtherState,
@@ -165,6 +172,32 @@ public sealed class DeviceStatusService : BackgroundService
         /// </summary>
         [JsonPropertyName("delayMs")]
         public int? DelayMs { get; init; }
+
+        /// <summary>
+        /// The ring as the node actually allocated it, in milliseconds, or
+        /// null from firmware that predates a settable ring.
+        /// </summary>
+        [JsonPropertyName("ringMs")]
+        public int? RingMs { get; init; }
+
+        /// <summary>Three quarters of the ring: the deepest target it will hold.</summary>
+        [JsonPropertyName("maxTargetMs")]
+        public int? MaxTargetMs { get; init; }
+
+        /// <summary>
+        /// The largest delay this node will accept right now.
+        /// </summary>
+        /// <remarks>
+        /// Read rather than assumed, and that is the entire point of it
+        /// existing. The Delay dialog offered 0-200 ms for two releases
+        /// against a real ceiling of 50 because the limit was written down
+        /// in two places and only one of them was updated. With the ring
+        /// settable there is no constant the Hub could hardcode correctly at
+        /// all: the same dialog is right for a node on a 200 ms ring and a
+        /// node on a 1000 ms one only if it asks each node.
+        /// </remarks>
+        [JsonPropertyName("maxDelayMs")]
+        public int? MaxDelayMs { get; init; }
 
         [JsonPropertyName("ota")]
         public OtaStatus? Ota { get; init; }

@@ -53,6 +53,21 @@ typedef struct {
      */
     uint32_t target_ms;
 
+    /**
+     * How much audio the ring can hold at most, in milliseconds.
+     *
+     * Distinct from `target_ms`, and the distinction is the whole point:
+     * the target is how deep the buffer normally runs, this is how much
+     * room exists above and below it. The target can be changed while
+     * playing; this cannot, because it is an allocation.
+     *
+     * Zero takes 200 ms, which is what the ring was fixed at for its whole
+     * life before it became a setting. Clamped to 50-1000 ms on the way in
+     * -- the value arrives from NVS, and NVS outlives a rolled-back
+     * firmware that never knew about it.
+     */
+    uint32_t ring_ms;
+
     /** Which of the two channels this speaker plays (decision 10). */
     oal_channel_t channel;
 
@@ -221,21 +236,27 @@ void oal_playout_set_volume(uint8_t percent);
 uint8_t oal_playout_volume(void);
 
 /**
- * The largest target the ring will honour, in milliseconds.
+ * The largest target this node's ring will honour, in milliseconds, or 0
+ * before the output stage has started.
  *
- * Three quarters of the ring's 200 ms: something above the target has to
- * stay free to absorb a burst, and a target equal to capacity means the
- * ring is full whenever it is working.
+ * Three quarters of the ring: something above the target has to stay free
+ * to absorb a burst, and a target equal to capacity means the ring is full
+ * whenever it is working.
  *
- * Published because it is not this component's business alone. The delay
- * maximum lives in `oal_config.h`, which cannot see the ring, so the two
- * agreed only because they were kept in step by hand -- and they did not
- * stay in step: the Hub offered 0-200 ms in a dialog for two releases
- * after the real ceiling became 50. A static assertion in each file now
- * ties them together, so any change to the ring, the default target or the
- * maximum breaks the build instead of a speaker.
+ * A function rather than a constant, and that is the important part. This
+ * was `#define OAL_PLAYOUT_MAX_TARGET_MS 150` with a static assertion tying
+ * it to a fixed array -- the right shape for a fixed ring, impossible for a
+ * settable one. The assertion existed because the Hub once offered 0-200 ms
+ * in a dialog against a real ceiling of 50, and the lesson it encoded still
+ * applies: one limit, one source. Everything that needs it -- the delay
+ * clamp, `/status`, the Hub's dialog -- asks here rather than knowing a
+ * number, so a node with a 1000 ms ring reports 750 without anyone editing
+ * a second place.
  */
-#define OAL_PLAYOUT_MAX_TARGET_MS 150
+uint32_t oal_playout_max_target_ms(void);
+
+/** The ring's size in milliseconds, as allocated, or 0 before start. */
+uint32_t oal_playout_ring_ms(void);
 
 /**
  * Changes the playout target while running, in milliseconds.

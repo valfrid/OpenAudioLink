@@ -1488,7 +1488,9 @@ hardware profile. Roles are already how this project says what a box is for.
 ## 17. The jitter buffer needs room to grow, and internal RAM has none left
 
 **Date:** 2026-08-21
-**Status:** proposed — direction agreed, nothing implemented
+**Status:** accepted — implemented in firmware 0.28.0 / Hub 0.35.0. See
+"What actually happened" at the end, which resolves two of the three open
+questions and changes one conclusion.
 
 ### The position
 
@@ -1560,3 +1562,56 @@ with a net under it.
   copied.
 - What latency is acceptable. House playback does not care; a DJ at a
   turntable in standalone mode might.
+
+### What actually happened
+
+Rollback shipped in 0.27.0 and was proven on hardware in 0.27.2: all three
+nodes took the update, booted and confirmed themselves. That cleared the
+gate this decision set, and the rest followed in 0.28.0.
+
+**The first open question is answered, and the answer is yes.**
+`esp_psram_init()` is called from `call_start_cpu0()` in the *application*,
+under `CONFIG_SPIRAM_BOOT_INIT`; the bootloader takes no part in bringing
+PSRAM up. OTA cannot replace the bootloader and does not need to. The
+partition table is untouched as well — this is a RAM layout, not a flash
+layout — so neither of the two things OTA cannot deliver is involved. This
+was checked against the ESP-IDF v5.4 source rather than reasoned from
+memory, which matters given that the last claim about PSRAM in this project
+came from misreading a comment.
+
+**The plan's ordering was more cautious than it needed to be.** It called
+for cable-flashing one node first. That is unnecessary, and the reason is
+the failure mode: if PSRAM does not come up, IDF calls `abort()` — a panic
+during startup, long before the thirty-second confirm — so the bootloader
+reverts at the next boot and the Hub reports "last update rolled back after
+panic". A bad memory map costs a reboot, not a cable. This matters because
+one node in the installation is genuinely awkward to reach.
+
+That safety depends on one setting *not* being present.
+`CONFIG_SPIRAM_IGNORE_NOTFOUND` is set in nearly every XIAO sdkconfig
+published online, and it converts the abort into "continuing without it":
+the image would confirm itself, look healthy, and fail later at the ring
+allocation on the node hardest to reach. The hard failure is the safety
+feature. It is deliberately absent and commented as such.
+
+**The ring became a setting rather than a bigger constant**, which the
+original direction did not anticipate. The second open question — what
+target a deeper ring should aim at — cannot be answered from a desk, and
+the honest response to "we do not know the right number" is a knob and the
+instruments to read it, not a better guess. `ringMs` is 50-1000 ms, stored
+in NVS, allocated from PSRAM at boot, changed from the Hub without a
+rebuild. The margin buckets and the "In time" column already report what
+each setting bought.
+
+**A constant that had been wrong twice is now impossible to get wrong.**
+`OAL_PLAYOUT_MAX_TARGET_MS` was a `#define` tied to a fixed array by static
+assertion — the right shape for a fixed ring, unrepresentable for a settable
+one. It became `oal_playout_max_target_ms()`, computed from the live
+capacity, published in `/status`, and read by the Hub's dialog. The
+assertion was protecting against two numbers describing one limit drifting
+apart; there is now one number and everyone asks for it. The Hub's
+hardcoded `delay > 50` check, the last copy of that limit, is gone.
+
+The third open question — what latency is acceptable, and whether a DJ at a
+turntable can live with it — is untouched, and is now a thing that can be
+measured by turning a knob rather than argued about.

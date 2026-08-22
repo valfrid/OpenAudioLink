@@ -76,18 +76,49 @@ esp_err_t oal_config_set_roles(oal_roles_t roles);
 
 /** Stored channel profile, or stereo when unset or unreadable. */
 /**
- * Most extra delay a node will accept, in milliseconds.
+ * Absolute bound on a stored delay, in milliseconds.
  *
- * Fifty, because that is what the ring can actually give. The playout
- * holds 200 ms and caps its target at three quarters of it, so a 100 ms
- * default leaves 50 ms to add before the cap silently clamps instead.
+ * Not the limit a node will actually accept. That one depends on the ring,
+ * which is now a setting, so it is computed at runtime from
+ * `oal_playout_max_target_ms()` minus the default target and published in
+ * `/status` as `maxDelayMs`. Six hundred and fifty is simply what the
+ * largest permitted ring could ever allow (1000 ms ring, 750 ms cap, 100 ms
+ * default target) and exists so a value out of NVS is bounded by something.
  *
- * Refused here rather than clamped there, so a value the node cannot
- * honour comes back as an error instead of as a setting that reads back
- * differently from what was asked for. This was 200 while the ring was
- * briefly twice the size, and that ring cost the USB node its dongle.
+ * The distinction matters because it has bitten before. This was 50 while
+ * the ring was fixed at 200, and 200 while the ring was briefly twice the
+ * size -- and the Hub went on offering 0-200 in its dialog for two releases
+ * after the real ceiling became 50. A constant that has to be kept in step
+ * by hand does not stay in step. Ask the node.
  */
-#define OAL_DELAY_MS_MAX 50
+#define OAL_DELAY_MS_MAX 650
+
+/*
+ * How much audio the ring can hold, in milliseconds -- capacity, not
+ * target. See oal_playout.h for why the two are different things.
+ *
+ * A setting because the right value is not knowable from here. This project
+ * runs a 100 ms target in a 200 ms ring where Snapcast runs 1000 ms; the
+ * house it runs in shows 900 ms delivery stalls that no 200 ms ring can
+ * absorb. Which size is right is an experiment, and an experiment needs a
+ * knob rather than a rebuild -- particularly for the node that is awkward
+ * to reach with a cable.
+ */
+#define OAL_RING_MS_MIN 50u
+#define OAL_RING_MS_MAX 1000u
+#define OAL_RING_MS_DEFAULT 200u
+
+/** Stored ring size, or OAL_RING_MS_DEFAULT when unset or out of range. */
+uint32_t oal_config_get_ring_ms(void);
+
+/**
+ * Stores it. Takes effect at the next boot, unlike the delay.
+ *
+ * The ring is an allocation, so changing it under a running playout would
+ * mean freeing the buffer the audio task is reading from. Roles work the
+ * same way and for the same reason.
+ */
+esp_err_t oal_config_set_ring_ms(uint32_t ring_ms);
 
 /**
  * Extra playout delay for this node, in milliseconds, or 0.

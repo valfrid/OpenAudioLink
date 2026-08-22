@@ -18,6 +18,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_NAME  "name"
 #define NVS_KEY_CHANNEL "channel"
 #define NVS_KEY_DELAY_MS "delay_ms"
+#define NVS_KEY_RING_MS  "ring_ms"
 #define NVS_KEY_VOLUME "volume"
 #define NVS_KEY_OUTPUT "output"
 
@@ -248,6 +249,49 @@ esp_err_t oal_config_set_delay_ms(uint32_t delay_ms)
         return err;
     }
     err = nvs_set_u32(nvs, NVS_KEY_DELAY_MS, delay_ms);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+/*
+ * The ring, which is read once at boot and never again.
+ *
+ * Out-of-range falls back to the default rather than being honoured or
+ * refused. NVS outlives firmware: a node configured for 1000 ms and then
+ * rolled back to a build that only understands 200 must come up playing,
+ * not refuse to start its output stage over a number it cannot use.
+ */
+uint32_t oal_config_get_ring_ms(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return OAL_RING_MS_DEFAULT;
+    }
+    uint32_t stored = 0;
+    esp_err_t err = nvs_get_u32(nvs, NVS_KEY_RING_MS, &stored);
+    nvs_close(nvs);
+    if (err != ESP_OK || stored < OAL_RING_MS_MIN || stored > OAL_RING_MS_MAX) {
+        return OAL_RING_MS_DEFAULT;
+    }
+    return stored;
+}
+
+esp_err_t oal_config_set_ring_ms(uint32_t ring_ms)
+{
+    if (ring_ms < OAL_RING_MS_MIN || ring_ms > OAL_RING_MS_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = nvs_set_u32(nvs, NVS_KEY_RING_MS, ring_ms);
     if (err == ESP_OK) {
         err = nvs_commit(nvs);
     }

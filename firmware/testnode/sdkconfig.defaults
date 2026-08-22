@@ -92,6 +92,40 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
 CONFIG_USB_HOST_HW_BUFFER_BIAS_PERIODIC_OUT=y
 
+# PSRAM, which is what makes the ring a setting instead of a constant.
+#
+# The XIAO ESP32S3 carries an ESP32-S3R8: 8 MB of *octal* SPI PSRAM, hence
+# SPIRAM_MODE_OCT. Eight megabytes against a ring that is 384 kB even at its
+# 1000 ms maximum, so the question stops being whether there is room and
+# becomes what size actually sounds best -- which is the experiment this
+# unlocks.
+#
+# It also gives memory back. The ring was 75 kB of internal DRAM taken from
+# the same heap `usb_host_install` allocates out of, and that shortage is
+# what left the dongle node online, joined, streaming and silent.
+#
+# Safe to deliver by OTA, which was checked rather than assumed: PSRAM is
+# brought up by esp_psram_init() inside call_start_cpu0(), in the
+# application, under CONFIG_SPIRAM_BOOT_INIT. The bootloader takes no part,
+# and OTA cannot replace the bootloader -- so the one thing an update cannot
+# change is the one thing this does not need to change. The partition table
+# is untouched too: this is a RAM layout, not a flash layout.
+#
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is deliberately NOT set, and that is the
+# load-bearing line in this block. Nearly every XIAO sdkconfig published
+# online sets it. With it, a board whose PSRAM does not answer logs one line
+# and carries on without it -- the image confirms itself, the node looks
+# healthy, and the ring allocation fails later on the node hardest to reach
+# with a cable. Without it, IDF calls abort(): a panic during startup, long
+# before the thirty-second confirm in main.c, so the bootloader reverts to
+# the previous slot at the next boot and the Hub reports "last update rolled
+# back after panic". The hard failure is the safety feature.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
 # A bad image undoes itself.
 #
 # With this set, a freshly installed image boots in PENDING_VERIFY and must

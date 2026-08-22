@@ -31,11 +31,46 @@ static const char *TAG = "oal_control";
 #define CONTROL_PORT 41001
 #define PROTOCOL_VERSION "0.1"
 
-/* A node must not accept a delay the ring cannot hold. The alternative is
+/*
+ * A node must not accept a delay the ring cannot hold. The alternative is
  * silent clamping: a setting that reads back differently from what was
- * asked for, on the one screen built to say what a node is doing. */
-_Static_assert(CONFIG_OAL_PLAYOUT_MS + OAL_DELAY_MS_MAX <= OAL_PLAYOUT_MAX_TARGET_MS,
-               "default playout target plus OAL_DELAY_MS_MAX must fit the ring");
+ * asked for, on the one screen built to say what a node is doing.
+ *
+ * This was a static assertion against OAL_PLAYOUT_MAX_TARGET_MS, and it
+ * cannot be one any more -- the ring is a setting now, so the limit is not
+ * known until the output stage has started. It became a function on the
+ * playout instead, asked at request time, and `/status` publishes the
+ * answer so the Hub can offer the real range rather than a remembered one.
+ *
+ * That is not a weakening of the original intent, it is the same intent
+ * moved somewhere it can still be true. What the assertion was protecting
+ * against -- two numbers describing one limit, drifting apart -- is now
+ * impossible rather than merely checked, because there is only one number
+ * and everyone asks for it.
+ */
+static uint32_t delay_ceiling(void)
+{
+    uint32_t max_target = oal_playout_max_target_ms();
+
+    /*
+     * Nothing playing yet -- a producer with no output stage, or a consumer
+     * whose sink failed to open -- so answer for the ring this node is
+     * configured to build at its next boot rather than refusing everything.
+     *
+     * Refusing would be the tidier-looking branch and the wrong one: the
+     * node that most needs to be reconfigured over the network is the one
+     * whose output stage did not come up, and that is exactly the case
+     * where the live ring is zero.
+     */
+    if (max_target == 0) {
+        max_target = oal_config_get_ring_ms() / 4 * 3;
+    }
+    if (max_target <= CONFIG_OAL_PLAYOUT_MS) {
+        return 0;
+    }
+    uint32_t room = max_target - CONFIG_OAL_PLAYOUT_MS;
+    return room > OAL_DELAY_MS_MAX ? OAL_DELAY_MS_MAX : room;
+}
 
 static oal_control_config_t s_config;
 
@@ -339,7 +374,15 @@ static esp_err_t status_handler(httpd_req_t *req)
                        /* Whether, never what. This document is polled by
                         * the Hub, the switchboard and every node's own
                         * page; a passphrase does not belong in it. */
-                       "\"partyReady\":%s,\"delayMs\":%u,\"ota\":%s,"
+                       "\"partyReady\":%s,\"delayMs\":%u,"
+                       /* The ring as allocated and the two limits that
+                        * follow from it. Published rather than assumed
+                        * because assuming is how the Hub came to offer
+                        * 0-200 ms against a real ceiling of 50 -- and with
+                        * the ring settable there is no longer any constant
+                        * the Hub could have hardcoded correctly. */
+                       "\"ringMs\":%u,\"maxTargetMs\":%u,\"maxDelayMs\":%u,"
+                       "\"ota\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
@@ -357,7 +400,14 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
-                       (unsigned)oal_config_get_delay_ms(), ota,
+                       (unsigned)oal_config_get_delay_ms(),
+                       /* Live values, not stored ones: after a rollback the
+                        * stored size may be one this firmware never
+                        * allocated, and the ring in front of the speaker is
+                        * the one worth reporting. */
+                       (unsigned)oal_playout_ring_ms(),
+                       (unsigned)oal_playout_max_target_ms(),
+                       (unsigned)delay_ceiling(), ota,
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {
@@ -420,20 +470,24 @@ static esp_err_t config_handler(httpd_req_t *req)
     const cJSON *output = cJSON_GetObjectItemCaseSensitive(root, "output");
     const cJSON *delay = cJSON_GetObjectItemCaseSensitive(root, "delayMs");
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
+    const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ringMs");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
     const bool has_output = cJSON_IsString(output);
     const bool has_delay = cJSON_IsNumber(delay);
+    const bool has_ring = cJSON_IsNumber(ring);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
+    const uint32_t ring_ms = has_ring ? (uint32_t)ring->valueint : 0;
 
     /* Either may be set alone: changing a speaker from stereo to mono has
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
-    if (!has_roles && !has_channel && !has_party && !has_delay && !has_output) {
+    if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
+            && !has_ring) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "expected roles, channel, output, delayMs or party");
+                            "expected roles, channel, output, delayMs, ringMs or party");
         return ESP_FAIL;
     }
 
@@ -458,9 +512,22 @@ static esp_err_t config_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown output");
         return ESP_FAIL;
     }
-    if (has_delay && (delay->valueint < 0 || delay->valueint > OAL_DELAY_MS_MAX)) {
+    /* Against what this node's ring can actually give, not a constant. A
+     * node with a 1000 ms ring accepts 650; one still on the 200 ms default
+     * accepts 50; and either way the number in the error is the true one,
+     * so a rejection tells you the limit instead of just naming it. */
+    if (has_delay
+            && (delay->valueint < 0 || (uint32_t)delay->valueint > delay_ceiling())) {
         cJSON_Delete(root);
+        ESP_LOGW(TAG, "refused delayMs %d; this ring allows up to %" PRIu32,
+                 delay->valueint, delay_ceiling());
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delayMs out of range");
+        return ESP_FAIL;
+    }
+    if (has_ring
+            && (ring_ms < OAL_RING_MS_MIN || ring_ms > OAL_RING_MS_MAX)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ringMs out of range");
         return ESP_FAIL;
     }
 
@@ -563,21 +630,30 @@ static esp_err_t config_handler(httpd_req_t *req)
         }
         (void)oal_playout_set_target_ms(CONFIG_OAL_PLAYOUT_MS + delay_ms);
     }
+    /* At the next boot, unlike the delay just above, and the difference is
+     * not arbitrary: the delay moves a target the servo is already walking
+     * towards, while this frees and reallocates the buffer the playout task
+     * is reading out of. */
+    if (has_ring && oal_config_set_ring_ms(ring_ms) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ringMs not stored");
+        return ESP_FAIL;
+    }
     if (has_party && oal_wifi_set_party(party_ssid, party_password) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "party network not stored");
         return ESP_FAIL;
     }
 
     char stored[OAL_ROLES_STR_MAX];
-    char response[192];
+    char response[256];
     oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
                      "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
-                     "\"output\":\"%s\",\"partyReady\":%s,"
+                     "\"output\":\"%s\",\"partyReady\":%s,\"ringMs\":%" PRIu32 ","
                      "\"appliesAt\":\"reboot\"}",
                      stored, oal_channel_name(oal_config_get_channel()),
                      oal_output_name(oal_config_get_output()),
-                     oal_wifi_has_party() ? "true" : "false");
+                     oal_wifi_has_party() ? "true" : "false",
+                     oal_config_get_ring_ms());
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, n);
 }

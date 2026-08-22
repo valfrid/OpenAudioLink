@@ -774,8 +774,19 @@
           // answer without being opened. Nothing else on this page has a
           // state this invisible.
           `<button data-cmd="delay" data-id="${esc(d.id)}" ` +
-          `data-delay="${esc(d.status?.delayMs ?? '')}"${disabled}>` +
+          `data-delay="${esc(d.status?.delayMs ?? '')}" ` +
+          // Carried on the button so the dialog can offer this node's real
+          // range. There is no correct constant to fall back on any more.
+          `data-max-delay="${esc(d.status?.maxDelayMs ?? '')}"${disabled}>` +
           `${d.status?.delayMs ? `Delay ${esc(d.status.delayMs)} ms…` : 'Delay…'}` +
+          `</button>` +
+          // The ring's size on the face of the button for the same reason
+          // the delay is: it is invisible from the room, it is the thing
+          // being experimented with, and "which of these is running a
+          // 500 ms buffer" should not need a dialog to answer.
+          `<button data-cmd="ring" data-id="${esc(d.id)}" ` +
+          `data-ring="${esc(d.status?.ringMs ?? '')}"${disabled}>` +
+          `${d.status?.ringMs ? `Ring ${esc(d.status.ringMs)} ms…` : 'Ring…'}` +
           `</button>`;
         const s = d.status;
         /* The running version travels on the row so the update button can
@@ -1186,18 +1197,33 @@
          * can move, and only later.
          */
         const current = button.dataset.delay;
+        /*
+         * The ceiling is read from the node, never written here.
+         *
+         * This dialog said "0 to 200" for two releases against a real limit
+         * of 50, because the number lived in the text as well as in the
+         * firmware. Now it cannot be written down at all and be right: the
+         * ring is a setting, so a node on 200 ms allows 50 and one on
+         * 1000 ms allows 650, and they sit on the same shelf.
+         *
+         * The fallback of 50 is for firmware that predates maxDelayMs,
+         * which is exactly the range that firmware's fixed ring allowed.
+         */
+        const maxDelay = Number(button.dataset.maxDelay) || 50;
         const answer = prompt(
-          'Extra playback delay for this speaker, 0 to 50 ms.\n\n' +
+          `Extra playback delay for this speaker, 0 to ${maxDelay} ms.\n\n` +
           'For lining up speakers that use different output stages — a USB\n' +
           'dongle plays later than a soldered DAC, so add delay to the one\n' +
           'that is early. Delay can only be added; nothing can play sooner.\n\n' +
+          'The ceiling is three quarters of this node\'s ring, less the\n' +
+          '100 ms default target. A bigger ring raises it; see Ring…\n\n' +
           'Applies immediately and slides in over about half a minute, so\n' +
           'you can hear it close. Blank means firmware older than 0.25.',
           current);
         if (answer === null) return;
         const delayMs = Number(answer.trim());
-        if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 50) {
-          say('Give a whole number of milliseconds from 0 to 50.');
+        if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > maxDelay) {
+          say(`Give a whole number of milliseconds from 0 to ${maxDelay}.`);
           return;
         }
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/delay`, {
@@ -1212,6 +1238,47 @@
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the delay: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'ring') {
+        /*
+         * Capacity, not target — the two are easy to confuse and the dialog
+         * says which is which, because getting it wrong is expensive in
+         * opposite directions. Raising the ring costs memory and nothing
+         * else; raising the target costs latency you can hear.
+         *
+         * A reboot on purpose: the ring is an allocation, and resizing it
+         * under a running playout would mean freeing the buffer the audio
+         * task is reading out of.
+         */
+        const current = button.dataset.ring;
+        const answer = prompt(
+          'Buffer capacity for this node, 50 to 1000 ms.\n\n' +
+          'This is how much the buffer can hold, not how full it normally\n' +
+          'runs — that is the target, 100 ms plus any delay. A bigger ring\n' +
+          'does not add latency by itself; it adds room to survive a gap,\n' +
+          'and raises the delay ceiling to three quarters of it.\n\n' +
+          'For reference: this project has run 200 ms since the start,\n' +
+          'Snapcast uses about 1000, AirPlay about 2000. The link here has\n' +
+          'been measured leaving 900 ms holes.\n\n' +
+          'Lives in PSRAM, so 1000 ms costs 384 kB of 8 MB. Applies at the\n' +
+          'next reboot. Watch "In time" and the margin afterwards.',
+          current);
+        if (answer === null) return;
+        const ringMs = Number(answer.trim());
+        if (!Number.isInteger(ringMs) || ringMs < 50 || ringMs > 1000) {
+          say('Give a whole number of milliseconds from 50 to 1000.');
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/ring`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ringMs }),
+        });
+        if (response.ok) {
+          say(`Ring set to ${ringMs} ms — reboot this node for it to take effect.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the ring: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');

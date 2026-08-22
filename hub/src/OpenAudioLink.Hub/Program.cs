@@ -405,21 +405,77 @@ app.MapPost("/api/devices/{id}/delay",
         return Results.NotFound();
     }
 
-    // Fifty is what the ring can give: the node holds 200 ms and caps its
-    // target at three quarters, so a 100 ms default leaves 50 ms to add.
+    /*
+     * The ceiling comes from the node, not from here.
+     *
+     * It was the constant 50, which was right for a 200 ms ring and is now
+     * right for nothing in particular: with the ring settable, two nodes on
+     * one shelf can have ceilings of 50 and 650. Hardcoding either is the
+     * same mistake that had this dialog offering 0-200 against a real limit
+     * of 50 for two releases.
+     *
+     * Falling back to 50 when a node has not reported one keeps older
+     * firmware working rather than locking it out, and 50 is exactly what
+     * that firmware's fixed ring allowed.
+     */
+    var ceiling = device.Status?.MaxDelayMs ?? 50;
     var delay = request.DelayMs ?? -1;
-    if (delay < 0 || delay > 50)
+    if (delay < 0 || delay > ceiling)
     {
         return Results.BadRequest(new
         {
-            error = "delayMs must be 0 to 50; delay is only ever added, to whichever "
-                  + "node plays early",
+            error = $"delayMs must be 0 to {ceiling} on this node; delay is only ever "
+                  + "added, to whichever node plays early",
         });
     }
 
     var ok = await commands.SetDelayAsync(device, delay, cancellationToken);
     return ok
         ? Results.Ok(new { status = "stored", delayMs = delay })
+        : Results.StatusCode(502);
+});
+
+/*
+ * The ring, per node: how much audio the buffer can hold at all.
+ *
+ * A different question from the delay above, and the difference is worth
+ * keeping straight. Delay moves the target *within* the ring and takes
+ * effect while the music plays; this changes how big the ring is, applies at
+ * the next boot, and is the only one of the two that can buy headroom that
+ * does not exist yet.
+ *
+ * Settable because the right answer is not known. This project runs a 100 ms
+ * target in a 200 ms ring; Snapcast runs about 1000 ms, AirPlay about 2000.
+ * The network it runs on has been measured leaving 900 ms holes, which no
+ * 200 ms ring can absorb no matter where the target sits. Finding the size
+ * that actually sounds best is an experiment, and the margin buckets already
+ * report the result of each attempt.
+ */
+app.MapPost("/api/devices/{id}/ring",
+    async (string id, RingRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    // The node clamps too, and refuses out of range. Checked here as well so
+    // the operator gets the range instead of a bare 400 relayed from
+    // firmware.
+    var ring = request.RingMs ?? -1;
+    if (ring < 50 || ring > 1000)
+    {
+        return Results.BadRequest(new
+        {
+            error = "ringMs must be 50 to 1000; this is the buffer's capacity, "
+                  + "not its target, and it applies at the node's next reboot",
+        });
+    }
+
+    var ok = await commands.SetRingAsync(device, ring, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", ringMs = ring, appliesAt = "reboot" })
         : Results.StatusCode(502);
 });
 
@@ -1407,6 +1463,8 @@ internal sealed record JoinRequest(string? Id, int? Port);
 
 internal sealed record ChannelRequest(string? Channel);
 internal sealed record DelayRequest(int? DelayMs);
+
+internal sealed record RingRequest(int? RingMs);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 

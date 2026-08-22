@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "oal_sink.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -43,33 +44,52 @@ static const char *TAG = "oal_playout";
  * about the difference.
  */
 /*
- * Forty packets, 200 ms. Briefly eighty, and that was a mistake.
+ * The ring is sized at start, from configuration, and lives in PSRAM.
  *
- * `s_ring` is a static int32 array in internal DRAM: at 40 packets it is
- * 75 kB, and doubling it took 75 kB more. The commit that did so justified
- * it as "38 kB on a board with 8 MB of PSRAM" and was wrong on both counts
- * -- the arithmetic, and the memory. PSRAM is not enabled in this build at
- * all; the only mention of it in the configuration is a comment.
- *
- * The node that paid was the USB one, which is the only one carrying a USB
- * host stack: `usb_host_install` and the driver's transfer buffers come
- * from the heap that 75 kB was taken out of, and a dongle that cannot be
+ * It was a static int32 array in internal DRAM: 200 ms, 75 kB, fixed at
+ * compile time. It was briefly doubled, and that was a mistake worth
+ * keeping written down -- the commit justified 150 kB as "38 kB on a board
+ * with 8 MB of PSRAM" and was wrong on both counts, the arithmetic and the
+ * memory, because PSRAM was not enabled in this build at all. The node that
+ * paid was the USB one: `usb_host_install` and the driver's transfer
+ * buffers come from the same internal heap, and a dongle that cannot be
  * opened is a node that is online, joined, streaming and silent.
  *
- * Delay is made room for by relaxing the *cap* instead, below. That costs
- * burst headroom rather than RAM, which is a trade the margin buckets now
- * make visible rather than mysterious.
+ * Both halves of that are now fixed rather than worked around. PSRAM is
+ * enabled (sdkconfig.defaults), so the ring no longer competes with the USB
+ * host stack for internal DRAM -- 200 ms of ring gives 75 kB *back* to the
+ * heap that was starving. And the size is a setting rather than a constant,
+ * because the useful range is not knowable from here: this project runs a
+ * 100 ms buffer where Snapcast runs 1000, and which is right for a house
+ * with 900 ms delivery stalls is an experiment, not an opinion.
+ *
+ * MALLOC_CAP_SPIRAM is deliberate, not MALLOC_CAP_DEFAULT. Default would
+ * fall back to internal DRAM and quietly recreate the exact failure above
+ * on the one node that cannot afford it. If PSRAM is not there, this must
+ * fail loudly and be seen.
  */
-#define CAPACITY_PACKETS 40
-#define CAPACITY_SAMPLES (CAPACITY_PACKETS * CHUNK_SAMPLES)
+#define RING_MS_MIN 50u
+#define RING_MS_MAX 1000u
+#define RING_MS_DEFAULT 200u
 
-/* The published ceiling has to *be* the one apply_target enforces below.
- * Two numbers describing one limit is how the Hub came to offer 0-200 ms
- * against a real maximum of 50. */
-_Static_assert(CAPACITY_SAMPLES * 3 / 4
-                   == (size_t)OAL_RTP_SAMPLE_RATE * OAL_PLAYOUT_MAX_TARGET_MS
-                      / 1000 * OAL_RTP_CHANNELS,
-               "OAL_PLAYOUT_MAX_TARGET_MS must equal three quarters of the ring");
+/*
+ * The target may use three quarters of whatever the ring is.
+ *
+ * Something above the target has to stay free to absorb a burst: a target
+ * equal to capacity means the ring is full whenever it is working. This
+ * used to be a compile-time assertion tying a published constant to a fixed
+ * array, which was the right idea for a fixed ring and is impossible for a
+ * settable one.
+ *
+ * So the relationship moved rather than disappeared. `oal_playout_max_target_ms()`
+ * computes it from the live capacity and everything that needs the limit --
+ * the delay clamp, `/status`, the Hub's dialog -- asks that one function.
+ * Nothing hardcodes a number. That is the same lesson the assertion was
+ * written for: the Hub offered 0-200 ms against a real maximum of 50
+ * because two numbers described one limit.
+ */
+#define TARGET_FRACTION_NUM 3
+#define TARGET_FRACTION_DEN 4
 
 /*
  * How long the ring may stay empty before playout treats the stream as
@@ -89,7 +109,8 @@ static const oal_sink_t *s_sink;
 static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
 
-static int32_t s_ring[CAPACITY_SAMPLES];
+static int32_t *s_ring;
+static size_t s_capacity;      /* samples, both channels; 0 until started */
 static size_t s_read;
 static size_t s_write;
 static size_t s_available;
@@ -184,17 +205,22 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
      * working. Half left 100 ms of headroom above a 100 ms target and made
      * 100 ms the ceiling too, so no node could be delayed at all.
      *
-     * Three quarters allows a 150 ms target in the same 200 ms ring, which
-     * covers the 20-40 ms an output stage differs by with room to spare,
-     * and keeps 50 ms above it. Using the delay therefore *spends* burst
-     * headroom, which is a real cost and a visible one: the margin buckets
-     * say how much of it was ever needed.
+     * Three quarters allows a 150 ms target in the default 200 ms ring,
+     * which covers the 20-40 ms an output stage differs by with room to
+     * spare, and keeps 50 ms above it. Using the delay therefore *spends*
+     * burst headroom, which is a real cost and a visible one: the margin
+     * buckets say how much of it was ever needed.
+     *
+     * The fraction is what stayed constant when the ring became settable.
+     * A 1000 ms ring allows a 750 ms target by the same rule, and the node
+     * publishes that rather than anyone assuming it.
      */
-    if (s_target_samples > CAPACITY_SAMPLES * 3 / 4) {
-        s_target_samples = CAPACITY_SAMPLES * 3 / 4;
+    size_t ceiling = s_capacity / TARGET_FRACTION_DEN * TARGET_FRACTION_NUM;
+    if (s_target_samples > ceiling) {
+        s_target_samples = ceiling;
     }
 
-    s_trim_above = s_target_samples + (CAPACITY_SAMPLES - s_target_samples) / 4;
+    s_trim_above = s_target_samples + (s_capacity - s_target_samples) / 4;
     /* Three quarters of the target: far enough down to mean the margin has
      * really been eroded, not a normal swing, and above the level where a
      * single ordinary gap empties the ring. */
@@ -413,9 +439,9 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
      * glitch, while dropping what just arrived costs the same glitch and
      * leaves the delay permanently longer.
      */
-    if (s_available + samples > CAPACITY_SAMPLES) {
-        size_t overflow = s_available + samples - CAPACITY_SAMPLES;
-        s_read = (s_read + overflow) % CAPACITY_SAMPLES;
+    if (s_available + samples > s_capacity) {
+        size_t overflow = s_available + samples - s_capacity;
+        s_read = (s_read + overflow) % s_capacity;
         s_available -= overflow;
         s_state.dropped_frames += (uint32_t)(overflow / OAL_RTP_CHANNELS);
 
@@ -436,7 +462,7 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
         }
     }
 
-    size_t first = CAPACITY_SAMPLES - s_write;
+    size_t first = s_capacity - s_write;
     if (first > samples) {
         first = samples;
     }
@@ -444,7 +470,7 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
     if (first < samples) {
         memcpy(&s_ring[0], &s_scratch[first], (samples - first) * sizeof(int32_t));
     }
-    s_write = (s_write + samples) % CAPACITY_SAMPLES;
+    s_write = (s_write + samples) % s_capacity;
     s_available += samples;
     s_submitted_frames += frames;
 
@@ -551,7 +577,7 @@ static size_t take_chunk(int32_t *chunk)
      * instead of all on one.
      */
     if (s_available > s_trim_above) {
-        s_read = (s_read + OAL_RTP_CHANNELS) % CAPACITY_SAMPLES;
+        s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
         s_available -= OAL_RTP_CHANNELS;
         s_state.trimmed_frames++;
     }
@@ -586,7 +612,7 @@ static size_t take_chunk(int32_t *chunk)
     if (s_available < s_pad_below) {
         bool urgent = s_available < s_target_samples / 2;
         if (urgent || (s_pad_phase++ & 3) == 0) {
-            s_read = (s_read + CAPACITY_SAMPLES - OAL_RTP_CHANNELS) % CAPACITY_SAMPLES;
+            s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
             s_available += OAL_RTP_CHANNELS;
             s_state.padded_frames++;
         }
@@ -594,7 +620,7 @@ static size_t take_chunk(int32_t *chunk)
 
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
 
-    size_t first = CAPACITY_SAMPLES - s_read;
+    size_t first = s_capacity - s_read;
     if (first > copied) {
         first = copied;
     }
@@ -602,7 +628,7 @@ static size_t take_chunk(int32_t *chunk)
     if (first < copied) {
         memcpy(&chunk[first], &s_ring[0], (copied - first) * sizeof(int32_t));
     }
-    s_read = (s_read + copied) % CAPACITY_SAMPLES;
+    s_read = (s_read + copied) % s_capacity;
     s_available -= copied;
 
     if (copied < CHUNK_SAMPLES) {
@@ -641,15 +667,15 @@ static void trace(void)
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
         return;
     }
-    fill_min = s_fill_min > CAPACITY_SAMPLES ? s_available : s_fill_min;
+    fill_min = s_fill_min > s_capacity ? s_available : s_fill_min;
     fill_max = s_fill_max;
     /* No packet arrived this window, so the honest answer is the fill
      * rather than the re-armed sentinel. */
-    margin_min = s_margin_min > CAPACITY_SAMPLES ? s_available : s_margin_min;
-    s_margin_min = CAPACITY_SAMPLES + 1;
+    margin_min = s_margin_min > s_capacity ? s_available : s_margin_min;
+    s_margin_min = s_capacity + 1;
     fill_now = s_available;
     submitted = s_submitted_frames;
-    s_fill_min = CAPACITY_SAMPLES + 1; /* re-armed above any real fill */
+    s_fill_min = s_capacity + 1; /* re-armed above any real fill */
     s_fill_max = 0;
     xSemaphoreGive(s_lock);
 
@@ -755,6 +781,33 @@ static void playout_task(void *arg)
     }
 }
 
+/* Only ever called from a failed start. There is no oal_playout_stop: once
+ * a node's output stage is up it stays up for the life of the boot, so in
+ * the working case this ring is allocated once and outlives everything. */
+static void release_ring(void)
+{
+    heap_caps_free(s_ring);
+    s_ring = NULL;
+    s_capacity = 0;
+}
+
+uint32_t oal_playout_max_target_ms(void)
+{
+    if (s_capacity == 0 || s_rate == 0) {
+        return 0;
+    }
+    size_t ceiling = s_capacity / TARGET_FRACTION_DEN * TARGET_FRACTION_NUM;
+    return (uint32_t)(ceiling / OAL_RTP_CHANNELS * 1000 / s_rate);
+}
+
+uint32_t oal_playout_ring_ms(void)
+{
+    if (s_capacity == 0 || s_rate == 0) {
+        return 0;
+    }
+    return (uint32_t)(s_capacity / OAL_RTP_CHANNELS * 1000 / s_rate);
+}
+
 esp_err_t oal_playout_start(const oal_playout_config_t *config)
 {
     if (config == NULL) {
@@ -767,6 +820,44 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     uint32_t rate = config->sample_rate ? config->sample_rate : OAL_RTP_SAMPLE_RATE;
     uint32_t target_ms = config->target_ms ? config->target_ms : 100;
 
+    /*
+     * The ring, before anything else can want memory.
+     *
+     * Clamped here rather than trusted, because the value came from NVS and
+     * NVS survives a downgrade: a node configured for 1000 ms by a later
+     * firmware must not hand a rolled-back one a length it never expected.
+     */
+    uint32_t ring_ms = config->ring_ms ? config->ring_ms : RING_MS_DEFAULT;
+    if (ring_ms < RING_MS_MIN) { ring_ms = RING_MS_MIN; }
+    if (ring_ms > RING_MS_MAX) { ring_ms = RING_MS_MAX; }
+
+    /* A whole number of packets, so the wrap arithmetic never splits one. */
+    size_t packets = (size_t)rate * ring_ms / 1000 * OAL_RTP_CHANNELS / CHUNK_SAMPLES;
+    if (packets < 2) { packets = 2; }
+    s_capacity = packets * CHUNK_SAMPLES;
+
+    /*
+     * MALLOC_CAP_SPIRAM, never MALLOC_CAP_DEFAULT. Falling back to internal
+     * DRAM is exactly the failure this project already had once: the ring
+     * took the heap the USB host stack needed and the dongle node played
+     * nothing while looking perfectly healthy. If PSRAM is missing, the
+     * right outcome is a node that says so, not one that quietly starves
+     * its own output stage.
+     */
+    s_ring = heap_caps_malloc(s_capacity * sizeof(int32_t), MALLOC_CAP_SPIRAM);
+    if (s_ring == NULL) {
+        ESP_LOGE(TAG, "no PSRAM for a %" PRIu32 " ms ring (%u bytes); "
+                 "playout cannot start", ring_ms,
+                 (unsigned)(s_capacity * sizeof(int32_t)));
+        s_capacity = 0;
+        return ESP_ERR_NO_MEM;
+    }
+    memset(s_ring, 0, s_capacity * sizeof(int32_t));
+    s_read = 0;
+    s_write = 0;
+    s_available = 0;
+    s_primed = false;
+
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment
      * later is a jump every time the node reboots, in a house where a node
@@ -775,8 +866,14 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
 
     apply_target(rate, target_ms);
 
+    /* Every exit from here on has to give the ring back. It is up to a
+     * megabyte of PSRAM, and a node that fails to start its output stage is
+     * one a caller may well retry -- leaking a ring per attempt turns a
+     * recoverable fault into a memory exhaustion a long way from its
+     * cause. */
     s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL) {
+        release_ring();
         return ESP_ERR_NO_MEM;
     }
 
@@ -784,6 +881,7 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     if (s_sink == NULL) {
         ESP_LOGE(TAG, "no sink for output stage %s — this build cannot drive it",
                  oal_output_name(config->output));
+        release_ring();
         return ESP_ERR_NOT_SUPPORTED;
     }
 
@@ -796,20 +894,21 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
 
     esp_err_t err = s_sink->open(&sink_config);
     if (err != ESP_OK) {
+        release_ring();
         return err;
     }
 
-    s_fill_min = CAPACITY_SAMPLES + 1;
+    s_fill_min = s_capacity + 1;
     s_trace_at_us = (uint64_t)esp_timer_get_time();
 
     s_state.running = true;
     s_state.channel = config->channel;
-    s_margin_min = CAPACITY_SAMPLES + 1;
-    s_margin_worst = CAPACITY_SAMPLES + 1;
+    s_margin_min = s_capacity + 1;
+    s_margin_worst = s_capacity + 1;
     s_state.margin_worst_frames = 0;
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
-    s_state.capacity_frames = CAPACITY_SAMPLES / OAL_RTP_CHANNELS;
+    s_state.capacity_frames = s_capacity / OAL_RTP_CHANNELS;
 
     /*
      * Above the consumer. The DAC has a deadline every 5 ms and missing it
@@ -820,10 +919,14 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
         s_sink->close();
         s_sink = NULL;
         s_state.running = false;
+        release_ring();
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "%s out, %" PRIu32 " Hz, %s, %" PRIu32 " ms buffer",
-             s_sink->name, rate, oal_channel_name(config->channel), target_ms);
+    ESP_LOGI(TAG, "%s out, %" PRIu32 " Hz, %s, %" PRIu32 " ms target in a %"
+             PRIu32 " ms ring (%u kB PSRAM), max target %" PRIu32 " ms",
+             s_sink->name, rate, oal_channel_name(config->channel), target_ms,
+             ring_ms, (unsigned)(s_capacity * sizeof(int32_t) / 1024),
+             oal_playout_max_target_ms());
     return ESP_OK;
 }
