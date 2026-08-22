@@ -702,6 +702,95 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 35: the turntable, and what a second air hop costs
+
+**2026-08-22.** Vinylspelare (PCM1808 ADC) producing to two consumers,
+firmware 0.29.0 throughout, 400 ms ring and 100 ms delay on the consumers.
+Two sittings of roughly 17 minutes each.
+
+### The producer is not the problem
+
+```
+"packetsSent": 205606, "datagramsSent": 205606,
+"sendErrors": 0, "sendRetries": 0, "lastSendErrno": 0, "latePackets": 0
+```
+
+Not one refused send, not one retry, not one missed deadline, across two
+runs. `readErrors` is 0 as well, so the send loop is keeping up with the
+converter and nothing is being dropped at capture.
+
+This killed the change that was about to be written. `send_one()` tries
+twice and then drops the packet permanently, and the sequence number
+advances regardless, so a refusal reaches the consumer as loss that no
+buffer can recover. The plan was a producer-side send queue, mirroring the
+socket-queue-to-ring fix on the receive side. **There is nothing to queue.**
+
+Worth recording as the reason to measure first: the fix was plausible,
+symmetric with something already proven, and entirely unnecessary.
+
+### Two air hops, one channel
+
+| | consumer A | consumer B |
+| --- | --- | --- |
+| late | 9.8 ppm (2 of 203 152) | 11 ppm (2 of 186 483) |
+| lost | 0 | 0 |
+| dropped frames | 0 | 0 |
+| underruns | 2 | — |
+| full cushion | 99.76 % | 99.8 % |
+| **stalls** | **12 965 ppm** | **12 338 ppm** |
+| worst stall | 254 ms | 248 ms |
+
+Both nodes and the producer are on **the same access point** — BSSID
+`7c:10:c9:7a:13:b1`, channel 9, RSSI −45 and −51, `roams: 0` on every one.
+There is no mesh and no backhaul in this path.
+
+It is still two hops, and that is the whole finding: the audio crosses the
+air **twice on one channel**, up from the producer and back down to the
+consumer. The Hub reaches the AP over Ethernet, so a Hub-sourced stream
+crosses once.
+
+| path | stalls |
+| --- | --- |
+| Hub → node, one air hop | 6 740 – 9 006 ppm |
+| node → AP → node, two air hops | **12 338 – 12 965 ppm** |
+
+Roughly double, which is what doubling the airtime per packet predicts:
+400 transmissions a second on channel 9 instead of 200, plus acknowledgements.
+
+The two consumers agreeing to within 5 % is what localises it. Every
+consumer receives the same packets from the same producer, so a stall on a
+consumer's own last hop would differ between them; a stall on the part of
+the path they share appears on both. With signal strong and no roaming, the
+shared cause is airtime on the channel.
+
+### What that means
+
+**The buffer absorbs it.** A stall rate half again as high as anything
+previously measured produced 2 late packets in 203 152 — the same 10 ppm
+the one-hop path gives. Zero loss, zero overflow drops, and the ring never
+came below 265 ms.
+
+**Island mode is the fix for the turntable, not more buffering.** When the
+producer is itself the access point, the packet crosses the air once, and
+the extra 6 000 ppm of stalls is not incurred in the first place. That is
+also the original use case for this project: a turntable and a PA speaker,
+five to ten metres, nothing else involved.
+
+**A wireless producer is inherently costlier than a wired one**, and that is
+a property of the medium rather than a fault to be fixed. Worth knowing
+before designing anything around a node-sourced stream.
+
+### Incidental
+
+`hz: 47999` — the ADC's measured rate, 21 ppm below nominal, which rules
+out converter drift as a contributor. `heapFree` at 8.5 MB confirms PSRAM
+is live and in the allocator.
+
+And the reading that started a correction to decision 17: `"state": "new"`
+on the running slot of both nodes, where a rollback-armed bootloader would
+have moved it to PENDING_VERIFY and then VALID. Rollback is not active on
+any node that has only ever been updated over the air.
+
 ## Run 34: the buffer series — 200 ms to 400 ms with a 100 ms delay
 
 **2026-08-22.** PartySpeaker, firmware 0.28.0/0.29.0, one node changed at a

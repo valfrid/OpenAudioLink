@@ -1573,9 +1573,34 @@ with a net under it.
 
 ### What actually happened
 
-Rollback shipped in 0.27.0 and was proven on hardware in 0.27.2: all three
-nodes took the update, booted and confirmed themselves. That cleared the
-gate this decision set, and the rest followed in 0.28.0.
+Rollback shipped in 0.27.0 and all three nodes took the update and booted,
+which was read at the time as the gate being cleared. The rest followed in
+0.28.0.
+
+**That reading was wrong, and this is the correction.** A node checked on
+2026-08-22 reports `"state": "new"` on its running slot. The sequence under
+a rollback-enabled bootloader is NEW → PENDING_VERIFY, set by the
+bootloader on first boot of a new image → VALID, set by the app. It never
+left NEW, so the bootloader is not performing that transition, and the
+confirm task in `main.c` — which only acts on PENDING_VERIFY — has been
+doing nothing at all.
+
+The cause is the limitation this decision named and then stopped thinking
+about: **OTA never replaces the bootloader.** These nodes were updated over
+the air from images built before 0.27.0, so their bootloaders predate
+`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. Setting it in `sdkconfig.defaults`
+puts it in every *app* built since, and in no bootloader already in the
+field.
+
+So the safety net does not exist on any node that has only ever been
+updated over the air. Arming it costs one cable per node, once. Until then
+a bad image is still a cable trip, which is exactly the cost rollback was
+added to avoid.
+
+What this does *not* change is the PSRAM conclusion below: enabling PSRAM
+genuinely needs no bootloader change, and 8.5 MB of `heapFree` on a running
+node proves it came up. The memory-map change was safe to deliver over the
+air. It simply went out without the net that was believed to be under it.
 
 **The first open question is answered, and the answer is yes.**
 `esp_psram_init()` is called from `call_start_cpu0()` in the *application*,

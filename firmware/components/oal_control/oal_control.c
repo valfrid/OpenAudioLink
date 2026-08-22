@@ -48,6 +48,26 @@ static const char *TAG = "oal_control";
  * impossible rather than merely checked, because there is only one number
  * and everyone asks for it.
  */
+/*
+ * The live ring where there is one, the stored size where there is not.
+ *
+ * Live first, because after a rollback the stored value may be one this
+ * firmware never allocated, and the ring in front of the speaker is the one
+ * worth reporting.
+ *
+ * But a producer has no playout at all, and reporting 0 there put two
+ * fields describing two different rings beside each other on the same
+ * screen: `ringMs` 0 next to a `maxDelayMs` of 200, which is derived from a
+ * stored 400. One of the two had to be wrong, and it was the one claiming
+ * the node has no buffer setting -- it has one, and would use it the moment
+ * it was given a consumer role.
+ */
+static uint32_t reported_ring_ms(void)
+{
+    uint32_t live = oal_playout_ring_ms();
+    return live != 0 ? live : oal_config_get_ring_ms();
+}
+
 static uint32_t delay_ceiling(void)
 {
     uint32_t max_target = oal_playout_max_target_ms();
@@ -401,11 +421,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
                        (unsigned)oal_config_get_delay_ms(),
-                       /* Live values, not stored ones: after a rollback the
-                        * stored size may be one this firmware never
-                        * allocated, and the ring in front of the speaker is
-                        * the one worth reporting. */
-                       (unsigned)oal_playout_ring_ms(),
+                       (unsigned)reported_ring_ms(),
                        (unsigned)oal_playout_max_target_ms(),
                        (unsigned)delay_ceiling(), ota,
                        controller, join,
