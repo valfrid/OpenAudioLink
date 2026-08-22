@@ -42,6 +42,33 @@ public sealed record DeviceStatus
     public int? DelayMs { get; init; }
 
     /// <summary>
+    /// Which app slot is running, and whether the image in it is confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Rollback without reporting is worse than no rollback: a reverted
+    /// node comes back online, joined, streaming, reporting the *old*
+    /// version, looking entirely normal. The update reads as one that never
+    /// arrived — and "the download failed" and "the image installed and
+    /// rejected itself" want completely different responses.
+    ///
+    /// <see cref="OtaOtherState"/> is the signal. After a rollback the
+    /// running slot is valid, because it is the restored image and it is
+    /// fine; the slot that was just tried reads aborted or invalid.
+    ///
+    /// Null from firmware that predates rollback.
+    /// </remarks>
+    public string? OtaSlot { get; init; }
+
+    /// <summary>"valid" once confirmed, "pending" while on probation.</summary>
+    public string? OtaState { get; init; }
+
+    /// <summary>What became of the image in the other slot.</summary>
+    public string? OtaOtherState { get; init; }
+
+    /// <summary>Why this node last booted. Narrows a panic from a power cut.</summary>
+    public string? ResetReason { get; init; }
+
+    /// <summary>
     /// Which of the stream's two channels this node plays: stereo, mono,
     /// left or right (decision 10). Read from /status rather than the
     /// announce, so the multicast every device hears stays lean.

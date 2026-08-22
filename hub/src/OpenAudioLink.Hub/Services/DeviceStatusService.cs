@@ -111,6 +111,10 @@ public sealed class DeviceStatusService : BackgroundService
                  * showing nothing at all.
                  */
                 DelayMs = status.DelayMs,
+                OtaSlot = status.Ota?.Slot,
+                OtaState = status.Ota?.State,
+                OtaOtherState = status.Ota?.OtherState,
+                ResetReason = status.Ota?.ResetReason,
                 Input = status.Input is { } input
                     ? new InputLevel(input.LeftDb, input.RightDb, input.Hz, input.ReadErrors)
                     : null,
@@ -161,6 +165,9 @@ public sealed class DeviceStatusService : BackgroundService
         /// </summary>
         [JsonPropertyName("delayMs")]
         public int? DelayMs { get; init; }
+
+        [JsonPropertyName("ota")]
+        public OtaStatus? Ota { get; init; }
 
         /// <summary>How audio leaves the board: "i2s" or "usb".</summary>
         [JsonPropertyName("output")]
@@ -216,6 +223,24 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("status")]
         public string? Status { get; init; }
+    }
+
+    private sealed record OtaStatus
+    {
+        [JsonPropertyName("slot")]
+        public string? Slot { get; init; }
+
+        [JsonPropertyName("state")]
+        public string? State { get; init; }
+
+        [JsonPropertyName("otherSlot")]
+        public string? OtherSlot { get; init; }
+
+        [JsonPropertyName("otherState")]
+        public string? OtherState { get; init; }
+
+        [JsonPropertyName("resetReason")]
+        public string? ResetReason { get; init; }
     }
 
     private sealed record WifiStatus

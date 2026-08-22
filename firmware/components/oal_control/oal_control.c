@@ -18,6 +18,7 @@
 #include "esp_http_server.h"
 #include "lwip/sockets.h"
 #include "esp_https_ota.h"
+#include "esp_ota_ops.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -118,6 +119,82 @@ static int format_controller(char *out, size_t out_size)
 }
 
 /*
+ * Which image is running, whether it is confirmed, and what became of the
+ * other one.
+ *
+ * Rollback without this is worse than no rollback: a reverted node comes
+ * back online, joined, streaming, reporting the *old* version, looking
+ * entirely normal. The update would read as one that never arrived, and
+ * "the download failed" and "the image installed and rejected itself" want
+ * completely different responses.
+ *
+ * The bootloader does say so over the console. The node that most needs to
+ * be heard is the one whose output stage owns the peripheral the console
+ * would use, which is the same reason outputArrivedAs and the ring's
+ * low-water mark ended up here.
+ *
+ * `otherState` is the signal. After a rollback the running slot reads
+ * valid -- it is the restored image, and it is fine -- while the slot that
+ * was just tried reads aborted or invalid.
+ */
+static const char *ota_state_name(esp_ota_img_states_t state)
+{
+    switch (state) {
+    case ESP_OTA_IMG_NEW:            return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "pending";
+    case ESP_OTA_IMG_VALID:          return "valid";
+    case ESP_OTA_IMG_INVALID:        return "invalid";
+    case ESP_OTA_IMG_ABORTED:        return "aborted";
+    default:                         return "undefined";
+    }
+}
+
+static const char *reset_reason_name(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "power-on";
+    case ESP_RST_EXT:      return "reset pin";
+    case ESP_RST_SW:       return "software";
+    case ESP_RST_PANIC:    return "panic";
+    case ESP_RST_INT_WDT:  return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    default:               return "unknown";
+    }
+}
+
+static int format_ota(char *out, size_t out_size)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == NULL) {
+        return snprintf(out, out_size, "null");
+    }
+
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    esp_ota_get_state_partition(running, &state);
+
+    /* The slot that is not running: after a rollback this is the image
+     * that was rejected, and it is the only place that says so. */
+    const esp_partition_t *other = esp_ota_get_next_update_partition(NULL);
+    esp_ota_img_states_t other_state = ESP_OTA_IMG_UNDEFINED;
+    const char *other_label = "?";
+    if (other != NULL) {
+        esp_ota_get_state_partition(other, &other_state);
+        other_label = other->label;
+    }
+
+    return snprintf(out, out_size,
+                    "{\"slot\":\"%s\",\"state\":\"%s\","
+                    "\"otherSlot\":\"%s\",\"otherState\":\"%s\","
+                    "\"resetReason\":\"%s\"}",
+                    running->label, ota_state_name(state),
+                    other_label, ota_state_name(other_state),
+                    reset_reason_name());
+}
+
+/*
  * Response buffers live here rather than on the stack.
  *
  * They total about 1.6 kB, and the httpd task's whole stack was 4 kB — the
@@ -144,6 +221,7 @@ static char s_wifi[192];
 static char s_controller[160];
 static char s_join[96];
 static char s_input[112];
+static char s_ota[176];
 /*
  * /status, sized against its measured worst case rather than by eye.
  *
@@ -214,6 +292,11 @@ static esp_err_t status_handler(httpd_req_t *req)
      * nothing playing. /stream only says anything while a stream runs, which
      * is exactly the wrong time.
      */
+    char *ota = s_ota;
+    if (format_ota(ota, sizeof(s_ota)) >= (int)sizeof(s_ota)) {
+        snprintf(ota, sizeof(s_ota), "null");
+    }
+
     char *input = s_input;
     snprintf(input, sizeof(s_input), "null");
     if (oal_capture_running()) {
@@ -256,7 +339,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        /* Whether, never what. This document is polled by
                         * the Hub, the switchboard and every node's own
                         * page; a passphrase does not belong in it. */
-                       "\"partyReady\":%s,\"delayMs\":%u,"
+                       "\"partyReady\":%s,\"delayMs\":%u,\"ota\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
@@ -274,7 +357,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
-                       (unsigned)oal_config_get_delay_ms(),
+                       (unsigned)oal_config_get_delay_ms(), ota,
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {

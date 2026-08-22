@@ -557,6 +557,40 @@
       if (scanDeviceId) rejoinAndScan(scanDeviceId);
     });
 
+    /*
+     * The version, and what happened to the last attempt to change it.
+     *
+     * Rollback makes a failed update *quiet*: the node reverts, comes back
+     * joined and streaming on the previous version, and looks like an
+     * update that never arrived. Those two need opposite responses — one is
+     * "try again", the other is "that image does not run on this node" —
+     * and the version number alone cannot tell them apart.
+     *
+     * So the row says so. `otherState` is the evidence: after a revert the
+     * running slot is valid, because it is the restored image and it is
+     * fine, while the slot just tried reads aborted or invalid.
+     *
+     * "on probation" is the live half, useful during a rollout: that node
+     * has an unconfirmed image and will revert if it reboots in the next
+     * half minute. Watching it clear is watching an update actually take.
+     */
+    function firmwareCell(d) {
+      const version = esc(d.firmwareVersion ?? '—');
+      const s = d.status;
+      if (!s || !s.otaState) return version;   // firmware predates rollback
+
+      if (s.otaOtherState === 'aborted' || s.otaOtherState === 'invalid') {
+        const why = s.resetReason && s.resetReason !== 'software'
+          ? ` after ${esc(s.resetReason)}` : '';
+        return `${version}<br><span class="rssi poor">last update rolled back` +
+               `${why}</span>`;
+      }
+      if (s.otaState === 'pending') {
+        return `${version}<br><span class="rssi fair">on probation</span>`;
+      }
+      return version;
+    }
+
     // Coloured by what the number means for a stream: below about -75 dBm
     // a 2.4 Mbit/s unicast has no margin left, and -65 is where it stops
     // being comfortable.
@@ -751,7 +785,7 @@
           `<td>${channelCell(d)}</td>` +
           `<td>${controllerCell(d)}</td>` +
           `<td>${inputCell(d)}</td>` +
-          `<td>${esc(d.firmwareVersion)}</td>` +
+          `<td>${firmwareCell(d)}</td>` +
           `<td>${s ? esc(duration(s.uptimeSeconds)) : '—'}</td>` +
           `<td>${wifiCell(s)}</td><td>${signalCell(s)}</td>` +
           `<td>${esc(d.address)}</td><td>${actions}</td></tr>`;
@@ -1233,7 +1267,9 @@
           body: JSON.stringify({ file }),
         });
         say(response.ok
-          ? 'Update started; the device installs it and reboots (watch its firmware version).'
+          ? 'Update started. Watch the Firmware column: "on probation" means it '
+            + 'installed and is confirming itself, "rolled back" means it refused '
+            + 'to run and the node put the old image back by itself.'
           : 'Update request failed.');
       }
     });

@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "esp_app_desc.h"
+#include "esp_ota_ops.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -106,6 +107,58 @@ static void heartbeat_task(void *arg)
                  (unsigned int)esp_get_free_heap_size(), (int)mode, detail);
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
+}
+
+/*
+ * Confirming a freshly installed image, and the trap in doing it wrong.
+ *
+ * With rollback enabled a new image boots in PENDING_VERIFY and must call
+ * `esp_ota_mark_app_valid_cancel_rollback()` or the bootloader reverts to
+ * the other slot at the next boot. That is the protection: an image that
+ * panics, hangs or cannot bring its memory up undoes itself, with no cable
+ * and no Hub.
+ *
+ * It is also the danger. An image that *never* calls it reverts every
+ * time, including a perfectly good one, so a misplaced call here silently
+ * un-installs every future update.
+ *
+ * The bar is deliberately "this image can run", not "this image works".
+ * Thirty seconds after every subsystem has started, with no reboot in
+ * between, catches boot loops, panics during startup and a memory map that
+ * will not come up -- which is the whole reason this exists.
+ *
+ * It deliberately does not wait for Wi-Fi. Tying confirmation to the
+ * network would revert a sound image because a router happened to be down
+ * when a node rebooted, and nothing about that is a firmware fault.
+ *
+ * And it must not be stricter still. "Confirm only if the output stage
+ * came up" is tempting and would roll back forever on a USB node with no
+ * dongle plugged in.
+ */
+#define OTA_CONFIRM_DELAY_MS 30000
+
+static void ota_confirm_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(OTA_CONFIRM_DELAY_MS));
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running != NULL && esp_ota_get_state_partition(running, &state) == ESP_OK
+            && state == ESP_OTA_IMG_PENDING_VERIFY) {
+        if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+            ESP_LOGW(TAG, "image confirmed after %d s; rollback cancelled",
+                     OTA_CONFIRM_DELAY_MS / 1000);
+        } else {
+            ESP_LOGE(TAG, "could not confirm this image; it will revert on reboot");
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void confirm_image_later(void)
+{
+    xTaskCreate(ota_confirm_task, "oal_ota_confirm", 3072, NULL, 3, NULL);
 }
 
 void app_main(void)
@@ -263,4 +316,9 @@ void app_main(void)
          * the music started (decision 9). */
         ESP_ERROR_CHECK(oal_join_start(discovery.id, OAL_RTP_DEFAULT_PORT));
     }
+
+    /*
+     * Last, because everything above it is what "this image runs" means.
+     */
+    confirm_image_later();
 }

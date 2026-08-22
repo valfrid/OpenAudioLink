@@ -91,3 +91,20 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
 # never hosts anything, which is the price of not having two firmwares.
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=512
 CONFIG_USB_HOST_HW_BUFFER_BIAS_PERIODIC_OUT=y
+
+# A bad image undoes itself.
+#
+# With this set, a freshly installed image boots in PENDING_VERIFY and must
+# call esp_ota_mark_app_valid_cancel_rollback() or the bootloader reverts
+# to the other slot at the next boot. The fallback is not a golden image --
+# there is no factory partition, deliberately (see partitions.csv) -- it is
+# the version that was running before the update.
+#
+# Worth having before the memory map is touched at all. An image that will
+# not boot is otherwise a cable trip to every node in the house, and a node
+# that cannot take an update is a thing this project has now met.
+#
+# The confirmation itself is in main.c, thirty seconds after startup
+# completes. Read the comment there before moving it: an image that never
+# confirms reverts every time, including a good one.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
