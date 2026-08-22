@@ -1,5 +1,13 @@
 # Link measurements
 
+> **This is history, not reference.** Thirty-four runs in reverse order,
+> including the wrong turns — the channel-7 theory, three attempts to fix
+> radio noise with scheduling, and a series where the numbers improved
+> because a buffer drifted rather than because anything was changed.
+>
+> For what to actually set, see `docs/TUNING.md`. Run 34 is the one that
+> produced the current values.
+
 What the network actually does, measured node-to-node with the real RTP
 profile (L24 stereo, 48 kHz, 5 ms packets, 200 packets/s, ~2.3 Mbit/s) and a
 synthetic source. This exists so the transport can be designed against

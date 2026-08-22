@@ -1,72 +1,117 @@
 # OpenAudioLink
 
-OpenAudioLink is a local-first, open-source multi-room audio platform.
+A local-first, open-source multi-room audio platform. It distributes
+synchronised stereo audio over an ordinary IP network using inexpensive
+ESP32-S3 nodes and a Windows Hub.
 
-It distributes synchronized stereo audio over a local IP network using inexpensive ESP32 audio nodes and a Windows-based Hub.
+No cloud, no account, no vendor. The Hub runs on a PC you own, the nodes
+cost a few euros each, and audio goes straight from whatever is producing it
+to whatever is playing it.
 
-## Core architecture
+## Where it is now
 
-OpenAudioLink is built around four logical roles:
+Working, in daily use, and measured:
 
-- **Controller** — coordinates devices, sources, receivers and routes.
-- **Producer** — generates RTP audio streams.
-- **Consumer** — receives and plays RTP audio.
+- **Two or more nodes playing one stream in sync**, from Spotify, internet
+  radio, a turntable through a line-in ADC, or a test tone.
+- **L24 stereo, 48 kHz, 5 ms packets** — AES67-grade timing, on consumer
+  Wi-Fi, behind a jitter buffer sized for it.
+- **10 ppm of audio arriving too late to play**, zero packet loss, over a
+  two-hour run. That is 1 packet in 100 000, and it started the same day at
+  2 530 ppm.
+- **Updates over the air, with rollback.** A bad image reverts itself at the
+  next boot and the Hub says so.
+
+Not finished: room calibration by microphone, standalone "island" mode, and
+the node as a USB audio device. See `docs/ROADMAP.md`.
+
+## How it fits together
+
+Four roles, which are configuration rather than different products:
+
+- **Controller** — coordinates devices, sources and routes.
+- **Producer** — generates RTP audio.
+- **Consumer** — receives and plays it.
 - **Provisioner** — flashes, configures, updates and recovers devices.
 
-The Windows application normally implements Controller, Producer for Windows-hosted sources, and Provisioner.
+The Hub is normally Controller, Provisioner, and Producer for anything
+sourced on the PC. A node with an ADC is a Producer; a node with a DAC or a
+USB dongle is a Consumer. One firmware image serves them all, with the role
+stored in NVS (decision 5).
 
-An ESP32 analog source implements Producer and may provide a limited Controller role in standalone mode.
+**The control plane** carries discovery, configuration, routing, volume,
+status and OTA. **The audio plane** carries RTP/UDP straight from Producer
+to Consumers. The Hub names the destinations; it does not relay the audio.
 
-An ESP32 receiver implements Consumer only.
+## Getting started
 
-## Control plane and audio plane
+1. **Install the Hub** — `docs/INSTALLING-THE-HUB.md`
+2. **Build a node** — `docs/HARDWARE.md` for the boards, wiring and parts
+3. **Flash and provision it** — the Hub's setup page; credentials go in over
+   the node's own Wi-Fi portal and never into this repository
+4. **Play something** — `docs/LISTENING.md`
 
-The control plane manages discovery, configuration, routing, ownership, volume, status, OTA and provisioning.
+The switchboard — the everyday screen for choosing what plays where — is
+`docs/CAST-POINTS.md`.
 
-The audio plane carries RTP/UDP audio directly from the active Producer to the selected Consumers.
+## Documentation
 
-External audio sources are not normally routed through the Windows Hub.
+Two kinds, deliberately kept apart.
 
-## Initial hardware
+### How it works now
 
-### Development hardware
+Reference for the system as it stands. Read these to use it or change it.
 
-ESP32-C3 boards were used for control-plane, discovery, provisioning and OTA work while the S3 boards were in transit. That target was removed on 2026-07-30 once two XIAO ESP32S3 nodes were running (decision 5).
+| | |
+| --- | --- |
+| `docs/ARCHITECTURE.md` | The shape of the system and why it has that shape |
+| `docs/INSTALLING-THE-HUB.md` | Installing and updating the Hub |
+| `docs/HARDWARE.md` | Boards, DACs, ADCs, wiring, enclosures |
+| `docs/TUNING.md` | The jitter buffer, its two knobs, and how to read the counters |
+| `docs/LISTENING.md` | Playing audio end to end |
+| `docs/CAST-POINTS.md` | Rooms and groups from a phone |
+| `docs/CONTROL-SURFACE.md` | What every control in the Hub does |
+| `docs/USB-AUDIO.md` | The USB dongle output stage |
+| `docs/LIBRESPOT.md` | Spotify as a source |
+| `docs/WINDOWS-AUDIO-CAPTURE.md` | Capturing what the PC is playing |
+| `protocol/` | Wire specifications: discovery, control, RTP, identity, OTA |
 
-### Target audio hardware
+### How it got here
 
-- Receiver: ESP32-S3 + PCM5102A stereo I²S DAC
-- Analog source: ESP32-S3 + PCM1808 stereo I²S ADC with onboard oscillator
+The record of what was tried, measured, and decided. Read these to
+understand *why* something is the way it is — or before changing it, since
+most of the obvious alternatives are in here with the reason they failed.
 
-The ESP32-S3 is the platform. It is the only firmware target that builds.
+| | |
+| --- | --- |
+| `docs/DECISIONS.md` | Numbered decisions, with what each one closed off |
+| `docs/LINK-MEASUREMENTS.md` | 34 measured runs: loss, jitter, stalls, buffers |
+| `docs/ROADMAP.md` | What is done, what is next, what was abandoned |
+| `docs/ROOM-CALIBRATION.md` | The microphone experiment, not yet run |
+| `docs/BUILDING-LIBRESPOT-WINDOWS.md` | Building librespot, and what went wrong |
+| `docs/MASTER_PROMPT.md` | The project's standing brief |
 
-## First development focus
-
-1. Windows Hub repository and application skeleton
-2. Device model and control API
-3. Discovery
-4. Web UI
-5. USB flashing and provisioning
-6. OTA management
-7. RTP sender in Windows
-8. ESP receiver proof of concept
-9. ADC source proof of concept
-10. Synchronization and clock correction
-
-Installing the Hub and keeping it up to date is `docs/INSTALLING-THE-HUB.md`.
-See `docs/ARCHITECTURE.md`, `docs/MASTER_PROMPT.md`, `docs/HARDWARE.md` and `docs/ROADMAP.md`.
-Measured network behaviour — loss, jitter and what causes them — is in
-`docs/LINK-MEASUREMENTS.md`. How rooms and groups are chosen from a phone
-is in `docs/CAST-POINTS.md`.
+These two groups are separate on purpose. The history is long — a third of
+the documentation by line count — and it is worth keeping, because this
+project has repeatedly re-derived conclusions it had already reached and
+paid for. But it should not be in the way of someone who only wants to know
+how to set a buffer.
 
 ## Repository layout
 
 ```text
-docs/       Phase 1 architecture, roadmap, hardware baseline, master prompt
-protocol/   Protocol suite specifications (discovery, control, identity)
-hub/        OpenAudioLink Hub (.NET 8 solution: service, API, web UI, tests)
-firmware/   ESP32 firmware (ESP-IDF test node and shared components)
+docs/       Reference and history (see above)
+protocol/   Wire specifications
+hub/        OpenAudioLink Hub (.NET 8: service, API, web UI, tests)
+firmware/   ESP32-S3 firmware (ESP-IDF app and shared components)
 enclosures/ Parametric 3D-printable enclosures (OpenSCAD source)
 ```
+
+## A note on credentials
+
+Wi-Fi credentials are never committed. Nodes are provisioned through their
+own captive portal, and the standalone network's passphrase is generated on
+the Hub and stored in its data directory. This repository is public; treat
+anything in it as published.
 
 Build instructions are in `CONTRIBUTING.md`. Licensed under the MIT License.

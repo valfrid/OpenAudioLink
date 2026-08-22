@@ -1,5 +1,13 @@
 # Design Decisions
 
+> **This is history, not reference.** It records what was decided and what
+> each choice closed off, in the order it happened. For how the system works
+> now, start at the README's "How it works now" table — settings and
+> operation are there, not here.
+>
+> Worth reading before changing something: most of the obvious alternatives
+> are already in here, with the reason they were rejected.
+
 Decisions taken after Phase 1. `ARCHITECTURE.md` records the approved
 Phase 1 design and is left as it was; where a decision here supersedes
 it, that is stated.
