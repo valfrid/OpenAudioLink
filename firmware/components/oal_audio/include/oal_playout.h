@@ -218,6 +218,25 @@ void oal_playout_get(oal_playout_state_t *out);
 void oal_playout_set_volume(uint8_t percent);
 
 /** The level last set, 0-100. */
+uint8_t oal_playout_volume(void);
+
+/**
+ * The largest target the ring will honour, in milliseconds.
+ *
+ * Three quarters of the ring's 200 ms: something above the target has to
+ * stay free to absorb a burst, and a target equal to capacity means the
+ * ring is full whenever it is working.
+ *
+ * Published because it is not this component's business alone. The delay
+ * maximum lives in `oal_config.h`, which cannot see the ring, so the two
+ * agreed only because they were kept in step by hand -- and they did not
+ * stay in step: the Hub offered 0-200 ms in a dialog for two releases
+ * after the real ceiling became 50. A static assertion in each file now
+ * ties them together, so any change to the ring, the default target or the
+ * maximum breaks the build instead of a speaker.
+ */
+#define OAL_PLAYOUT_MAX_TARGET_MS 150
+
 /**
  * Changes the playout target while running, in milliseconds.
  *
@@ -237,11 +256,9 @@ void oal_playout_set_volume(uint8_t percent);
  * tuned by ear, and a value that jumped would have to be re-judged after
  * every nudge.
  *
- * Capped at half the ring's capacity.
+ * Capped at OAL_PLAYOUT_MAX_TARGET_MS.
  */
 esp_err_t oal_playout_set_target_ms(uint32_t target_ms);
-
-uint8_t oal_playout_volume(void);
 
 /** True once the I²S peripheral is up. */
 bool oal_playout_running(void);
