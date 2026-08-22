@@ -694,6 +694,90 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 34: the buffer series — 200 ms to 400 ms with a 100 ms delay
+
+**2026-08-22.** PartySpeaker, firmware 0.28.0/0.29.0, one node changed at a
+time while the others stayed put. All four readings are from `/stream` on
+the node, normalised per packet because the runs are different lengths
+(92 099, 45 203, 997 220 and 256 878 packets submitted).
+
+| per packet | 200 ms ring | 400 ms | 400 ms, long | 400 ms + 100 ms delay |
+| --- | --- | --- | --- | --- |
+| `droppedFrames` | 2.158 | 0.134 | 0.038 | **0** |
+| `silenceFrames` | 2.637 | 0.932 | 0.223 | **0.036** |
+| `latePackets` | 2 530 ppm | 1 615 ppm | 234 ppm | **43 ppm** |
+| `tightPackets` | 16 428 ppm | 7 123 ppm | 1 365 ppm | **269 ppm** |
+| worst stall | 287 ms | 121 ms | 373 ms | 211 ms |
+
+Loss was **zero in every one of the four**. Nothing was ever dropped by the
+radio; everything here is a buffer arriving too late to be used, which is
+why the loss column had nothing to say all series.
+
+### What each step actually bought
+
+**200 → 400 ms of ring killed the overflow.** The socket queue holds 64
+packets, 320 ms, deliberately sized in run 28 so a stall's worth could be
+held rather than dropped. The ring downstream was 200 ms and physically
+could not accept what the queue had saved: the burst at the end of a stall
+overflowed and the *oldest* audio was discarded. `fillMaxFrames` hit 11 736
+frames — 244 ms — in the second run, a peak the old ring could not have
+contained, which is the one figure in the series no difference in network
+conditions can explain away.
+
+**The 100 ms delay killed what was left.** A bigger ring does not stop the
+ring running dry: that is set by the target, and a stall longer than the
+target starves the speaker however much spare capacity sits above it. Going
+from a 100 ms to a 200 ms target took late packets from 234 ppm to 43.
+
+### The trap in the middle of this series
+
+Between the second and third readings nothing was changed at all. Late
+packets still fell 1 615 → 234 ppm, because the fill had drifted upwards on
+its own.
+
+The fill does not sit at the target. It floats to just below wherever
+trimming begins, since bursts raise it faster than a servo removing one
+frame per 5 ms chunk lowers it — and `trim_above` was
+`target + (capacity - target) / 4`, which moved with the ring. Raising the
+capacity raised the trim line and deepened the buffer without anyone asking:
+a measured fill of 221 ms, later 336 ms, against a 100 ms target.
+
+So `ringMs` was two knobs wearing one hat, and the accidental one was doing
+much of the work credited to the deliberate one. Firmware 0.29.0 makes
+`trim_above` `target * 3/2`, clamped to seven eighths of capacity. Latency
+follows `delayMs` alone and `ringMs` buys burst headroom and nothing else.
+
+### Two counters that lie, and cost two wrong diagnoses
+
+`arrivalGaps` is the delivery-stall measure. The switchboard's shape column
+read `lossEvents` instead and printed "no gaps" in grey whenever nothing was
+lost — so a node measuring 890 stalls with a 287 ms worst case displayed as
+a clean link, and two diagnoses were built on that reading before the raw
+document contradicted both. Fixed in Hub 0.36.0, which shows stalls and loss
+bursts separately.
+
+`payloadErrors` compares every sample against the synthetic test pattern, so
+with music playing it counts every sample as an error: 92 099 packets ×
+480 samples = 44 207 520, against 44 207 518 reported. Meaningless outside a
+pattern-source run and now labelled as such.
+
+The counters also keep different epochs. `/stream/stop` clears the
+consumer's state but not the playout's, and `framesPlayed` runs from boot
+including idle silence — in the third run they implied 1.0, 1.4 and
+2.8 hours respectively. Normalise playout figures against
+`packetsSubmitted` and nothing else.
+
+### Where it landed
+
+400 ms ring, 200 ms target, about 240 ms from air to ear including the sink.
+Snapcast territory, arrived at from the opposite direction. 43 ppm late,
+zero drops, zero loss.
+
+Worst stall seen across the series is 373 ms, which a 200 ms target still
+cannot cover, so the remaining 43 ppm is that tail. Closing it needs a
+400 ms target and a 600 ms ring — and roughly 400 ms of latency, which is a
+listening decision rather than a measurement one.
+
 ## Run 33: the Hub is late every second, and both access points are on channel 7
 
 **2026-08-21, 00:19.** Hub 0.22.0, per-window counters, both consumers.
