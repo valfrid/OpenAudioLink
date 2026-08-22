@@ -230,7 +230,11 @@
       <tr>
         <th>Node</th><th>Role</th><th>Sent / received</th><th>Lost</th>
         <th>In time</th>
-        <th>Loss shape</th><th>Jitter</th><th>Dup / reorder</th><th>Payload errors</th>
+        <th>Loss shape &amp; stalls</th><th>Jitter</th><th>Dup / reorder</th>
+        <!-- Only meaningful against the synthetic pattern source. With music
+             playing every sample "fails" the comparison, which reads as tens
+             of millions of errors on a perfectly healthy node. -->
+        <th>Payload errors<br><span class="muted">pattern source only</span></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -1474,17 +1478,50 @@
       return `${who}${join}`;
     }
 
-    // How the loss arrived, not just how much. Isolated single packets are
-    // 5 ms gaps concealment can hide; the same total in bursts is a dropout
-    // needing forward error correction. The mitigation differs completely,
-    // so the shape is what decides it.
+    /*
+     * Two different things were both called "gaps", and only one of them
+     * was on this page.
+     *
+     * The loss shape is below: how the loss arrived, not just how much.
+     * Isolated single packets are 5 ms holes concealment can hide; the same
+     * total in bursts is a dropout needing forward error correction.
+     *
+     * The other is a *delivery stall* — packets that all arrived, none lost,
+     * with a long silence between them. That is the thing this link
+     * actually suffers from, and it read as "no gaps" in green because
+     * nothing was lost. A node measured 890 stalls with a 287 ms worst case
+     * while this cell called the link clean, and two separate diagnoses were
+     * made against that reading before the raw document contradicted it.
+     *
+     * So both are shown, and neither is allowed to speak for the other.
+     */
     function shapeCell(stats) {
-      if (!stats || !stats.lossEvents) return '<span class="muted">no gaps</span>';
-      const mean = ((stats.meanGapX100 ?? 100) / 100).toFixed(2);
-      const allSingle = stats.singleLosses === stats.lossEvents;
-      const label = allSingle ? 'all isolated' : `longest ${stats.longestGap ?? 0}`;
-      return `${stats.lossEvents} gaps · ${label}` +
-        `<br><span class="muted">${mean} packets per gap</span>`;
+      if (!stats) return '<span class="muted">—</span>';
+
+      const lossLine = !stats.lossEvents
+        ? '<span class="muted">no loss bursts</span>'
+        : (() => {
+            const mean = ((stats.meanGapX100 ?? 100) / 100).toFixed(2);
+            const allSingle = stats.singleLosses === stats.lossEvents;
+            const label = allSingle ? 'all isolated' : `longest ${stats.longestGap ?? 0}`;
+            return `${stats.lossEvents} loss bursts · ${label}` +
+              `<br><span class="muted">${mean} packets per burst</span>`;
+          })();
+
+      // Ticks are RTP units; at 48 kHz a buffer is sized in milliseconds,
+      // and the worst stall is what the ring has to survive.
+      const stalls = stats.arrivalGaps ?? 0;
+      if (!stalls) {
+        return `${lossLine}<br><span class="muted">no stalls</span>`;
+      }
+      const worstMs = Math.round((stats.maxArrivalGapTicks ?? 0) / 48);
+      const ppm = stats.arrivalGapPpm ?? 0;
+      // Against the ring, because that is the decision it informs: a stall
+      // longer than the target starves the speaker however big the ring is.
+      const stallClass = worstMs > 250 ? 'poor' : worstMs > 100 ? 'fair' : 'good';
+      return `${lossLine}<br><span class="rssi ${stallClass}">` +
+        `${stalls.toLocaleString()} stalls (${ppm} ppm)</span>` +
+        `<br><span class="muted">worst ${worstMs} ms</span>`;
     }
 
     /*

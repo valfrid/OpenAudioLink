@@ -1615,3 +1615,51 @@ hardcoded `delay > 50` check, the last copy of that limit, is gone.
 The third open question — what latency is acceptable, and whether a DJ at a
 turntable can live with it — is untouched, and is now a thing that can be
 measured by turning a knob rather than argued about.
+
+### What the first measurement found (0.29.0)
+
+A node was moved from a 200 ms ring to 400 ms with nothing else changed.
+Normalised per packet, over 92 099 packets before and 45 203 after:
+
+| per packet | 200 ms | 400 ms |
+|---|---|---|
+| `droppedFrames` (ring full) | 2.158 | 0.134 |
+| `silenceFrames` (ring dry) | 2.637 | 0.932 |
+| `latePackets` | 2 530 ppm | 1 615 ppm |
+| `trimmedFrames` | 0.449 | 0.695 |
+
+Overflow drops fell **sixteenfold**, which was the predicted effect: the
+socket queue holds 64 packets, 320 ms, and a 200 ms ring physically cannot
+accept what that queue saves during a stall. `fillMaxFrames` reached 11 736
+frames — 244 ms — a peak the old ring could not have held, which is the one
+figure in the comparison that no difference in network conditions can
+explain away. (The second window was gentler: worst stall 121 ms against
+287 ms, so part of the silence improvement is borrowed from the weather.)
+
+**But it also found a coupling that should not have existed.** The fill does
+not sit at the target. It floats up to just below wherever trimming begins
+and stays there, because bursts raise it faster than a servo removing one
+frame per 5 ms chunk lowers it. `trim_above` was
+`target + (capacity - target) / 4`, so it moved with the ring: 125 ms at
+200, 175 ms at 400 — and the measured fill sat at **221 ms against a 100 ms
+target**. Buying burst headroom silently more than doubled latency.
+
+That is now fixed. `trim_above` is `target * 3/2`, clamped to seven eighths
+of capacity so a small ring with a large delay cannot put the trim line
+above the rim. Latency follows `delayMs` alone; `ringMs` buys burst headroom
+and nothing else. At a 100 ms target the trim line is 150 ms whether the
+ring is 200, 400 or 1000.
+
+The 400 ms node gains twice over: it should settle near 150 ms rather than
+221, while headroom above its operating point rises from 179 ms to 250 ms.
+
+**One reporting fault, and it cost two wrong diagnoses.** The switchboard's
+shape column read `lossEvents` and printed "no gaps" in grey when nothing
+was lost. Delivery stalls are `arrivalGaps`, a different counter, and were
+not on the page at all — so a node measuring 890 stalls with a 287 ms worst
+case displayed as a clean link. Two diagnoses were made against that
+reading before the raw `/stream` document contradicted both. The column now
+shows loss bursts and stalls separately and lets neither speak for the
+other. `payloadErrors` is labelled as pattern-source-only for the same
+reason: it compares every sample against the synthetic test pattern, so real
+music reads as tens of millions of errors on a healthy node.

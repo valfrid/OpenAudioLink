@@ -220,7 +220,47 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
         s_target_samples = ceiling;
     }
 
-    s_trim_above = s_target_samples + (s_capacity - s_target_samples) / 4;
+    /*
+     * Half again the target -- and measured against the target, not the
+     * capacity, which is the whole point of this line.
+     *
+     * It used to be `target + (capacity - target) / 4`, and that quietly
+     * made the ring's size a latency control. The fill does not sit at the
+     * target; it floats up to just under wherever trimming begins and stays
+     * there, because bursts push it up faster than a servo removing one
+     * frame per 5 ms chunk can pull it down. So raising the capacity raised
+     * the trim line, and the buffer got deeper without anyone asking.
+     *
+     * That was measured, not reasoned: going from a 200 ms ring to a 400 ms
+     * one moved the trim line from 125 ms to 175 ms and left the fill
+     * sitting at 221 ms against a 100 ms target. Real latency more than
+     * doubled as a side effect of buying burst headroom. The burst headroom
+     * was worth having -- overflow drops fell sixteenfold -- but the two
+     * should not have been the same knob.
+     *
+     * Now they are not. `ringMs` buys room to absorb a burst and nothing
+     * else; `delayMs` moves the target and is the only thing that decides
+     * how far the speaker lags the room. A 400 ms ring at a 100 ms target
+     * trims at 150 ms whether the ring is 200 ms or 1000.
+     *
+     * Fifty per cent above, because the fill was measured swinging about
+     * 35 ms either side of its mark on working hardware. Trimming has to
+     * start above the ordinary swing or the servo fights the weather.
+     */
+    s_trim_above = s_target_samples + s_target_samples / 2;
+
+    /*
+     * ...but never so close to the rim that the ring overflows before it
+     * has begun trimming. Reachable with a small ring and a large delay --
+     * a 150 ms target in a 200 ms ring would otherwise put the trim line at
+     * 225 ms, above a capacity of 200 -- and an overflow discards the
+     * *oldest* audio, which is a jump rather than a stretch.
+     */
+    size_t rim = s_capacity - s_capacity / 8;
+    if (s_trim_above > rim) {
+        s_trim_above = rim;
+    }
+
     /* Three quarters of the target: far enough down to mean the margin has
      * really been eroded, not a normal swing, and above the level where a
      * single ordinary gap empties the ring. */
