@@ -65,6 +65,52 @@
     .rssi.good { color: #3aa655; }
     .rssi.fair { color: #b8860b; }
     .rssi.poor { color: #c94f4f; }
+
+    /* --- Device detail panel ---------------------------------------- */
+
+    .disclose { white-space: nowrap; }
+    /* The open row and its panel read as one object rather than as a row
+       and an unrelated block that happens to sit under it. */
+    tr.expanded > td { border-bottom: none; font-weight: 600; }
+    tr.detail > td { padding: 0 0.75rem 0.75rem; }
+    .panel {
+      background: var(--panel, rgba(127, 127, 127, 0.06));
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+    }
+    /* auto-fit rather than a fixed count: the switchboard gets used from a
+       phone, and three columns there is three unreadable columns. */
+    .panel-cols {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+      gap: 0.5rem 2rem;
+    }
+    .panel h4 {
+      margin: 0 0 0.4rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.85rem;
+      padding: 0.15rem 0;
+    }
+    /* Tabular figures so a value changing every two seconds does not make
+       the whole column jitter sideways as digits change width. */
+    .kv > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+    .panel-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
   </style>
 </head>
 <body>
@@ -92,7 +138,7 @@
       <tr>
         <th>Status</th><th>Name</th><th>Roles</th><th>Speaker</th><th>Follows</th>
         <th>Line in</th><th>Firmware</th><th>Uptime</th><th>Wi-Fi</th><th>Signal</th>
-        <th>Address</th><th>Actions</th>
+        <th>Address</th><th></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -728,6 +774,144 @@
     // without fetching the device list again.
     let lastDevices = [];
 
+    /*
+     * Which devices are showing their detail panel, and the last stream
+     * reading for each.
+     *
+     * Module scope because the table is rebuilt from scratch every two
+     * seconds. Anything held in the DOM — which row was open, what its
+     * counters said — is destroyed on each pass, so it has to live out
+     * here and be re-applied. The tone target's selection is preserved the
+     * same way a few lines below, for the same reason.
+     *
+     * The cache matters more than it looks. The panel's counters come from
+     * a second request per open device, so without somewhere to keep the
+     * previous answer every refresh would blank the numbers and fill them
+     * in again a moment later — a panel that flickers twice a second is
+     * one nobody can read a changing value from.
+     */
+    const expandedDevices = new Set();
+    const deviceStreams = new Map();
+
+    /*
+     * One device, opened out: everything the row had no space for, and the
+     * buttons that act on it.
+     *
+     * Grouped by what you are trying to do rather than by which endpoint
+     * serves it — Buffer together, Radio together — because the eight
+     * buttons in a line gave no clue that Ring and Delay are two halves of
+     * one decision while Reboot and Update are not related to either.
+     */
+    function detailRow(d, actions) {
+      const s = d.status ?? {};
+      const target = s.delayMs != null ? 100 + s.delayMs : null;
+      // The number people actually want, and the one no field reports: the
+      // fill rides the trim line at 1.5x target, not the target itself.
+      const depth = target != null ? Math.round(target * 1.5) : null;
+
+      const facts = [
+        ['Address', `${esc(d.address)}:41001`],
+        ['Identity', esc(d.id)],
+        ['Hardware', esc(d.hardwareProfile ?? '—')],
+        ['Firmware', firmwareCell(d)],
+        ['Output', esc(s.output ?? '—') +
+          (s.outputReady === false ? ' <span class="rssi poor">not ready</span>' : '')],
+        ['Volume', s.volume != null ? `${esc(s.volume)} %` : '—'],
+      ];
+      const buffer = [
+        ['Ring', s.ringMs != null ? `${esc(s.ringMs)} ms` : '—'],
+        ['Delay', s.delayMs != null ? `${esc(s.delayMs)} ms` : '—'],
+        ['Target', target != null ? `${target} ms` : '—'],
+        ['Actual depth', depth != null
+          ? `≈ ${depth} ms <span class="muted">(+20 ms output)</span>` : '—'],
+        ['Delay ceiling', s.maxDelayMs != null ? `${esc(s.maxDelayMs)} ms` : '—'],
+      ];
+      const cell = pairs => pairs
+        .map(([k, v]) => `<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`)
+        .join('');
+
+      return `<tr class="detail"><td colspan="12"><div class="panel">` +
+        `<div class="panel-cols">` +
+        `<section><h4>Device</h4>${cell(facts)}</section>` +
+        `<section><h4>Buffer</h4>${cell(buffer)}` +
+        `<p class="hint">Capacity and depth are different settings — ` +
+        `see docs/TUNING.md.</p></section>` +
+        // Filled by refreshDeviceStreams, and holding the previous reading
+        // until it answers so the numbers do not blink every two seconds.
+        `<section><h4>Stream</h4><div id="dstream-${esc(d.id)}">` +
+        `${deviceStreams.get(d.id) ?? '<span class="muted">reading…</span>'}` +
+        `</div></section>` +
+        `</div>` +
+        `<div class="panel-actions">${actions}</div>` +
+        `</div></td></tr>`;
+    }
+
+    /*
+     * The open panels' counters, read straight from each node.
+     *
+     * Only for devices that are open: this is a request per node per two
+     * seconds, and polling every node's stream endpoint to fill panels
+     * nobody is looking at would put real traffic on the control plane for
+     * nothing.
+     */
+    async function refreshDeviceStreams() {
+      if (!expandedDevices.size) return;
+      await Promise.all([...expandedDevices].map(async (id) => {
+        let html;
+        try {
+          const response = await fetch(`/api/devices/${encodeURIComponent(id)}/stream`,
+            { cache: 'no-store' });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          html = deviceStreamHtml(await response.json());
+        } catch (err) {
+          // Said, not swallowed. A node whose counters cannot be read looks
+          // identical to one with nothing to report, and they are not the
+          // same thing — the numbers are missing, not zero.
+          html = `<span class="rssi poor">no answer</span> ` +
+            `<span class="muted">${esc(err.message ?? 'unreachable')}</span>`;
+        }
+        deviceStreams.set(id, html);
+        const slot = document.getElementById(`dstream-${id}`);
+        if (slot) slot.innerHTML = html;
+      }));
+    }
+
+    function deviceStreamHtml(stream) {
+      if (!stream || (!stream.role)) {
+        return '<span class="muted">not streaming</span>';
+      }
+      if (stream.role === 'producer') {
+        return `<div class="kv"><span class="muted">Sent</span>` +
+          `<span>${(stream.packetsSent ?? 0).toLocaleString()}</span></div>` +
+          `<div class="kv"><span class="muted">Refused</span>` +
+          `<span>${(stream.sendErrors ?? 0).toLocaleString()}</span></div>`;
+      }
+      const st = stream.stats ?? {};
+      const p = stream.playout ?? {};
+      const submitted = p.packetsSubmitted ?? 0;
+      // Per packet, because runs are different lengths and raw counts
+      // between two configurations say nothing.
+      const ppm = n => submitted ? Math.round((n / submitted) * 1e6) : 0;
+      const latePpm = ppm(p.latePackets ?? 0);
+      const lateClass = latePpm > 1000 ? 'poor' : latePpm > 100 ? 'fair' : 'good';
+      const stallMs = Math.round((st.maxArrivalGapTicks ?? 0) / 48);
+      const stallClass = stallMs > 250 ? 'poor' : stallMs > 100 ? 'fair' : 'good';
+      return `<div class="kv"><span class="muted">Late</span>` +
+        `<span class="rssi ${lateClass}">${(p.latePackets ?? 0).toLocaleString()}` +
+        ` (${latePpm} ppm)</span></div>` +
+        `<div class="kv"><span class="muted">Lost</span>` +
+        `<span>${(st.lost ?? 0).toLocaleString()} (${st.lossPpm ?? 0} ppm)</span></div>` +
+        `<div class="kv"><span class="muted">Dropped</span>` +
+        `<span>${(p.droppedFrames ?? 0).toLocaleString()} frames</span></div>` +
+        `<div class="kv"><span class="muted">Underruns</span>` +
+        `<span>${(p.underruns ?? 0).toLocaleString()}</span></div>` +
+        `<div class="kv"><span class="muted">Buffered now</span>` +
+        `<span>${Math.round((p.bufferedFrames ?? 0) / 48)} ms</span></div>` +
+        `<div class="kv"><span class="muted">Worst stall</span>` +
+        `<span class="rssi ${stallClass}">${stallMs} ms</span>` +
+        `<span class="muted"> · ${(st.arrivalGaps ?? 0).toLocaleString()}</span></div>`;
+    }
+
     async function refreshDevices() {
       let devices = [];
       try {
@@ -793,9 +977,24 @@
           `${d.status?.ringMs ? `Ring ${esc(d.status.ringMs)} ms…` : 'Ring…'}` +
           `</button>`;
         const s = d.status;
+        const open = expandedDevices.has(d.id);
+        /*
+         * One toggle where eight buttons used to be.
+         *
+         * The Actions column had grown to Reboot, Rejoin, Signals, Update,
+         * Roles, Speaker, Delay and Ring — wider than the rest of the row
+         * together, and it pushed everything worth reading at a glance off
+         * the side of a phone screen. The buttons are all still here; they
+         * are in the panel, which is where you are already looking once you
+         * have decided to act on one particular node.
+         */
+        const toggle = d.hardwareProfile === 'windows-hub' ? '—' :
+          `<button class="disclose" data-cmd="expand" data-id="${esc(d.id)}" ` +
+          `aria-expanded="${open}">${open ? '▾ Close' : '▸ Details'}</button>`;
         /* The running version travels on the row so the update button can
          * see what it would be replacing, and refuse a silent downgrade. */
-        return `<tr data-firmware="${esc(d.firmwareVersion ?? '')}">` +
+        return `<tr data-firmware="${esc(d.firmwareVersion ?? '')}"` +
+          `${open ? ' class="expanded"' : ''}>` +
           `<td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
           `<td>${channelCell(d)}</td>` +
           `<td>${controllerCell(d)}</td>` +
@@ -803,8 +1002,12 @@
           `<td>${firmwareCell(d)}</td>` +
           `<td>${s ? esc(duration(s.uptimeSeconds)) : '—'}</td>` +
           `<td>${wifiCell(s)}</td><td>${signalCell(s)}</td>` +
-          `<td>${esc(d.address)}</td><td>${actions}</td></tr>`;
+          `<td>${esc(d.address)}</td><td>${toggle}</td></tr>` +
+          (open ? detailRow(d, actions) : '');
       }).join('');
+
+      // Only the open ones, and only after the table exists to be filled.
+      refreshDeviceStreams();
 
       const target = document.getElementById('tone-target');
       const selected = [...target.selectedOptions].map(o => o.value);
@@ -1109,6 +1312,21 @@
       const button = event.target.closest('button[data-cmd]');
       if (!button) return;
       const id = button.dataset.id;
+      if (button.dataset.cmd === 'expand') {
+        // Redrawn immediately rather than waiting for the two-second
+        // refresh: a disclosure control that responds when it feels like it
+        // reads as broken, and people press it again.
+        if (expandedDevices.has(id)) {
+          expandedDevices.delete(id);
+          // Dropped as well, so reopening shows this node's counters and
+          // never a stale reading from before it was closed.
+          deviceStreams.delete(id);
+        } else {
+          expandedDevices.add(id);
+        }
+        refreshDevices();
+        return;
+      }
       if (button.dataset.cmd === 'roles') {
         // Roles are a set, so the prompt takes a list. A node is normally
         // one thing, but an analog source that also plays is both.
