@@ -46,7 +46,10 @@ to Consumers. The Hub names the destinations; it does not relay the audio.
 ## Getting started
 
 1. **Install the Hub** — `docs/INSTALLING-THE-HUB.md`
-2. **Build a node** — `docs/HARDWARE.md` for the boards, wiring and parts
+2. **Build a node** — `docs/HARDWARE.md` for the boards, wiring and parts,
+   and `docs/hardware-photos/` to see what you are aiming at. A node is one
+   microcontroller board and one audio board; nothing is custom and there is
+   no OpenAudioLink board to source.
 3. **Flash and provision it** — the Hub's setup page; credentials go in over
    the node's own Wi-Fi portal and never into this repository
 4. **Play something** — `docs/LISTENING.md`
@@ -67,6 +70,7 @@ Reference for the system as it stands. Read these to use it or change it.
 | `docs/ARCHITECTURE.md` | The shape of the system and why it has that shape |
 | `docs/INSTALLING-THE-HUB.md` | Installing and updating the Hub |
 | `docs/HARDWARE.md` | Boards, DACs, ADCs, wiring, enclosures |
+| `docs/hardware-photos/` | Photographs of the real thing — what a node is made of |
 | `docs/TUNING.md` | The jitter buffer, its two knobs, and how to read the counters |
 | `docs/LISTENING.md` | Playing audio end to end |
 | `docs/CAST-POINTS.md` | Rooms and groups from a phone |

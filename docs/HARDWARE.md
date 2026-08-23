@@ -1,5 +1,10 @@
 # OpenAudioLink Hardware Baseline
 
+> Photographs of all of this, assembled and working, are in
+> [`hardware-photos/`](hardware-photos/). Worth a look before ordering
+> anything — a node turns out to be two small boards and a wire, and the
+> pictures answer "is that really all of it" faster than a parts list does.
+
 ## Reference Receiver
 
 ```text
