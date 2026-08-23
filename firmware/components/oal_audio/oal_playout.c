@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "oal_fade.h"
 #include "oal_pcm.h"
 #include "oal_rtp.h"
 
@@ -156,6 +157,35 @@ static size_t s_tight_below;
  */
 static size_t s_margin_worst;
 
+/*
+ * Two milliseconds, and what it is for.
+ *
+ * Every way this buffer fails ends in a step: an overflow jumps the read
+ * pointer to unrelated samples, an underrun cuts full-scale audio to zero
+ * in one sample, and resuming jumps back up again. A step in a waveform is
+ * a broadband transient -- a click -- and it is far more audible than the
+ * audio it replaces. Five milliseconds of missing music is nearly nothing;
+ * the click at each edge of it is the part a listener actually hears, and
+ * reports as distortion rather than as a dropout.
+ *
+ * So no edge is a step any more. The signal is walked to or from silence
+ * across 96 frames, which is long enough to put the transient's energy
+ * below the audio and short enough that the ramp itself cannot be heard as
+ * a gap. It is a quarter of a chunk, so a fade always fits inside one.
+ */
+
+/*
+ * The last frame handed to the sink, held so a discontinuity has somewhere
+ * to be walked from. Without it there is nothing to ramp *between*: the
+ * chunk after a splice begins at an arbitrary sample value and the only
+ * alternatives are to jump to it or to fade up from zero, and fading up
+ * from zero throws away audio that arrived perfectly well.
+ */
+static int32_t s_last_frame[OAL_RTP_CHANNELS];
+
+/* Set wherever continuity was broken; makes the next chunk fade in. */
+static bool s_splice_pending;
+
 static oal_playout_state_t s_state;
 static size_t s_target_samples;
 
@@ -279,6 +309,7 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
 }
 static uint32_t s_pad_phase;
+static uint32_t s_trim_phase;
 
 /*
  * Only the consumer task calls oal_playout_submit, so one scratch buffer
@@ -484,6 +515,9 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
         s_read = (s_read + overflow) % s_capacity;
         s_available -= overflow;
         s_state.dropped_frames += (uint32_t)(overflow / OAL_RTP_CHANNELS);
+        /* The next chunk starts somewhere unrelated to the last sample the
+         * speaker saw. Glide into it rather than stepping. */
+        s_splice_pending = true;
 
         /*
          * One line per second of audio lost. Overflow is the quiet
@@ -525,6 +559,17 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
  * Fills one chunk from the ring, padding with silence, and reports how
  * many real samples it found.
  */
+/** Remembers the last frame of `frames` frames, for the next ramp. */
+static void hold_last_frame(const int32_t *chunk, size_t frames)
+{
+    if (frames == 0) {
+        return;
+    }
+    for (unsigned c = 0; c < OAL_RTP_CHANNELS; c++) {
+        s_last_frame[c] = chunk[(frames - 1) * OAL_RTP_CHANNELS + c];
+    }
+}
+
 static size_t take_chunk(int32_t *chunk)
 {
     size_t copied = 0;
@@ -560,6 +605,11 @@ static size_t take_chunk(int32_t *chunk)
         } else {
             xSemaphoreGive(s_lock);
             memset(chunk, 0, CHUNK_SAMPLES * sizeof(int32_t));
+            /* Filling while unprimed. The first such chunk still has to
+             * get down from wherever the audio was cut off. */
+            oal_fade_to_silence(chunk, CHUNK_FRAMES, s_last_frame, OAL_RTP_CHANNELS);
+            hold_last_frame(chunk, CHUNK_FRAMES);
+            s_splice_pending = true;
             return 0;
         }
     }
@@ -590,6 +640,12 @@ static size_t take_chunk(int32_t *chunk)
         }
         xSemaphoreGive(s_lock);
         memset(chunk, 0, CHUNK_SAMPLES * sizeof(int32_t));
+        /* The ring ran dry mid-note. Walk the last sample down instead of
+         * cutting it, which is the difference between a dropout and a
+         * click -- and the click is the louder of the two. */
+        oal_fade_to_silence(chunk, CHUNK_FRAMES, s_last_frame, OAL_RTP_CHANNELS);
+        hold_last_frame(chunk, CHUNK_FRAMES);
+        s_splice_pending = true;
         return 0;
     }
 
@@ -616,10 +672,36 @@ static size_t take_chunk(int32_t *chunk)
      * doing one job only: keeping the headroom on both sides of the fill
      * instead of all on one.
      */
+    /*
+     * ...but gently, which it was not.
+     *
+     * This dropped a frame every chunk whenever the fill was above the
+     * line, unconditionally. That is 200 frames a second out of 48 000 --
+     * 4 167 ppm, about seven cents sharp -- and while a single dropped
+     * frame really is inaudible, a run of them is not. A burst leaves the
+     * ring high and the trim then runs flat out until it has walked all the
+     * way back: run 34 recorded 128 651 trimmed frames, which is eleven
+     * minutes of continuously playing slightly fast. Reported from the room
+     * as the speaker sounding like it was speeding up to catch up, which is
+     * exactly what it was doing.
+     *
+     * The pad path below already had the answer and this side never grew
+     * it: one frame in four normally, every chunk only when the situation
+     * is urgent. A quarter rate is 0.10 %, under two cents, which is the
+     * threshold the pad comment already argued is inaudible.
+     *
+     * Urgent here means the fill has climbed halfway from the trim line to
+     * the rim, where the next burst would overflow and cost a real splice.
+     * Trading seven cents of pitch against a discontinuity is worth it;
+     * trading it against nothing in particular is not.
+     */
     if (s_available > s_trim_above) {
-        s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
-        s_available -= OAL_RTP_CHANNELS;
-        s_state.trimmed_frames++;
+        bool urgent = s_available > s_trim_above + (s_capacity - s_trim_above) / 2;
+        if (urgent || (s_trim_phase++ & 3) == 0) {
+            s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
+            s_available -= OAL_RTP_CHANNELS;
+            s_state.trimmed_frames++;
+        }
     }
     /*
      * And the other direction, which was missing and turned out to matter
@@ -671,10 +753,31 @@ static size_t take_chunk(int32_t *chunk)
     s_read = (s_read + copied) % s_capacity;
     s_available -= copied;
 
+    /*
+     * Into the audio, if the last thing the speaker heard does not join on
+     * to it: after an overflow spliced the ring, or after any stretch of
+     * silence. Before the tail is shaped, so a chunk that both resumes and
+     * runs out is faded at each end rather than only one.
+     */
+    if (s_splice_pending && copied > 0) {
+        oal_fade_from(chunk, CHUNK_FRAMES, s_last_frame, OAL_RTP_CHANNELS);
+        s_splice_pending = false;
+    }
+
     if (copied < CHUNK_SAMPLES) {
         memset(&chunk[copied], 0, (CHUNK_SAMPLES - copied) * sizeof(int32_t));
         s_state.silence_frames += (uint32_t)((CHUNK_SAMPLES - copied) / OAL_RTP_CHANNELS);
+        /* Ramp the tail down from the last frame that was real, not from
+         * the previous chunk's — this one has already moved on. */
+        hold_last_frame(chunk, copied / OAL_RTP_CHANNELS);
+        oal_fade_to_silence(&chunk[copied], (CHUNK_SAMPLES - copied) / OAL_RTP_CHANNELS,
+                            s_last_frame, OAL_RTP_CHANNELS);
+        s_splice_pending = true;
     }
+
+    /* Whatever the sink is about to be handed, fades included, is where
+     * the next discontinuity has to start from. */
+    hold_last_frame(chunk, CHUNK_FRAMES);
 
     xSemaphoreGive(s_lock);
     return copied;
@@ -897,6 +1000,13 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     s_write = 0;
     s_available = 0;
     s_primed = false;
+    /* Silence, and owing a fade-in: the first chunk then rises into the
+     * music instead of stepping into it from nothing, which is the same
+     * edge as every other one this guards. */
+    memset(s_last_frame, 0, sizeof(s_last_frame));
+    s_splice_pending = true;
+    s_trim_phase = 0;
+    s_pad_phase = 0;
 
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment
