@@ -686,10 +686,36 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry,
      * The switchboard believed it, and offered Stop for something that was
      * not making a sound.
      */
+    /*
+     * Why it stopped, kept rather than discarded.
+     *
+     * Nulling `playing` is right and was not enough. A cast point asked to
+     * play would show "playing" for one poll and then "idle", with the
+     * reason sitting in StreamStatus.Error where nothing rendered it — so
+     * the screen said a room was doing nothing, having just been told to do
+     * something, and offered no way to tell a dead radio URL from an
+     * unreachable speaker from a decoder that refused the format.
+     *
+     * Only for the cast point that was asked for. Attaching a stale
+     * streamer error to every room would say all of them had failed.
+     */
+    string? stoppedReason = null;
+    // Taken before `playing` is cleared below, not read from the store a
+    // second time: two reads of a mutable property can disagree, and the
+    // one that decides which row shows the error must be the same reading
+    // that decided the row is not playing.
+    var askedCastPointId = playing?.CastPointId;
     if (playing is not null && playing.ProducerId == hubConfig.Id && !streamer.Status.Running)
     {
+        stoppedReason = streamer.Status.Error
+            // Running went false with nothing recorded. Rare, and worth
+            // saying out loud rather than showing a blank: it means the
+            // stream ended without raising, which is a different fault from
+            // one that threw.
+            ?? "the stream stopped without saying why";
         playing = null;
     }
+    var stoppedCastPointId = stoppedReason is null ? null : askedCastPointId;
     var receivers = spotify.Snapshot().ToDictionary(r => r.CastPointId);
     // Decorated with the devices' current names and liveness, so a room
     // whose speaker is unplugged says so instead of looking ready.
@@ -710,6 +736,10 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry,
          */
         source = playing?.CastPointId == point.Id ? playing.Source : null,
         producer = playing?.CastPointId == point.Id ? playing.ProducerId : null,
+        // Set only on the room that was asked to play and is not, so the
+        // switchboard can say what went wrong instead of quietly reverting
+        // to Play and leaving the operator to guess.
+        stoppedReason = stoppedCastPointId == point.Id ? stoppedReason : null,
         // Whether the phone can see this room, and whether it is the one
         // making sound. Without it a cast point that is not advertised looks
         // identical to one that is.

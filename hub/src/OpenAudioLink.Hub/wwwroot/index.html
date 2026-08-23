@@ -1057,6 +1057,11 @@
       }
     }
 
+    // The last reading, kept the way lastDevices is: the play handler needs
+    // to look at a room's state a moment after asking it to start, and
+    // re-fetching separately would race the refresh that is already running.
+    let lastCastPoints = [];
+
     async function refreshCastPoints() {
       let points = [];
       try {
@@ -1064,6 +1069,7 @@
       } catch {
         return;
       }
+      lastCastPoints = points;
 
       const table = document.getElementById('castpoints');
       table.hidden = points.length === 0;
@@ -1077,9 +1083,19 @@
               ? esc(m.name)
               : `<span class="rssi poor">${esc(m.name)}${m.known ? ' (offline)' : ' (unknown)'}</span>`)
             .join(', ');
+        /*
+         * "idle" is what a room that was never asked to play looks like,
+         * and it was also what a room whose stream had just died looked
+         * like. Those need completely different responses, and the reason
+         * was already known — StreamStatus records it — it simply never
+         * reached the screen.
+         */
         const state = p.playing
           ? '<span class="rssi good">playing</span>'
-          : '<span class="muted">idle</span>';
+          : p.stoppedReason
+            ? `<span class="rssi poor">stopped</span>` +
+              `<br><span class="muted">${esc(p.stoppedReason)}</span>`
+            : '<span class="muted">idle</span>';
         // Whether the phone can see this room at all. A cast point with no
         // receiver behind it looks exactly like one with a receiver that
         // will not start, and those need different fixing.
@@ -1179,12 +1195,33 @@
         { producer, source: document.getElementById('cp-source').value });
       if (!ok) {
         castSay(payload.error ?? 'Could not start it.', true);
-      } else {
-        castSay(payload.stopped
-          ? `Playing ${payload.castPoint}; stopped ${payload.stopped} because they share a speaker.`
-          : `Playing ${payload.castPoint}.`);
+        refreshCastPoints();
+        return;
       }
-      refreshCastPoints();
+      castSay(payload.stopped
+        ? `Playing ${payload.castPoint}; stopped ${payload.stopped} because they share a speaker.`
+        : `Playing ${payload.castPoint}.`);
+      await refreshCastPoints();
+
+      /*
+       * The request being accepted is not the same as audio being made.
+       *
+       * A start that fails a moment later — a station that will not open, a
+       * decoder that refuses the format, no reachable speaker — used to
+       * leave "Playing X." on screen while the row quietly went back to
+       * idle. The message was the last thing said and it was wrong.
+       *
+       * Two seconds because failures here are immediate: the stream throws
+       * while opening its source, not minutes in. A run that is still going
+       * after two seconds has started properly.
+       */
+      setTimeout(async () => {
+        await refreshCastPoints();
+        const point = lastCastPoints.find(p => p.id === id);
+        if (point && !point.playing && point.stoppedReason) {
+          castSay(`${payload.castPoint} stopped: ${point.stoppedReason}`, true);
+        }
+      }, 2000);
     });
 
     async function refreshTone() {
