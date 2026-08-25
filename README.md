@@ -2,12 +2,11 @@
 
 ![OpenAudioLink at a glance](docs/overview.png)
 
-> The poster is the shape of the project rather than a specification. Some
-> of it is built and measured; some is intended. The acoustic node, the
-> OLED, EQ and multicast are not written, and consumers are aligned by hand
-> rather than by a shared clock. Two figures on it are simply wrong: audio
-> on the wire is **L24, 24-bit**, about **2.3 Mbit/s** per stream.
-> "Where it is now", below, is the version to trust.
+> Solid lines are working; dashed are planned. Two things it does not
+> show: a Consumer can also drive a **USB-C audio dongle** instead of an
+> I²S DAC (`docs/USB-AUDIO.md`), and the ~250 ms latency is the figure for
+> a default node — the settings in use here run nearer 320 ms, because a
+> deeper buffer bought a 59× reduction in late audio (`docs/TUNING.md`).
 
 A local-first, open-source multi-room audio platform. It distributes
 synchronised stereo audio over an ordinary IP network using inexpensive
