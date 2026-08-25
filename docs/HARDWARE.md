@@ -645,6 +645,56 @@ PCM1808 ADC — which is the deployment this is aimed at anyway. Power then
 has to come from the BAT pads or the 5 V pin rather than the USB-C socket,
 which is already how the assembled nodes in `hardware-photos/` are fed.
 
+### What a fully wired path would actually be worth
+
+Fixed nodes — the speakers that live in one room and never move — are the
+ones worth wiring, and wiring them changes the arithmetic rather than just
+improving it.
+
+A Hub-sourced stream (Spotify, radio) to a wired node crosses **no air at
+all**: the Hub already reaches the access point over Ethernet, so the whole
+path becomes switched. Wire the turntable producer too and node-to-node
+joins it.
+
+**The buffer is sized for a number that would stop existing.** 400 ms of
+ring and a 200 ms target are there to survive a measured 373 ms radio stall.
+Switched Ethernet at 2.3 Mbit/s has no contention, no retries and no rate
+adaptation; `arrivalGaps` should collapse. If the worst gap becomes tens of
+milliseconds, the target follows, and the 1.5× trim rule turns a 50 ms
+target into roughly **95 ms air to ear against today's 320**. That reopens
+the question decision 17 left unanswered — whether someone at a turntable
+could live with the latency.
+
+Three things stand in the way, and two are already in this project's own
+measurements.
+
+**The bottleneck moves to the sender.** `oal_playout.c` records that a
+Windows sender wakes on a 15.6 ms system timer and emits packets in clumps
+of three. That is the Hub, not the network. Wire everything and the floor
+becomes the sender's cadence, so the target cannot go far below ~50 ms until
+the Hub asks Windows for a better timer — which becomes worth doing only
+once the network has stopped dominating.
+
+**Wired is not automatically clean.** Run 30 measured Energy Efficient
+Ethernet on the Hub's I219-LM producing 145 ms stalls and 101 ms sends, cut
+to 40 and 11 by disabling it. A switch port with EEE enabled would
+reintroduce exactly the stalls the cable was run to escape, and it would
+present as a mystery because Ethernet is supposed to be perfect. Check every
+port in the path.
+
+**A group runs at its slowest member.** Two speakers in one room must play in
+step, so a wired node at 50 ms beside a Wi-Fi node at 300 ms is a quarter of
+a second apart and unusable. Only an all-wired group can run tight; a group
+with one Wi-Fi member runs at Wi-Fi depth and its wired members gain
+reliability but no latency.
+
+That last point is the strongest case for splitting `delayMs`, which today
+carries both a group's buffer depth and a node's output-stage offset (see
+`TUNING.md`). A group-wide `targetMs` chosen by the worst path in the group,
+plus a per-node `alignMs`, would let a wired pair run at 90 ms while a
+Wi-Fi speaker elsewhere runs at 320 — each aligned within itself, neither
+dragging the other.
+
 ### The alternative worth pricing against it
 
 **W5500 SPI Ethernet** is supported natively by ESP-IDF (`esp_eth`), needs no
