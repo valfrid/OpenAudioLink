@@ -563,21 +563,52 @@ What is new is the class driver.
 - **RTL8152/RTL8153** dongles are reported working with an ECM host driver
   on the S3, which is the cheap and common chipset.
 
-### The open questions, before anyone buys one
+### The candidate adapter, and the exact catch
 
-**Not every dongle presents ECM.** Some expose it on a configuration
-descriptor other than the first — the component's notes call out CH397A
-needing `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` — and some Realtek
-parts present a vendor-specific interface instead, which is why Linux has an
-`r8152` driver as well as `cdc_ether`. Whether a *particular* dongle enumerates
-as ECM is a thing to test, not to assume from the chip marking.
+**Cudy UE10C, RTL8153, about 109 SEK.**
 
-**Latency and jitter through the USB path are unmeasured.** Bandwidth is not
-the question — a stream is about 2.3 Mbit/s — but this project has twice
-found that *when* packets arrive matters far more than how many. A USB
-Ethernet path that delivers in clumps would move the problem rather than
-remove it, and the instruments to check are already in place: `arrivalGaps`
-and the margin buckets.
+The RTL8153 reports `bNumConfigurations 2`, and which one the host picks
+decides everything:
+
+| configuration | interface |
+| --- | --- |
+| 1 (the default) | vendor-specific Realtek — needs the `r8152` protocol |
+| **2** | **CDC-ECM** — what `iot_usbh_ecm` speaks |
+
+A host that enumerates the adapter and accepts the default gets the vendor
+interface and no driver to talk to it with. Linux carries a whole separate
+driver, `drivers/net/usb/r8153_ecm.c`, for exactly the case where the
+vendor one is unavailable and configuration 2 is used instead.
+
+So the work is not writing a driver, it is **selecting configuration 2 at
+enumeration** — which is precisely what
+`CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` exists for, and the same knob
+the component's own notes call out for CH397A. That turns the main unknown
+from "will this chipset work" into one specific thing to get right.
+
+The RTL8152 is the 100 Mbit part and the RTL8153 the gigabit one; the
+two-configuration arrangement is the 8153's.
+
+### The open question that is actually harder
+
+**Powering it.** This file already records twice that the ESP32-S3 must
+source VBUS to act as host, and that this is a board question rather than a
+software one. A gigabit Ethernet adapter makes it sharper: an RTL8153
+negotiating a gigabit link draws a few hundred milliamps, where the CX31993
+audio dongle draws tens. The assembled nodes in `hardware-photos/` are
+already fed through soldered power leads rather than the USB-C socket, which
+is the shape of the answer, but the supply has to be sized for it.
+
+**Forcing a 100 Mbit link is worth trying first.** A stream is 2.3 Mbit/s
+and a node carries one; gigabit is three orders of magnitude of headroom
+bought with current the board has to find. If the link speed can be pinned
+down, most of the power problem goes with it.
+
+**Latency and jitter through the USB path remain unmeasured**, and this
+project has twice found that *when* packets arrive matters far more than how
+many. A USB Ethernet path that delivers in clumps would move the problem
+rather than remove it. `arrivalGaps` and the margin buckets are already in
+place to tell the difference, so the experiment is cheap once it enumerates.
 
 **The board has one USB port**, so this and the CX31993 audio dongle are
 mutually exclusive. Ethernet nodes are I²S nodes — a PCM5102A DAC or a
@@ -624,6 +655,8 @@ For OpenAudioLink, the initial target is 24-bit, 48 kHz, stereo.
 - MAX98357A amplifier module: about 20 SEK
 - PCM1808 ADC module: about 75 SEK
 - CX31993 USB-C dongle DAC: about 120 SEK
+- Cudy UE10C USB-C Ethernet adapter (RTL8153): about 109 SEK — accessory,
+  not yet working; see "Accessory: wired Ethernet" above
 
 Approximate node cost before enclosure, supply and connectors:
 
