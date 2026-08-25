@@ -258,6 +258,15 @@ public sealed class LibrespotInstance : IDisposable
         process.ErrorDataReceived += diagnostic;
 
         process.Start();
+
+        /*
+         * Into the job object immediately, before it can do anything worth
+         * outliving the Hub for. Windows keeps a child running when its
+         * parent dies; the job is what makes that not true here, and Dispose
+         * below only covers the orderly case.
+         */
+        LibrespotReaper.Adopt(process, _logger);
+
         process.BeginErrorReadLine();
 
         _process = process;

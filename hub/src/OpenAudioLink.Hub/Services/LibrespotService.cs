@@ -165,6 +165,18 @@ public sealed class LibrespotService : BackgroundService
         _executablePath = executable;
         _logger.LogInformation("Spotify Connect receivers will run from {Path}", executable);
 
+        /*
+         * Before a single receiver is started: tie their lifetimes to this
+         * Hub's, and clear whatever the last one left behind.
+         *
+         * Order matters. The job has to exist before any child is spawned,
+         * and the sweep has to run before the announcements go out, or the
+         * strays and the new instances advertise the same cast point names
+         * at the same time.
+         */
+        LibrespotReaper.EnsureJob(_logger);
+        LibrespotReaper.SweepStrays(executable, _logger);
+
         // Once, at startup, and only to write down what this build offers.
         // Nothing acts on it yet: it is the measurement that decides how
         // decision 14's second attenuator gets removed.
