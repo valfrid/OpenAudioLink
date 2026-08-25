@@ -528,6 +528,74 @@ The rest, for the record:
   (`bInterfaceCount must be greater than 1`). Cosmetic on Windows; a stricter
   host stack could be less forgiving.
 
+## Accessory: wired Ethernet, to remove an air hop
+
+**Not built. Proposed, with the measurement that motivates it.**
+
+Run 35 measured what a second air hop costs. A stream sourced from a node
+crosses the air twice on one channel — up from the producer, back down to
+the consumer — where a Hub-sourced stream crosses once, because the Hub
+reaches the access point over Ethernet. The stall rate roughly doubles:
+
+| path | stalls |
+| --- | --- |
+| Hub → node, one air hop | 6 740 – 9 006 ppm |
+| node → AP → node, two air hops | 12 338 – 12 965 ppm |
+
+The buffer absorbs it — 10 ppm late either way — but the airtime is spent
+whether or not it is survived, and it is spent on the channel every other
+node shares.
+
+**A USB-C to Ethernet adapter on the node removes its own hop.** Wiring the
+*producer* is worth the most: that hop is upstream of every consumer, so
+removing it takes the shared cost out for all of them at once. Wiring a
+consumer only helps that one.
+
+### What it would take
+
+The ESP32-S3 is already a USB host in this project — that is how the
+CX31993 audio dongle works — so the peripheral and the pattern are proven.
+What is new is the class driver.
+
+- **`iot_usbh_ecm`**, an Espressif ESP-IoT-Solution component, is a USB host
+  driver for CDC-ECM: Ethernet frames encapsulated in USB packets. Its
+  examples list ESP32-S3 among the supported targets.
+- **RTL8152/RTL8153** dongles are reported working with an ECM host driver
+  on the S3, which is the cheap and common chipset.
+
+### The open questions, before anyone buys one
+
+**Not every dongle presents ECM.** Some expose it on a configuration
+descriptor other than the first — the component's notes call out CH397A
+needing `CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK` — and some Realtek
+parts present a vendor-specific interface instead, which is why Linux has an
+`r8152` driver as well as `cdc_ether`. Whether a *particular* dongle enumerates
+as ECM is a thing to test, not to assume from the chip marking.
+
+**Latency and jitter through the USB path are unmeasured.** Bandwidth is not
+the question — a stream is about 2.3 Mbit/s — but this project has twice
+found that *when* packets arrive matters far more than how many. A USB
+Ethernet path that delivers in clumps would move the problem rather than
+remove it, and the instruments to check are already in place: `arrivalGaps`
+and the margin buckets.
+
+**The board has one USB port**, so this and the CX31993 audio dongle are
+mutually exclusive. Ethernet nodes are I²S nodes — a PCM5102A DAC or a
+PCM1808 ADC — which is the deployment this is aimed at anyway. Power then
+has to come from the BAT pads or the 5 V pin rather than the USB-C socket,
+which is already how the assembled nodes in `hardware-photos/` are fed.
+
+### The alternative worth pricing against it
+
+**W5500 SPI Ethernet** is supported natively by ESP-IDF (`esp_eth`), needs no
+USB class driver, and — the real advantage — **leaves the USB port free**, so
+a node could have wired Ethernet *and* the USB audio dongle at once. It
+costs four SPI pins plus interrupt and reset against the XIAO's eleven, and
+a soldered module instead of a plug-in adapter.
+
+Neither has been tried. The USB route is cheaper and reversible; the SPI
+route is better supported and does not consume the port.
+
 ## Reference Analog Source
 
 ```text

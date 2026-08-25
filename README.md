@@ -1,5 +1,14 @@
 # OpenAudioLink
 
+![OpenAudioLink at a glance](docs/overview.png)
+
+> The poster is the shape of the project rather than a specification. Some
+> of it is built and measured; some is intended. The acoustic node, the
+> OLED, EQ and multicast are not written, and consumers are aligned by hand
+> rather than by a shared clock. Two figures on it are simply wrong: audio
+> on the wire is **L24, 24-bit**, about **2.3 Mbit/s** per stream.
+> "Where it is now", below, is the version to trust.
+
 A local-first, open-source multi-room audio platform. It distributes
 synchronised stereo audio over an ordinary IP network using inexpensive
 ESP32-S3 nodes and a Windows Hub.
