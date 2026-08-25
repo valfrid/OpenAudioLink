@@ -599,10 +599,39 @@ audio dongle draws tens. The assembled nodes in `hardware-photos/` are
 already fed through soldered power leads rather than the USB-C socket, which
 is the shape of the answer, but the supply has to be sized for it.
 
-**Forcing a 100 Mbit link is worth trying first.** A stream is 2.3 Mbit/s
-and a node carries one; gigabit is three orders of magnitude of headroom
-bought with current the board has to find. If the link speed can be pinned
-down, most of the power problem goes with it.
+**Firmware cannot pin the link to 100 Mbit, and it is not the fix anyway.**
+
+CDC-ECM has no request for it. `ConnectionSpeedChange` runs the other way —
+device to host, reporting the speed that was negotiated — while the
+class-specific requests the host may send are the packet and multicast
+filters and the statistics. Link speed is settled PHY to PHY between the
+adapter and the switch port, and the host is not a party to it. Changing
+what the adapter advertises means writing its PHY registers over
+vendor-specific control transfers, which is the `r8152` work that choosing
+ECM exists to avoid: implement it and ECM is no longer needed.
+
+Where it *can* be set, if it turns out to be wanted:
+
+- **A two-pair cable, and no configuration anywhere.** 100BASE-TX uses pairs
+  1-2 and 3-6; 1000BASE-T needs all four. With the others absent, gigabit
+  cannot be negotiated and the link settles at 100M. An old 100M patch lead
+  does this by construction, works behind an unmanaged switch, and is undone
+  by swapping the cable.
+- **A managed port advertising 100M full only.** Restrict the
+  advertisement; do not disable auto-negotiation on one side. Forcing one
+  end while the other negotiates is the classic duplex mismatch — the link
+  comes up, one end runs half and the other full, and the result is late
+  collisions and throughput that reads like a failing cable. A poor thing to
+  introduce into a path being made quieter.
+
+The saving is worth perhaps 80-100 mA, so **the supply is the real answer**,
+not the link speed. The assembled nodes are already fed through soldered
+leads rather than the USB-C socket; sizing that rail for the adapter settles
+it, and a two-pair cable is a cheap extra if the margin is tight.
+
+Firmware *can* read the negotiated speed from the notification, which is
+worth surfacing in `/status`: "wired, 100M" against "wired, 1G" is the kind
+of fact that explains a power draw or a link that will not come up.
 
 **Latency and jitter through the USB path remain unmeasured**, and this
 project has twice found that *when* packets arrive matters far more than how
