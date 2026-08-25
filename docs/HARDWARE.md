@@ -656,6 +656,58 @@ a soldered module instead of a plug-in adapter.
 Neither has been tried. The USB route is cheaper and reversible; the SPI
 route is better supported and does not consume the port.
 
+## Accessory: a second power feed, for a node whose USB port is taken
+
+A node hosting a USB peripheral — the CX31993 audio dongle, or the Ethernet
+adapter above — has no USB-C socket left to be powered through, and it must
+also source VBUS for the thing it is hosting. Power therefore arrives on the
+5 V and GND pads instead, which is how the assembled nodes in
+`hardware-photos/` are already fed.
+
+**A USB-C PD trigger board is what makes that work from a modern charger.**
+
+### Why it is needed at all
+
+A USB-C source applies no voltage until it detects a sink. Detection is the
+sink presenting Rd pull-downs on CC1/CC2; without them the port stays dead.
+Solder bare wires to a USB-C charger and you get nothing — where a USB-A
+charger of the same vintage would hand you 5 V unconditionally, because
+USB-A has no such handshake.
+
+So the trigger board is a small PD sink controller: it presents the CC
+resistors, the charger turns on, and 5 V appears on its output pads. The
+voltage-selection pads are the second half of the same chip — shorting one
+negotiates 9, 12, 15 or 20 V over PD.
+
+### Leave every voltage pad open
+
+**This is the part that can destroy a node.** The XIAO's 5 V pin is a 5 V
+pin. Shorting the 9 V pad puts nine volts on it, and the 20 V pad puts
+twenty — into the board, and through it into whatever USB peripheral is
+being hosted. Unshorted is 5 V, which is the only setting this project
+wants.
+
+The higher voltages are genuinely useful, just not here: they are for
+feeding a buck converter, or a class-D amplifier that wants more headroom
+than 5 V allows. Neither is part of a node today. If one ever is, the
+regulator goes between the trigger board and everything else, never after.
+
+### What it buys beyond making the charger work
+
+Current headroom. A phone charger negotiating 5 V through a proper PD sink
+will supply far more than the few hundred milliamps a laptop port offers
+grudgingly, which is exactly the margin the gigabit Ethernet adapter above
+needs and the reason its power question was left open rather than solved.
+
+### Worth checking on the first one
+
+That the board's 5 V rail reaches the hosted peripheral through the XIAO's
+own port. This works on the assembled USB-audio node already — the dongle
+plays — so the 5 V pad and VBUS are connected on that board. It is still the
+first thing to measure if a peripheral enumerates and then browns out under
+load, because a diode in that path would pass a light load and sag under a
+heavy one.
+
 ## Reference Analog Source
 
 ```text
@@ -686,6 +738,8 @@ For OpenAudioLink, the initial target is 24-bit, 48 kHz, stereo.
 - CX31993 USB-C dongle DAC: about 120 SEK
 - Cudy UE10C USB-C Ethernet adapter (RTL8153): about 109 SEK — accessory,
   not yet working; see "Accessory: wired Ethernet" above
+- USB-C PD trigger board (second power feed): a few SEK — accessory; see
+  "Accessory: a second power feed" above, and leave every voltage pad open
 
 Approximate node cost before enclosure, supply and connectors:
 
