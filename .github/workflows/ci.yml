@@ -173,6 +173,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o fade-tests oal_fade.c test/test_fade.c &&
           ./fade-tests
+      - name: Input stage
+        working-directory: firmware/components/oal_audio
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o input-tests oal_input.c test/test_input.c &&
+          ./input-tests
       - name: PCM conversion
         working-directory: firmware/components/oal_audio
         run: >

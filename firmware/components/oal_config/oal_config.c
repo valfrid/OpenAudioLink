@@ -21,6 +21,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_RING_MS  "ring_ms"
 #define NVS_KEY_VOLUME "volume"
 #define NVS_KEY_OUTPUT "output"
+#define NVS_KEY_INPUT  "input"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -371,6 +372,60 @@ oal_output_t oal_config_get_output(void)
         return OAL_OUTPUT_DEFAULT;
     }
     return output;
+}
+
+/*
+ * What this Producer captures from, the mirror of the output stage above
+ * and stored the same way.
+ *
+ * Read once at boot, because it decides a set of pins and which end of the
+ * I2S bus generates the clocks -- neither of which can change under a
+ * running capture. See oal_input.h for why the two inputs must not share
+ * pins.
+ */
+oal_input_t oal_config_get_input(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return OAL_INPUT_DEFAULT;
+    }
+
+    char stored[16];
+    size_t length = sizeof(stored);
+    esp_err_t err = nvs_get_str(nvs, NVS_KEY_INPUT, stored, &length);
+    nvs_close(nvs);
+
+    oal_input_t input;
+    if (err != ESP_OK || !oal_input_parse(stored, &input)) {
+        return OAL_INPUT_DEFAULT;
+    }
+    return input;
+}
+
+esp_err_t oal_config_set_input(oal_input_t input)
+{
+    /* Round-tripping the name is the validity check, as for the output
+     * stage and the channel: an out-of-range enum formats as "line" and
+     * would be stored as a setting nobody asked for. */
+    oal_input_t parsed;
+    const char *name = oal_input_name(input);
+    if (!oal_input_parse(name, &parsed) || parsed != input) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(nvs, NVS_KEY_INPUT, name);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
 }
 
 esp_err_t oal_config_set_output(oal_output_t output)

@@ -172,6 +172,25 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Sets what a Producer captures from: "line" or "mic".
+    /// </summary>
+    /// <remarks>
+    /// Applies at the next boot, and cannot sensibly do otherwise: the
+    /// choice selects a set of GPIO pins <i>and</i> which end of the I²S bus
+    /// generates the bit and word clocks. A self-clocked PCM1808 module
+    /// drives them itself and makes the node a follower; an ICS-43434
+    /// microphone is a slave and needs them supplied. Neither is something
+    /// the I²S driver can be talked into changing mid-capture.
+    /// </remarks>
+    public async Task<bool> SetInputAsync(
+        DeviceRecord device, string input, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Setting input on {Device} to {Input}", device.Name, input);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { input }), cancellationToken);
+    }
+
+    /// <summary>
     /// Sets how much audio this node's ring holds, in milliseconds.
     /// </summary>
     /// <remarks>

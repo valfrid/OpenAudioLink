@@ -230,6 +230,21 @@ roughly between the ears of an assumed listener — not a permanent fixture.
 It needs Wi-Fi where it stands, which is worth checking before wondering
 why a sweep never arrived.
 
+Being temporary is why, as of firmware 0.31.0, it is **not a node of its
+own**. A device used for ten minutes and then put in a drawer does not
+justify a whole ESP32, enclosure and power feed, so the microphone shares
+the turntable Producer's box: both converters wired at once, an `input`
+setting in NVS saying which one is live, read at boot
+(`protocol/CONTROL.md`, and the wiring in `docs/HARDWARE.md`). The two are
+never wanted together — a sweep and a record playing are not simultaneous
+events — and they need the node in opposite clock roles, which is what
+makes it a boot-time choice rather than a switch.
+
+That box then unplugs from the turntable, stands on the chair, and is the
+measurement node for the length of a sweep. A permanently installed
+microphone node is still worth building later, for the uses that are about
+listening rather than calibrating; it would use the same pins.
+
 ## One chip generates the sweep and captures it
 
 This is the decision the rest follows from.

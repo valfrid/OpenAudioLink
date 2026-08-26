@@ -389,7 +389,14 @@ static esp_err_t status_handler(httpd_req_t *req)
                         * so the line that explains a silent speaker has to
                         * arrive here or nowhere. */
                        "\"outputArrivedAs\":%s%s%s,"
-                       "\"input\":%s,\"hw\":\"%s\",\"fw\":\"%s\","
+                       "\"input\":%s,"
+                       /* `input` above is what the ADC is *hearing*; this
+                        * is what the node is *wired to*. Two meanings of
+                        * one word, so the setting gets the longer name
+                        * rather than the live reading losing its own --
+                        * every client already reads `input` as levels. */
+                       "\"inputStage\":\"%s\","
+                       "\"hw\":\"%s\",\"fw\":\"%s\","
                        "\"uptimeS\":%lld,\"heapFree\":%u,\"wifi\":%s,"
                        /* Whether, never what. This document is polled by
                         * the Hub, the switchboard and every node's own
@@ -416,7 +423,8 @@ static esp_err_t status_handler(httpd_req_t *req)
                        oal_playout_output_ready() ? "true" : "false",
                        arrived ? "\"" : "", arrived ? arrived : "null",
                        arrived ? "\"" : "",
-                       input, s_config.hardware_profile, s_config.firmware_version,
+                       input, oal_input_name(oal_config_get_input()),
+                       s_config.hardware_profile, s_config.firmware_version,
                        (long long)(esp_timer_get_time() / 1000000),
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
@@ -484,6 +492,7 @@ static esp_err_t config_handler(httpd_req_t *req)
      * after the tree is freed, and testing a pointer into a freed tree is
      * the kind of bug that works until the allocator is under pressure. */
     const cJSON *output = cJSON_GetObjectItemCaseSensitive(root, "output");
+    const cJSON *input = cJSON_GetObjectItemCaseSensitive(root, "input");
     const cJSON *delay = cJSON_GetObjectItemCaseSensitive(root, "delayMs");
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ringMs");
@@ -491,6 +500,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
     const bool has_output = cJSON_IsString(output);
+    const bool has_input = cJSON_IsString(input);
     const bool has_delay = cJSON_IsNumber(delay);
     const bool has_ring = cJSON_IsNumber(ring);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
@@ -500,10 +510,10 @@ static esp_err_t config_handler(httpd_req_t *req)
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
     if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
-            && !has_ring) {
+            && !has_ring && !has_input) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "expected roles, channel, output, delayMs, ringMs or party");
+                            "expected roles, channel, output, input, delayMs, ringMs or party");
         return ESP_FAIL;
     }
 
@@ -526,6 +536,22 @@ static esp_err_t config_handler(httpd_req_t *req)
     if (has_output && !oal_output_parse(output->valuestring, &wanted_output)) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown output");
+        return ESP_FAIL;
+    }
+
+    /*
+     * The input stage, and why it is refused rather than guessed at.
+     *
+     * It picks a set of pins *and* which end drives the clocks: the
+     * microphone is a slave and needs them, the self-clocked ADC module
+     * supplies its own. Falling back to a default on a typo would put two
+     * drivers on one line, and HARDWARE.md already records the symptom --
+     * silence, with nothing to say why.
+     */
+    oal_input_t wanted_input = OAL_INPUT_DEFAULT;
+    if (has_input && !oal_input_parse(input->valuestring, &wanted_input)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unknown input");
         return ESP_FAIL;
     }
     /* Against what this node's ring can actually give, not a constant. A
@@ -639,6 +665,14 @@ static esp_err_t config_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "output not stored");
         return ESP_FAIL;
     }
+    /* At the next boot too, and for a stronger reason than the output
+     * stage: the capture path's pins and clock role are fixed when I2S is
+     * installed, and swapping them under a running capture is not a thing
+     * the driver offers. */
+    if (has_input && oal_config_set_input(wanted_input) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "input not stored");
+        return ESP_FAIL;
+    }
     if (has_delay) {
         if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delay not stored");
@@ -664,10 +698,12 @@ static esp_err_t config_handler(httpd_req_t *req)
     oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
                      "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
-                     "\"output\":\"%s\",\"partyReady\":%s,\"ringMs\":%" PRIu32 ","
+                     "\"output\":\"%s\",\"input\":\"%s\","
+                     "\"partyReady\":%s,\"ringMs\":%" PRIu32 ","
                      "\"appliesAt\":\"reboot\"}",
                      stored, oal_channel_name(oal_config_get_channel()),
                      oal_output_name(oal_config_get_output()),
+                     oal_input_name(oal_config_get_input()),
                      oal_wifi_has_party() ? "true" : "false",
                      oal_config_get_ring_ms());
     httpd_resp_set_type(req, "application/json");

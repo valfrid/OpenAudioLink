@@ -479,6 +479,46 @@ app.MapPost("/api/devices/{id}/ring",
         : Results.StatusCode(502);
 });
 
+/*
+ * What a Producer captures from: a line-level ADC, or a microphone.
+ *
+ * One box, two jobs, never at once — a measurement microphone at the
+ * listening position, or the line input by the turntable. Both sets of pins
+ * are wired at the same time (docs/HARDWARE.md); this says which set is
+ * live, so a node does not have to be rebuilt to change hats.
+ *
+ * Reboot, not immediate, and that is not laziness. The choice picks GPIO
+ * pins *and* which end of the I²S bus makes the clocks: the PCM1808 module
+ * generates BCK and LRCK and the node follows, the ICS-43434 is a slave and
+ * the node generates them. Two masters on one clock line produce silence,
+ * so the role is settled once, at boot, before anything drives a pin.
+ */
+app.MapPost("/api/devices/{id}/input",
+    async (string id, InputRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var input = request.Input?.Trim().ToLowerInvariant();
+    if (input is not ("line" or "mic"))
+    {
+        return Results.BadRequest(new
+        {
+            error = "input must be \"line\" or \"mic\"; it applies at the node's "
+                  + "next reboot, because it also decides which end of the I²S "
+                  + "bus makes the clocks",
+        });
+    }
+
+    var ok = await commands.SetInputAsync(device, input, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", input, appliesAt = "reboot" })
+        : Results.StatusCode(502);
+});
+
 app.MapPost("/api/devices/{id}/channel",
     async (string id, ChannelRequest request, DeviceRegistry registry,
            DeviceCommandClient commands, CancellationToken cancellationToken) =>
@@ -1495,6 +1535,13 @@ internal sealed record ChannelRequest(string? Channel);
 internal sealed record DelayRequest(int? DelayMs);
 
 internal sealed record RingRequest(int? RingMs);
+
+/// <summary>
+/// "line" or "mic" — which capture stage a Producer uses. Named Input to
+/// match the node's <c>/config</c> key; the node reports it back as
+/// <c>inputStage</c>, because <c>input</c> was already the live ADC levels.
+/// </summary>
+internal sealed record InputRequest(string? Input);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 

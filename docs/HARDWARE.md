@@ -418,6 +418,67 @@ gap a distant sender can leave; this one covers the jitter of a task on the
 same chip, and every frame it holds is delay between the needle and the
 speaker that nothing downstream will absorb.
 
+### ICS-43434 — the measurement microphone, in the same box
+
+Status: pins assigned and selectable in firmware 0.31.0; the microphone
+itself is on order.
+
+Room calibration (`docs/ROOM-CALIBRATION.md`) needs a microphone at the
+listening position, and the obvious way to get one is a node of its own.
+That is a whole ESP32, a whole enclosure and a whole power feed for a
+device that is used for ten minutes and then put in a drawer.
+
+So the microphone shares the turntable box. **Both converters are wired at
+the same time; only one captures.** They are never both wanted — a
+measurement sweep and a record being played are not things that happen
+together — and the node holds which one is live in NVS as `input`
+(`protocol/CONTROL.md`), settable from the Hub's device panel and read at
+boot.
+
+**Read at boot, not switched while running, and that is the whole reason
+the two cannot share pins.** They want the ESP in opposite clock roles:
+
+| | clock role | what the ESP does |
+| --- | --- | --- |
+| Self-clocked PCM1808 module | master | follows BCK and LRCK |
+| ICS-43434 | slave | generates BCK and LRCK |
+
+Wiring both to one set of pins would put the module's oscillator-driven
+BCK output and the ESP's BCK output on the same wire. Two masters on one
+clock line produce nothing usable, and the symptom is silence — the same
+failure written up under the PCM1808 above, arrived at from a different
+direction.
+
+**Wiring** — three pins, on the side the DAC does not use:
+
+| Module | XIAO ESP32S3 | |
+| --- | --- | --- |
+| SCK | D0 (GPIO1) | bit clock, **an output from the ESP** |
+| WS | D1 (GPIO2) | word select, **an output from the ESP** |
+| SD | D2 (GPIO3) | audio into the ESP |
+| L/R | GND | left channel; tie high for right |
+| VDD | 3V3 | **3.3 V, not 5** — this is a bare part, not a regulated module |
+| GND | GND | |
+
+D6 and D7 are deliberately avoided: they are the UART, and the console is
+worth more than a tidier pin group when a capture path is being brought up.
+
+The ICS-43434 is a **24-bit part in a 32-bit slot** and mono — one
+microphone fills one channel and the other carries whatever the L/R strap
+left there. That is correct for measurement, which wants one honest
+pressure reading and not a stereo image.
+
+No MCLK. The part needs only SCK and WS, which is why three pins is
+enough, and why the node clocking it is not a cost here the way it is a
+benefit with a bare PCM1808: there is nothing to synchronise against on
+the microphone's side.
+
+**This is not yet a stationary microphone node.** Speech recognition, a
+room that listens, a permanently installed measurement point — all of them
+want a node whose microphone is the point of it, and this box is a
+turntable that can be borrowed. The pin assignment is the same either way,
+which is the part worth settling now.
+
 ### ESP32-C3 — considered again, still no
 
 Status: rejected. Raised as a stopgap while more S3 boards were on order.

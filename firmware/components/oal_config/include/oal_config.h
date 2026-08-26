@@ -5,6 +5,7 @@
 
 #include "esp_err.h"
 #include "oal_channel.h"
+#include "oal_input.h"
 #include "oal_output.h"
 
 #ifdef __cplusplus
@@ -172,6 +173,23 @@ oal_output_t oal_config_get_output(void);
 
 /** Persists the output stage. Rejects values outside the enum. */
 esp_err_t oal_config_set_output(oal_output_t output);
+
+/*
+ * What this Producer captures from (docs/ROOM-CALIBRATION.md).
+ *
+ * Beside the output stage because it is the same kind of fact from the
+ * other end of the chain, and read at boot for a harder reason: it selects
+ * a set of pins *and* which end drives the bit and word clocks. See
+ * oal_input.h -- the microphone needs clocking and the self-clocked ADC
+ * module supplies its own, so sharing pins would put two drivers on one
+ * line.
+ */
+
+/** Stored input stage, or line in when unset or unreadable. */
+oal_input_t oal_config_get_input(void);
+
+/** Persists the input stage. Rejects values outside the enum. */
+esp_err_t oal_config_set_input(oal_input_t input);
 
 /** Longest node name, including the terminator. Matches the announce field. */
 #define OAL_NAME_MAX 32

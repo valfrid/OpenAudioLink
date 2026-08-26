@@ -975,7 +975,22 @@
           `<button data-cmd="ring" data-id="${esc(d.id)}" ` +
           `data-ring="${esc(d.status?.ringMs ?? '')}"${disabled}>` +
           `${d.status?.ringMs ? `Ring ${esc(d.status.ringMs)} ms…` : 'Ring…'}` +
-          `</button>`;
+          `</button>` +
+          /*
+           * Only where there is a capture stage to choose. A Consumer has
+           * no input at all, and a button offering to reconfigure one is
+           * noise on a shelf of speakers.
+           *
+           * Shown when the node reports an inputStage, whatever roles it
+           * currently holds: a box wired for both a turntable and a
+           * measurement microphone is often sitting there as a Consumer
+           * between jobs, and that is exactly when the setting is changed.
+           */
+          (d.status?.inputStage
+            ? ` <button data-cmd="input" data-id="${esc(d.id)}" ` +
+              `data-input="${esc(d.status.inputStage)}"${disabled}>` +
+              `Input: ${esc(d.status.inputStage)}…</button>`
+            : '');
         const s = d.status;
         const open = expandedDevices.has(d.id);
         /*
@@ -1538,6 +1553,43 @@
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the ring: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'input') {
+        /*
+         * Two words, so a confirm rather than a prompt: there is nothing to
+         * type, and typing is where the mistakes are.
+         *
+         * The dialog spends its space on the reboot, because that is the
+         * part that surprises. Every other setting on this row either lands
+         * immediately or says "at the next reboot" about a buffer nobody
+         * hears. This one changes which end of the I²S bus makes the clocks,
+         * and a node running the wrong half is not quietly wrong — it is
+         * silent, which reads as broken hardware.
+         */
+        const current = button.dataset.input === 'mic' ? 'mic' : 'line';
+        const next = current === 'mic' ? 'line' : 'mic';
+        const what = next === 'mic'
+          ? 'the microphone (ICS-43434), for room measurement'
+          : 'the line input (PCM1808), for the turntable';
+        if (!confirm(
+          `Switch this node's capture to ${what}?\n\n` +
+          `It is on ${current} now. Both are wired at once, but only one can\n` +
+          'be live: the ADC module makes its own clocks and the node follows,\n' +
+          'the microphone is a slave and the node clocks it. Two masters on\n' +
+          'one clock line give silence, so the choice is made at boot.\n\n' +
+          'Stored now, in effect after the next reboot.')) {
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/input`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: next }),
+        });
+        if (response.ok) {
+          say(`Capture set to ${next} — reboot this node for it to take effect.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the input: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'reboot') {
         say('Rebooting device…');

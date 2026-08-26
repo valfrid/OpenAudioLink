@@ -142,6 +142,41 @@ menu "OpenAudioLink Test Node"
             Getting this wrong is not subtle. Two masters driving one
             clock line produce nothing usable, and the symptom is silence.
 
+    # ------------------------------------------------------------------
+    # The microphone's own pins.
+    #
+    # Separate from the ADC's rather than shared, and that is not tidiness:
+    # the self-clocked PCM1808 module drives BCK and LRCK itself, while the
+    # ICS-43434 is a slave and needs them driven. Share a pin and, in
+    # microphone mode, the ESP asserts a clock line the powered ADC board is
+    # also asserting. HARDWARE.md records the result -- "two masters driving
+    # one clock line produce nothing usable, and the symptom is silence".
+    #
+    # Only one input is ever active, so both sets exist and only one is
+    # installed. Defaults avoid D6/D7, which carry the UART console.
+    # ------------------------------------------------------------------
+
+    config OAL_MIC_BCLK_GPIO
+        int "Microphone bit clock (SCK) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 1
+        help
+            Driven by this end: the ICS-43434 is an I2S slave.
+
+    config OAL_MIC_WS_GPIO
+        int "Microphone word select (WS) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 2
+
+    config OAL_MIC_DIN_GPIO
+        int "Microphone data (SD) GPIO"
+        depends on OAL_ADC_ENABLED
+        default 3
+        help
+            The microphone puts its samples in one half of the frame and its
+            SEL pin decides which. Mono by nature; the channel profile
+            (decision 10) is what makes a stereo stream of it.
+
     config OAL_ADC_MCLK_GPIO
         int "ADC master clock (SCKI) GPIO"
         depends on OAL_ADC_ENABLED

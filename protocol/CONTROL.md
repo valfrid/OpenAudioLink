@@ -258,6 +258,34 @@ request with `400` rather than silently storing a subset. The roles take
 effect at the next boot, because they decide which tasks start; changing
 them under a running node would mean tearing down live audio.
 
+The same endpoint carries the other stored settings, one key at a time or
+several together: `channel`, `output`, `input`, `delayMs`, `ringMs`,
+`party`.
+
+#### The `input` key: which capture stage a Producer uses
+
+`{ "input": "line" }` or `{ "input": "mic" }` → response
+`{ "status": "stored", "input": "mic", "appliesAt": "reboot" }`. Reported
+back on `GET /status` as **`inputStage`**, not `input`: `input` was already
+the live ADC level block below, and every client reads it that way, so the
+newer meaning took the longer name.
+
+`line` is an I²S line-level ADC — a PCM1808 by a turntable. `mic` is an I²S
+microphone — an ICS-43434 at the listening position, for room measurement.
+Default `line`, which is what every Producer built before this setting
+existed has.
+
+**One box, both jobs, never at once.** The two sets of pins are wired
+simultaneously (`docs/HARDWARE.md`); this says which set is live. It has to,
+because they cannot share: the PCM1808 module is self-clocked and generates
+BCK and LRCK, so the node follows it; the ICS-43434 is a slave and the node
+generates them. Both wired to one pin is two drivers on one clock line, and
+the symptom of that is silence rather than an error.
+
+Applies at the next boot for the same reason. The I²S driver settles master
+or slave when the channel is created, so the role is chosen once, before
+anything drives a pin.
+
 ### The `input` block in `GET /status`
 
 ```json
@@ -393,4 +421,6 @@ they were taken so nothing is shown as fresher than it is.
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
   Later additions within 0.1: `/stream*` measurement endpoints, `/peers`,
   `/stream/destinations`, `/join`, the `channel` field on `/status` and
-  `/config`, and `claimed` on announcements.
+  `/config`, and `claimed` on announcements. Then `output`, `delayMs`,
+  `ringMs` and `input` on `/config`, reported back as `output`, `delayMs`,
+  `ringMs`, `maxTargetMs`, `maxDelayMs` and `inputStage` on `/status`.

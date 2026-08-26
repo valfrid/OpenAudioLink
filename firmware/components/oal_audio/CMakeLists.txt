@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "oal_fade.c"
+         "oal_input.c"
          "oal_output.c"
          "oal_pcm.c"
          "oal_playout.c"

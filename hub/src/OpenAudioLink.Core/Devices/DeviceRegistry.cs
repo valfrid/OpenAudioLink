@@ -42,6 +42,18 @@ public sealed record DeviceStatus
     public int? DelayMs { get; init; }
 
     /// <summary>
+    /// What a Producer captures from — "line" for an I²S ADC, "mic" for an
+    /// I²S microphone. Null on a Consumer, or from firmware predating it.
+    /// </summary>
+    /// <remarks>
+    /// One box serves both: a microphone at the listening position for room
+    /// measurement, a line input by the turntable, never at once. The two
+    /// need the node in opposite clock roles, which is why this is read at
+    /// boot rather than switched while running.
+    /// </remarks>
+    public string? InputStage { get; init; }
+
+    /// <summary>
     /// How much audio this node's ring holds, in milliseconds, as actually
     /// allocated — capacity, not the target depth. Null from firmware that
     /// predates a settable ring.

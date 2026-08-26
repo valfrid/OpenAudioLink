@@ -112,9 +112,11 @@ public sealed class DeviceStatusService : BackgroundService
                  */
                 DelayMs = status.DelayMs,
                 // Same lesson as delayMs immediately above: declared on the
-                // record is not carried across. Three assignments, because
-                // three fields, and forgetting one shows up as a control
-                // that silently offers the wrong range.
+                // record is not carried across. One assignment per field,
+                // and forgetting one shows up as a control that silently
+                // offers the wrong range — or, for inputStage, a box that
+                // reports the wrong half of itself.
+                InputStage = status.InputStage,
                 RingMs = status.RingMs,
                 MaxTargetMs = status.MaxTargetMs,
                 MaxDelayMs = status.MaxDelayMs,
@@ -205,6 +207,17 @@ public sealed class DeviceStatusService : BackgroundService
         /// <summary>How audio leaves the board: "i2s" or "usb".</summary>
         [JsonPropertyName("output")]
         public string? Output { get; init; }
+
+        /// <summary>
+        /// What a Producer captures from: "line" or "mic".
+        /// </summary>
+        /// <remarks>
+        /// Named inputStage on the wire, not input: <c>input</c> was already
+        /// the live ADC level reading, and every client reads it that way.
+        /// Two meanings of one word, so the newer one took the longer name.
+        /// </remarks>
+        [JsonPropertyName("inputStage")]
+        public string? InputStage { get; init; }
 
         /// <summary>
         /// Whether that output stage can currently take samples. Always true

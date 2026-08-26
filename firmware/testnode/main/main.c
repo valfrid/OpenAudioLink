@@ -239,7 +239,23 @@ void app_main(void)
      * A failure is survivable — the synthetic sources still work, which is
      * what the link measurements use. */
     if ((roles & OAL_ROLE_PRODUCER) != 0) {
-        static const oal_capture_config_t capture = {
+        /*
+         * Which input this box is wired to, read at boot like the output
+         * stage and the roles.
+         *
+         * It selects a set of pins *and* which end of the I2S bus drives
+         * the clocks, so it cannot be a runtime switch: the microphone is a
+         * slave and needs BCK and WS supplied, while the self-clocked
+         * PCM1808 module supplies its own and makes this end the follower.
+         * The two therefore get separate pins -- sharing them would put two
+         * drivers on one line, and HARDWARE.md records that the symptom of
+         * that is silence with nothing to say why.
+         *
+         * One box, two jobs: a microphone at the listening position for
+         * room measurement, a line input by the turntable, never at once.
+         * Not worth a second ESP32 (docs/ROOM-CALIBRATION.md).
+         */
+        oal_capture_config_t capture = {
             .bclk_gpio   = CONFIG_OAL_ADC_BCLK_GPIO,
             .ws_gpio     = CONFIG_OAL_ADC_WS_GPIO,
             .din_gpio    = CONFIG_OAL_ADC_DIN_GPIO,
@@ -247,6 +263,20 @@ void app_main(void)
             .slave       = CONFIG_OAL_ADC_SLAVE,
             .sample_rate = OAL_RTP_SAMPLE_RATE,
         };
+
+        const oal_input_t stage = oal_config_get_input();
+        if (stage == OAL_INPUT_MIC) {
+            capture.bclk_gpio = CONFIG_OAL_MIC_BCLK_GPIO;
+            capture.ws_gpio   = CONFIG_OAL_MIC_WS_GPIO;
+            capture.din_gpio  = CONFIG_OAL_MIC_DIN_GPIO;
+            /* No master clock: the ICS-43434 wants none, and this end
+             * generates the two it does want. */
+            capture.mclk_gpio = -1;
+            capture.slave     = false;
+        }
+        ESP_LOGI(TAG, "capturing from %s (%s)", oal_input_name(stage),
+                 capture.slave ? "following the module's clock"
+                               : "clocking it from here");
 
         esp_err_t input = oal_capture_start(&capture);
         if (input == ESP_OK) {
