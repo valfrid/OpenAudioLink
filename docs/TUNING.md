@@ -59,8 +59,20 @@ floor, and 1.5 × target is what decides latency.
 ```
 target       = 100 ms + delayMs
 actual depth ≈ 1.5 × target
-air to ear   ≈ actual depth + 20 ms      (DMA descriptors or USB buffering)
+air to ear   ≈ actual depth + the output stage
 ```
+
+**The output stage is not the same on both**, and the difference is larger
+than it looks:
+
+| output | after the ring | why |
+| --- | --- | --- |
+| I²S DAC | ~20 ms | four DMA descriptors |
+| USB dongle | **~100 ms** | the UAC host driver's own buffer (`buffer_size = 0`, auto), plus whatever the dongle keeps |
+
+That gap is what `delayMs` is correcting when two speakers with different
+output stages play in one room — and it is why the trim goes on the *I²S*
+node, which is the early one.
 
 To set a latency deliberately, **make the target two thirds of what you
 want**, then subtract the 100 ms default:
