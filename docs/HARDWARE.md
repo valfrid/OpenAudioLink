@@ -37,6 +37,39 @@ are additive — new profiles, not a new architecture.
 | MAX98357A | 3 W to a driver, no amplifier | ~20 SEK | bathroom, kitchen, workshop, party |
 | CX31993 USB dongle | headphone amp, shielded | ~120 SEK | desk or headphones — **hosted and playing**, see below |
 
+### Which to put in a fixed room
+
+**The PCM5102A, and for three reasons that only became clear once both were
+running.**
+
+**Latency.** The I²S path holds about 20 ms after the ring — four DMA
+descriptors. The USB path holds about 100 ms, in the UAC host driver's own
+buffer, before the dongle's. Five times as much, and it is the whole of the
+difference `delayMs` was added to correct.
+
+**Two matched nodes need no offset between them.** The 50 ms trim measured
+by ear existed because one node was USB and the other I²S. Two PCM5102A
+nodes have the same output stage and therefore the same latency, so their
+`delayMs` should simply be *equal*. If two identical DACs still sound out of
+step, that is a finding worth chasing rather than trimming away — nothing in
+the design accounts for it.
+
+**It leaves the USB port free**, which is the port wired Ethernet needs
+(see "Accessory: wired Ethernet"). A dongle node can never be a wired node;
+there is one socket. For a speaker that lives in one room — the case where
+Ethernet is plausible and worth the most — that forecloses the better
+network before it is tried.
+
+What the dongle is still right for is a desk or a pair of headphones, where
+its amplifier and shielding are the point, latency against another speaker
+does not arise, and nothing was going to be wired anyway.
+
+*Not* a clock argument. It is tempting to assume a USB dongle brings its own
+timing, and this one does not: `USB-AUDIO.md` records it measured as a
+synchronous endpoint with no feedback, following the host's SOF, which
+descends from the node's own crystal. Decision 12's clock authority holds
+either way.
+
 ### MAX98357A — DAC and amplifier in one chip
 
 Status: identified, not yet bought or tested.
