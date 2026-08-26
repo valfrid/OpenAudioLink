@@ -1732,15 +1732,17 @@ not a feature for the person downloading it.
 
 Worth stating because a promise in a document is not a guarantee. In
 `.github/workflows/release.yml` the `hub` job declares
-`needs: [firmware, uacprobe]`, and its upload lists `firmware-release/*`
-with `fail_on_unmatched_files: true`. A release therefore cannot be
-published unless a firmware image built from **the same commit** exists
-beside it. Nothing has to remember to attach it.
+`needs: [firmware]`, and its upload lists `firmware-release/*` with
+`fail_on_unmatched_files: true`. A release therefore cannot be published
+unless a firmware image built from **the same commit** exists beside it.
+Nothing has to remember to attach it.
 
-`uacprobe` is `continue-on-error` and deliberately excluded from that
-guarantee — it is the USB host experiment, not node firmware, and
-`FirmwareFetcher` will not accept it because its name neither starts with
-`testnode-` nor ends with `-ota.bin` (isolation rule 3).
+Firmware here means the one node image. `firmware/uacprobe`, the USB host
+experiment, was built and published alongside it for a while and no longer
+is: it answered its question, and what it proved now lives in the node
+firmware, where `oal_audio` links `usb` and `uac2_host` for the dongle
+output stage. Building a second image that nobody flashes is upkeep
+without a reader.
 
 ### librespot is a third artifact, and deliberately not in this pair
 

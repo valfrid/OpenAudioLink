@@ -1,14 +1,28 @@
 # uacprobe — USB host + UAC 2.0, first light
 
+> **Concluded. Kept as a record, not as a target.**
+>
+> Both questions below were answered yes, and the capability moved into the
+> node firmware: `oal_audio` links `usb` and `uac2_host`, and a Consumer
+> with `output` set to `usb` plays through a dongle. This application is
+> **no longer built by CI or attached to releases** — the measurements in
+> `docs/USB-AUDIO.md` are what it was for, and they are recorded there.
+>
+> It should still build if you want to run it again, but nothing checks
+> that on every push any more, so expect to fix bit rot first. The pinned
+> `esp-uac2-host` commit is the likeliest thing to have moved.
+
 The smallest program that answers the two questions blocking track A in
 `docs/USB-AUDIO.md`: **does an ESP32-S3 enumerate a UAC 2.0 DAC, and can it
 push a tone through it.**
 
 It is not a node. No Wi-Fi, no RTP, no discovery, no OTA, and nothing from
 the `oal_*` components. It builds on **ESP-IDF 5.4** because
-`esp-uac2-host` requires it, where the rest of the firmware builds on 5.3.1
-— keeping those apart is the whole reason this is a separate application
-rather than a flag in `testnode`.
+`esp-uac2-host` requires it — which was once the whole reason this was a
+separate application rather than a flag in `testnode`, back when the rest
+of the firmware was on 5.3.1. The tree has since moved to 5.4 as well, so
+what keeps it separate now is only its sdkconfig: USB in host mode,
+console on UART, no Wi-Fi.
 
 ## What it does
 

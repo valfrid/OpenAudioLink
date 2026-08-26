@@ -549,7 +549,15 @@ have to be handled before this is a profile rather than a demo.
    two-clock question.
 7. **Play a tone.**
 
-**Steps 5–7 are built.** `firmware/uacprobe` is a standalone application
+**Steps 5–7 are built, and the experiment is concluded.** What it proved
+now lives in the node firmware itself — `oal_audio` links `usb` and
+`uac2_host`, and a Consumer with `output` set to `usb` plays through a
+dongle. `firmware/uacprobe` is therefore **no longer built by CI or
+attached to releases**; it stays in the tree as the record behind the
+measurements quoted throughout this document, not as something to flash.
+
+What follows describes it in the present tense because it is what was
+run. `firmware/uacprobe` is a standalone application
 that does exactly those three and nothing else — no Wi-Fi, no RTP, no
 `oal_*` components, ESP-IDF 5.4, `esp-uac2-host` pinned to a commit. It
 prints the UAC version, the clock count, the sync type and feedback endpoint

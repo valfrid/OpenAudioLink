@@ -85,63 +85,14 @@ jobs:
           path: release/
           if-no-files-found: error
 
-  # The USB host experiment, `docs/USB-AUDIO.md` track A.
-  #
-  # Published for one reason: a CI artifact needs a GitHub login and expires
-  # after ninety days, and the release page is where somebody actually looks.
-  # Downloading node firmware by mistake because the experiment was only in
-  # Actions is a real way to lose an evening.
-  #
-  # No longer on a different ESP-IDF from the node firmware — the whole tree
-  # moved to 5.4 so a real Consumer could use `esp-uac2-host`. It stays a
-  # separate application because its sdkconfig is genuinely different: USB in
-  # host mode, console on UART, no Wi-Fi.
-  #
-  # Isolation rule 3 — experimental images stay out of the Hub's firmware
-  # store — holds here by construction rather than by promise. `FirmwareFetcher`
-  # accepts an asset only if it both starts with `testnode-` and ends with
-  # `-ota.bin`; this one does neither, and there is no OTA image to build
-  # because the application has no Wi-Fi to receive one over.
-  uacprobe:
-    name: USB host experiment (esp32s3)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - name: Read the experiment's version
-        id: version
-        run: echo "version=$(cat firmware/uacprobe/version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
-      - name: Build with ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v5.4
-          target: esp32s3
-          path: firmware/uacprobe
-          command: >
-            idf.py build &&
-            cd build &&
-            esptool.py --chip esp32s3 merge_bin
-            -o uacprobe-esp32s3-flash.bin @flash_args
-      - name: Name the file after what is in it
-        run: |
-          v="${{ steps.version.outputs.version }}"
-          mkdir -p release
-          cp firmware/uacprobe/build/uacprobe-esp32s3-flash.bin \
-             "release/uacprobe-esp32s3-$v-flash.bin"
-      - uses: actions/upload-artifact@v5
-        with:
-          name: uacprobe-release-files
-          path: release/
-          if-no-files-found: error
-
   hub:
     name: Hub win-x64 package
     runs-on: windows-latest
-    # The release carries both, so both have to exist before it is cut.
-    # `uacprobe` is waited for but allowed to have failed — it is marked
-    # continue-on-error, so a broken experiment delays a release by a couple
-    # of minutes rather than preventing one.
-    needs: [firmware, uacprobe]
+    # The release carries both halves (decision 18), so the firmware has to
+    # exist before the release is cut. Not a promise in a document: the Hub
+    # job cannot start until the image is built, and the upload below fails
+    # on an unmatched file.
+    needs: [firmware]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -234,15 +185,6 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           name: firmware-release-files
-          path: firmware-release
-
-      # Best effort, unlike the node firmware above. The experiment builds on
-      # a different ESP-IDF against a third party's alpha, so a release must
-      # not be blocked by it going missing.
-      - uses: actions/download-artifact@v5
-        continue-on-error: true
-        with:
-          name: uacprobe-release-files
           path: firmware-release
 
       # The rolling release is one build, not an archive.

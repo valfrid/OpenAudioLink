@@ -177,9 +177,14 @@ whichever board the label is printed on. Share a ground, set the adapter to
 typing into a console, which nothing here has.
 
 This normally does not come up, because the console runs over the native USB
-port. It matters when USB is doing something else — `firmware/uacprobe` puts
-USB-OTG into host mode, and the S3 shares one PHY between USB-Serial/JTAG and
-USB-OTG, so the console has nowhere to go but here.
+port. It matters when USB is doing something else, and on this hardware that
+is no longer only an experiment: **a Consumer with `output` set to `usb`
+puts USB-OTG into host mode**, and the S3 shares one PHY between
+USB-Serial/JTAG and USB-OTG. The console then has nowhere to go but here.
+
+So a dongle node is a node you read over UART, or not at all. Worth knowing
+before troubleshooting one that has gone quiet — the absent console is the
+dongle working, not the node dead.
 
 ### Laying the two boards out
 
