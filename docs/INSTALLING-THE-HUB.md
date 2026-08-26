@@ -205,6 +205,36 @@ To take the new defaults instead: `-ResetSettings`.
 
 ## Node firmware
 
+### The first node, which has no firmware yet
+
+Everything below this assumes a node already running OpenAudioLink and a
+Hub that can reach it. A board straight out of its packaging has neither,
+so the first image goes on by cable.
+
+Take the **`-flash.bin`** from the same release — it is a merged image
+containing bootloader, partition table and application, so it goes to
+offset zero as one file:
+
+```
+pip install esptool
+esptool.py --chip esp32s3 --port COM5 write_flash 0x0 testnode-esp32s3-0.31.0-flash.bin
+```
+
+Hold BOOT and tap RESET if the port does not appear. Substitute your own
+port; `-ota.bin` is the *other* file in that release and will not boot
+from offset zero, because it is the application alone.
+
+Then the node comes up as its own access point with a setup page, and
+that is where its Wi-Fi credentials are entered. **They are typed into
+the device, never built into the image** — which is why one published
+binary can serve everybody, and why nothing in this repository knows any
+network's password.
+
+After that the node is reachable, and every later update is over the air
+from the Hub.
+
+### Afterwards, from the Hub
+
 The same reasoning, one layer down. The published node image is attached
 to the same releases the Hub package is, so the Hub can fetch it itself:
 
@@ -266,6 +296,18 @@ The release workflow checks the tag against `<Version>` in
 tagged release is a promise about a version number, and an installer that
 reports a different version from the one on the tin is worse than no
 installer.
+
+**Every release carries both halves** (decision 18). The workflow's Hub
+job cannot run until the firmware job has produced an image from the same
+commit, and it uploads with `fail_on_unmatched_files`, so a Hub package
+without a matching node firmware beside it is not a thing that can be
+published. Upgrading the Hub therefore always brings the firmware its
+nodes should be on.
+
+The consequence, accepted deliberately: the Hub's version doubles as the
+release number, so a milestone in which only the firmware changed still
+bumps it. The notes say what is inside, and each node reports its own
+version regardless.
 
 ## Uninstalling
 

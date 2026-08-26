@@ -1696,3 +1696,94 @@ shows loss bursts and stalls separately and lets neither speak for the
 other. `payloadErrors` is labelled as pattern-source-only for the same
 reason: it compares every sample against the synthetic test pattern, so real
 music reads as tens of millions of errors on a healthy node.
+
+## 18. A release is a milestone, and it always carries both halves
+
+**Date:** 2026-08-26
+**Status:** accepted — no code change; this records the policy the existing
+`release.yml` already implements.
+
+### The position
+
+Releases are cut by hand, when the system reaches a point worth naming.
+Not per commit, not on a schedule. By the time that happens both halves
+have usually moved anyway, so a release publishes **one Hub and one node
+firmware together**: upgrading the Hub always brings a firmware image for
+the devices it will talk to.
+
+The tag stays `hub-v<version>` and must match `hub/Directory.Build.props`,
+which the workflow enforces.
+
+### What this costs, stated plainly
+
+**The Hub version doubles as the release number.** A milestone in which
+only the firmware changed still bumps the Hub, so "Hub 0.41.0" sometimes
+means "same Hub, new firmware". That is a real inaccuracy and it is
+accepted, because the release notes say what is inside and the node
+reports its own version regardless.
+
+The alternative was a second `fw-v*` tag stream for firmware-only
+releases. Rejected: it splits the Releases page into two interleaved
+series, and somebody installing OpenAudioLink wants a **matched pair**,
+not a firmware drop on its own. Being able to publish half the system is
+not a feature for the person downloading it.
+
+### The pairing is structural, not a promise
+
+Worth stating because a promise in a document is not a guarantee. In
+`.github/workflows/release.yml` the `hub` job declares
+`needs: [firmware, uacprobe]`, and its upload lists `firmware-release/*`
+with `fail_on_unmatched_files: true`. A release therefore cannot be
+published unless a firmware image built from **the same commit** exists
+beside it. Nothing has to remember to attach it.
+
+`uacprobe` is `continue-on-error` and deliberately excluded from that
+guarantee — it is the USB host experiment, not node firmware, and
+`FirmwareFetcher` will not accept it because its name neither starts with
+`testnode-` nor ends with `-ota.bin` (isolation rule 3).
+
+### librespot is a third artifact, and deliberately not in this pair
+
+A public user needs three things, not two: the Hub, the node firmware,
+and — if they want Spotify Connect — `librespot.exe`, which has no
+official Windows build because the librespot project declines to publish
+one.
+
+It stays **out** of the Hub package and on its own `librespot-v*`
+release, fetched only when asked for by `get-librespot.ps1` against a
+published SHA256. Not a licensing problem — librespot is MIT and bundling
+would be permitted — but whether running a reimplementation of somebody's
+streaming protocol is licensed for use with *that service* is the
+operator's decision and not this project's (`docs/CAST-POINTS.md`,
+"Bundling"). Shipping it inside the Hub zip would make that choice for
+everybody who installs a multi-room speaker system.
+
+It is also on a different clock from this decision's pairing. librespot
+changes when *librespot* changes, never when OpenAudioLink does, and a
+cold Rust build costs ten minutes of a Windows runner — so it is built on
+demand rather than attached to every milestone. One published build
+serves many OAL releases.
+
+The consequence to watch: **a `librespot-v*` release has to actually
+exist**, or Spotify Connect is unreachable for everyone except whoever
+has a local build. That was the state of the repository until 2026-08-26,
+when the first one was published — the Hub, the firmware and the docs all
+worked, and the one path nobody had walked was the one a stranger takes.
+
+### The rolling build is the other half of the story
+
+`hub-latest` is a prerelease that replaces itself on every push to a build
+branch. It exists so that upgrading during a week of daily changes does
+not require remembering to tag, and it is why a milestone tag can be rare
+without anyone being stuck. A machine somebody else depends on should run
+`update-hub.ps1 -StableOnly`, which ignores it and takes tagged releases
+only.
+
+### When to revisit
+
+The first time it is genuinely annoying to bump the Hub for a
+firmware-only milestone. The move then is one project version —
+`oal-v<x.y.z>` against a root `VERSION` file, with both components keeping
+their own internal numbers and the release carrying the pair. That is a
+change to the workflow's version gate and little else; it is not worth
+doing before the annoyance is real.
