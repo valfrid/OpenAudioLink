@@ -423,66 +423,122 @@ gap a distant sender can leave; this one covers the jitter of a task on the
 same chip, and every frame it holds is delay between the needle and the
 speaker that nothing downstream will absorb.
 
-### ICS-43434 — the measurement microphone, in the same box
+### PDM MEMS microphone — the measurement input
 
-Status: pins assigned and selectable in firmware 0.31.0; the microphone
-itself is on order.
+Status: microphone in hand. Wiring settled below. **The capture firmware
+does not speak PDM yet** — see "What the firmware still needs" at the end
+of this section before wiring anything and expecting sound.
 
-Room calibration (`docs/ROOM-CALIBRATION.md`) needs a microphone at the
-listening position, and the obvious way to get one is a node of its own.
-That is a whole ESP32, a whole enclosure and a whole power feed for a
-device that is used for ten minutes and then put in a drawer.
+The part is a **PDM** MEMS microphone breakout — pads `3V GND SEL CLK DAT`,
+silkscreen "PDM Mic", typically an MP34DT01-M or equivalent. That is a
+different interface from the I²S microphone this section previously
+described, and the difference is not cosmetic:
 
-So the microphone shares the turntable box. **Both converters are wired at
-the same time; only one captures.** They are never both wanted — a
-measurement sweep and a record being played are not things that happen
-together — and the node holds which one is live in NVS as `input`
-(`protocol/CONTROL.md`), settable from the Hub's device panel and read at
-boot.
-
-**Read at boot, not switched while running, and that is the whole reason
-the two cannot share pins.** They want the ESP in opposite clock roles:
-
-| | clock role | what the ESP does |
+| | signals | what comes out |
 | --- | --- | --- |
-| Self-clocked PCM1808 module | master | follows BCK and LRCK |
-| ICS-43434 | slave | generates BCK and LRCK |
+| I²S mic (ICS-43434) | SCK, WS, SD | PCM samples, ready to use |
+| **PDM mic (this one)** | **CLK, DAT** | a 1-bit pulse-density stream at 1–3 MHz |
 
-Wiring both to one set of pins would put the module's oscillator-driven
-BCK output and the ESP's BCK output on the same wire. Two masters on one
-clock line produce nothing usable, and the symptom is silence — the same
-failure written up under the PCM1808 above, arrived at from a different
-direction.
+PDM carries no word clock at all — there is no WS pad on the board because
+there is nothing for it to do. The ESP32-S3 handles this in hardware: its
+I²S peripheral has a **PDM RX mode with a PDM-to-PCM converter**
+(`SOC_I2S_SUPPORTS_PDM_RX`), so the decimation from a megahertz bit stream
+down to 48 kHz PCM costs no CPU. It is a different driver mode, not a
+different pin arrangement.
 
-**Wiring** — three pins, on the side the DAC does not use:
+**The ESP is the clock master either way**, which is what matters for the
+combination below: the microphone has no oscillator and does nothing until
+something clocks it.
 
-| Module | XIAO ESP32S3 | |
+#### As a stand-alone node
+
+Four wires. The board's SEL pad has a pull-down on it, so left channel is
+the default and the pad can be left unconnected.
+
+| Breakout | XIAO ESP32S3 | |
 | --- | --- | --- |
-| SCK | D0 (GPIO1) | bit clock, **an output from the ESP** |
-| WS | D1 (GPIO2) | word select, **an output from the ESP** |
-| SD | D2 (GPIO3) | audio into the ESP |
-| L/R | GND | left channel; tie high for right |
-| VDD | 3V3 | **3.3 V, not 5** — this is a bare part, not a regulated module |
+| 3V | 3V3 | **3.3 V, not 5** — a bare MEMS part, not a regulated module |
 | GND | GND | |
+| CLK | D0 (GPIO1) | 1–3 MHz, **an output from the ESP** |
+| DAT | D1 (GPIO2) | the pulse stream, into the ESP |
+| SEL | leave open, or GND | open or low = left; tie to 3V3 for right |
 
-D6 and D7 are deliberately avoided: they are the UART, and the console is
-worth more than a tidier pin group when a capture path is being brought up.
+Nothing else is needed. A stand-alone measurement node is a XIAO, this
+board and a USB cable — which is why it is worth building one eventually
+even though the combination below avoids having to.
 
-The ICS-43434 is a **24-bit part in a 32-bit slot** and mono — one
-microphone fills one channel and the other carries whatever the L/R strap
-left there. That is correct for measurement, which wants one honest
-pressure reading and not a stereo image.
+#### Combined with the turntable ADC, in one box
 
-No MCLK. The part needs only SCK and WS, which is why three pins is
-enough, and why the node clocking it is not a cost here the way it is a
-benefit with a bare PCM1808: there is nothing to synchronise against on
-the microphone's side.
+This is the arrangement to build now: one enclosure that is the vinyl
+Producer most of the time and the measurement microphone for ten minutes.
+**Both converters stay wired; only one captures**, chosen by the `input`
+setting in NVS (`protocol/CONTROL.md`) and read at boot.
 
-**This is not yet a stationary microphone node.** Speech recognition, a
-room that listens, a permanently installed measurement point — all of them
-want a node whose microphone is the point of it, and this box is a
-turntable that can be borrowed. The pin assignment is the same either way,
-which is the part worth settling now.
+| | pins | clock role |
+| --- | --- | --- |
+| PCM1808 module (line) | D2, D3, D4 | **master** — it drives BCLK and LRCK, the ESP follows |
+| PDM microphone (mic) | D0, D1 | **slave** — the ESP drives CLK |
+| PCM5102A DAC, if fitted | D8, D9, D10 | ESP drives |
+| UART console | D6, D7 | leave alone |
+
+The two capture inputs sit on **separate pins and never share one**. That
+is not tidiness: the PCM1808 module drives BCLK from its own 24.576 MHz
+oscillator whenever it has power, and the ESP drives CLK for the
+microphone. Put either pair on one wire and two outputs fight, which
+produces nothing usable and reports itself as silence.
+
+Being PDM helps here rather than hurting. It needs **two pins where an I²S
+microphone needs three**, so the microphone fits in D0/D1 and leaves D5
+spare in a box that already spends D2–D4 on the ADC and D8–D10 on a DAC.
+
+Power in the combined box comes from two rails, and they are not
+interchangeable:
+
+- **The microphone takes 3V3** from the XIAO's regulator.
+- **The PCM1808 module takes 5–12 V** on its own `VDD` header and
+  regulates internally (see its section above).
+
+Feeding the microphone from the ADC module's supply rail is the mistake to
+avoid; it is a 3.3 V part.
+
+#### What this microphone is and is not good for
+
+Worth being plain, because it changes what the calibration results mean.
+A PDM MEMS microphone of this class is a **voice-grade part**. It will
+show you room modes, a boomy corner, the broad shape of a response curve
+and an arrival time — which is what `docs/ROOM-CALIBRATION.md` Phase 1
+actually asks for.
+
+It is not a measurement microphone in the instrumentation sense, and no
+calibration file ships with it, so absolute SPL and the last few decibels
+of flatness are not on offer. Treat the first sweeps as **relative**
+measurements — this speaker against that one, this position against
+another — rather than as absolute truth about the room. The proposal named
+an ICS-43434 as its reference part and that remains the better instrument
+if the results justify buying one; nothing about the wiring or the `input`
+setting changes if it does, only which of the two is soldered on.
+
+Mono, either way. One microphone is one pressure reading, which is correct
+for measurement — a stereo image is not what a sweep is asking about.
+
+#### What the firmware still needs
+
+`oal_capture` currently brings up **standard I²S RX only**. Firmware
+0.31.0 added the `input` setting and a `mic` branch that selects a second
+set of pins, which is right, but it configures them as a standard I²S
+master — bit clock, word select, data. **A PDM microphone will produce
+nothing under that.** What is missing:
+
+- PDM RX mode in `oal_capture` (`i2s_channel_init_pdm_rx_mode`), selected
+  when `input` is `mic`.
+- Kconfig for two mic pins rather than three; `OAL_MIC_WS_GPIO` has
+  nothing to configure on a PDM part.
+- The port is worth pinning down rather than leaving to `I2S_NUM_AUTO`:
+  the PDM-to-PCM converter is not necessarily present on both I²S
+  controllers, and a channel allocated on the wrong one fails at init.
+
+Until that lands, `input` set to `mic` selects pins for a microphone the
+node cannot read.
 
 ### ESP32-C3 — considered again, still no
 
