@@ -24,18 +24,20 @@ configuration — never audio.
   `{ "error": "<machine-readable-code>", "message": "<human text>" }`.
 - Unknown JSON fields in requests must be ignored.
 
-## Endpoints (Phase 2.4 command set)
+## Endpoints
+
+Everything a node actually serves. Checked against the handlers it
+registers, because an earlier revision of this table listed four endpoints
+that were specified and never built, and a protocol document that promises
+what the firmware does not answer is worse than one that says less.
 
 | Method | Path              | Purpose                                     |
 | ------ | ----------------- | ------------------------------------------- |
+| GET    | `/`               | The node's own page, rendered from these endpoints |
 | GET    | `/status`         | Read status                                 |
-| POST   | `/identify`       | Physically identify the device (blink LED)  |
-| POST   | `/rename`         | Set the human-readable name                 |
+| POST   | `/config`         | Set roles, speaker profile, output, input, name, delay, ring, party |
+| POST   | `/volume`         | Set the playback level                      |
 | POST   | `/reboot`         | Reboot the device                           |
-| GET    | `/config`         | Read configuration                          |
-| PUT    | `/config`         | Write configuration                         |
-| POST   | `/factory-reset`  | Request factory reset (clears identity, Wi-Fi, config) |
-| POST   | `/config`         | Set the roles and speaker profile           |
 | GET    | `/stream`         | Stream state and measurement counters       |
 | POST   | `/stream/start`   | Producer: begin streaming to destinations   |
 | POST   | `/stream/stop`    | Stop a producer; clear a consumer's counters |
@@ -43,6 +45,16 @@ configuration — never audio.
 | POST   | `/ota`            | Pull and install a firmware image (see `OTA.md`) |
 | GET    | `/peers`          | Other nodes this one has heard announce      |
 | POST   | `/join`           | A Consumer telling the Controller it is ready |
+| GET    | `/wifi/scan`      | What this node can hear right now            |
+| POST   | `/wifi/rejoin`    | Re-associate without rebooting               |
+
+**Specified in 0.1 and not implemented:** `POST /identify`,
+`POST /rename`, `GET /config`, `PUT /config`, `POST /factory-reset`.
+Nothing shipped against any of them. `/rename` has been superseded by the
+`name` key on `POST /config` (below); the rest remain reasonable ideas
+without a caller — `/identify` in particular would earn its place in a
+house with several identical boards, which is the situation this project
+is actually in.
 
 ### GET /status
 
@@ -259,8 +271,14 @@ effect at the next boot, because they decide which tasks start; changing
 them under a running node would mean tearing down live audio.
 
 The same endpoint carries the other stored settings, one key at a time or
-several together: `channel`, `output`, `input`, `delayMs`, `ringMs`,
-`party`.
+several together: `channel`, `output`, `input`, `name`, `delayMs`,
+`ringMs`, `party`.
+
+Between them these cover everything the provisioning portal asks for
+except the network credentials, which is deliberate: provisioning is the
+one moment the board is in your hands, but a node is named wrong or grows
+a dongle long afterwards, and re-provisioning to fix a label costs the
+Wi-Fi password too.
 
 #### The `input` key: which capture stage a Producer uses
 
@@ -354,10 +372,30 @@ Absent from firmware older than 0.11.0, where `GET /status` has no
 `"volume"` field at all. A Controller must treat that as "this node cannot"
 rather than as zero.
 
-### POST /rename
+### Renaming: the `name` key on `POST /config`
 
-Request `{ "name": "Kitchen" }` → response `{ "name": "Kitchen" }`.
-The new name must appear in subsequent announces.
+`{ "name": "Kitchen" }` → the usual `/config` reply, with
+`"appliesAt": "now"`.
+
+**The only key on this endpoint that takes effect immediately.** Every
+other one decides which tasks start or which pins the I²S driver claims,
+and waits for a boot; a name decides nothing, so the node stores it,
+rebuilds its announcement and carries the new name within a few seconds.
+`appliesAt` reports `now` when a request set the name and nothing else,
+`reboot` otherwise — it describes the request, not the endpoint.
+
+At most 31 characters plus a terminator, which is the width of the
+announce field: a longer name is one no other device could display. Too
+long is a `400` rather than a silent truncation.
+
+**An empty string clears it**, and the node falls back to the name derived
+from its MAC. That is a real thing to ask for rather than an edge case —
+the default is what makes a freshly provisioned node recognisable in a
+list of identical boards.
+
+> Earlier revisions of this document specified `POST /rename` for this.
+> That endpoint was never implemented, and the setting has gone where the
+> other stored settings live instead. Nothing ever shipped against it.
 
 ### PUT /config
 

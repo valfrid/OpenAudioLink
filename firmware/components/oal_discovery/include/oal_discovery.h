@@ -31,6 +31,19 @@ typedef struct {
  */
 esp_err_t oal_discovery_start(const oal_discovery_config_t *config);
 
+/**
+ * Changes the announced name and rebuilds the announcement immediately.
+ *
+ * The config is copied at start, so writing to the caller's struct does
+ * nothing: the announce is built from this component's own copy and then
+ * cached. Renaming without this call changes NVS and leaves every list on
+ * the network showing the old name until the node reboots.
+ *
+ * @return ESP_ERR_INVALID_ARG for NULL, empty, or a name that does not fit
+ *         the announce field.
+ */
+esp_err_t oal_discovery_set_name(const char *name);
+
 /*
  * The peer table (decision 9).
  *

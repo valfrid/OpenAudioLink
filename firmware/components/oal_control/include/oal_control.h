@@ -15,7 +15,14 @@ extern "C" {
  */
 typedef struct {
     const char *id;
-    const char *name;
+    /*
+     * A copy, not a pointer, because the name can now change while the
+     * node runs (POST /config with "name"). A pointer into whoever
+     * assembled the config would leave this server and the announce
+     * disagreeing after a rename, which is exactly the confusion a rename
+     * is meant to remove.
+     */
+    char name[OAL_NAME_MAX];
     oal_roles_t roles;
     const char *hardware_profile;
     const char *firmware_version;

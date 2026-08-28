@@ -220,7 +220,10 @@ void app_main(void)
 
     static oal_control_config_t control;
     control.id = discovery.id;
-    control.name = discovery.name;
+    /* Copied, not aliased. The control server owns its name now, because
+     * it is the thing that changes it — and the two would otherwise be one
+     * buffer written from two places. */
+    snprintf(control.name, sizeof(control.name), "%s", discovery.name);
     control.roles = discovery.roles;
     control.hardware_profile = discovery.hardware_profile;
     control.firmware_version = discovery.firmware_version;

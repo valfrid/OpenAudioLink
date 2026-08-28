@@ -496,6 +496,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const cJSON *delay = cJSON_GetObjectItemCaseSensitive(root, "delayMs");
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ringMs");
+    const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
@@ -503,6 +504,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const bool has_input = cJSON_IsString(input);
     const bool has_delay = cJSON_IsNumber(delay);
     const bool has_ring = cJSON_IsNumber(ring);
+    const bool has_name = cJSON_IsString(name);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
     const uint32_t ring_ms = has_ring ? (uint32_t)ring->valueint : 0;
 
@@ -510,11 +512,32 @@ static esp_err_t config_handler(httpd_req_t *req)
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
     if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
-            && !has_ring && !has_input) {
+            && !has_ring && !has_input && !has_name) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "expected roles, channel, output, input, delayMs, ringMs or party");
+                            "expected roles, channel, output, input, name, delayMs, "
+                            "ringMs or party");
         return ESP_FAIL;
+    }
+
+    /*
+     * The name, copied out before the tree is freed like everything else.
+     *
+     * Length is checked here rather than left to oal_config_set_name, so a
+     * too-long name is a 400 that says the limit instead of a bare "not
+     * stored". OAL_NAME_MAX is the announce field's width, so a name that
+     * does not fit is one no other device could ever display.
+     */
+    char wanted_name[OAL_NAME_MAX];
+    wanted_name[0] = '\0';
+    if (has_name) {
+        if (strlen(name->valuestring) >= OAL_NAME_MAX) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                "name too long");
+            return ESP_FAIL;
+        }
+        snprintf(wanted_name, sizeof(wanted_name), "%s", name->valuestring);
     }
 
     /*
@@ -673,6 +696,34 @@ static esp_err_t config_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "input not stored");
         return ESP_FAIL;
     }
+    /*
+     * The name takes effect at once, unlike everything around it.
+     *
+     * The others decide which tasks start or which pins the I2S driver
+     * claims, so they wait for a boot. A name decides nothing: it is a
+     * label, carried on the announce and shown in lists. Making a typo
+     * wait for a reboot is the kind of friction that stops people fixing
+     * it, and the next announce is a few seconds away.
+     *
+     * An empty string is a deliberate erase, restoring the MAC-derived
+     * default, so this is not guarded on the name being non-empty.
+     */
+    if (has_name) {
+        if (oal_config_set_name(wanted_name) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "name not stored");
+            return ESP_FAIL;
+        }
+        oal_config_get_name(s_config.name, sizeof(s_config.name));
+        /* Both, or the rename is only half done: NVS decides what the node
+         * calls itself after the next boot, the announce decides what every
+         * list on the network shows right now. */
+        if (oal_discovery_set_name(s_config.name) != ESP_OK) {
+            ESP_LOGW(TAG, "renamed to \"%s\" but the announce kept the old name",
+                     s_config.name);
+        } else {
+            ESP_LOGI(TAG, "renamed to \"%s\"", s_config.name);
+        }
+    }
     if (has_delay) {
         if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delay not stored");
@@ -698,14 +749,22 @@ static esp_err_t config_handler(httpd_req_t *req)
     oal_roles_to_json(oal_config_get_roles(), stored, sizeof(stored));
     int n = snprintf(response, sizeof(response),
                      "{\"status\":\"stored\",\"roles\":%s,\"channel\":\"%s\","
-                     "\"output\":\"%s\",\"input\":\"%s\","
+                     "\"output\":\"%s\",\"input\":\"%s\",\"name\":\"%s\","
                      "\"partyReady\":%s,\"ringMs\":%" PRIu32 ","
-                     "\"appliesAt\":\"reboot\"}",
+                     "\"appliesAt\":\"%s\"}",
                      stored, oal_channel_name(oal_config_get_channel()),
                      oal_output_name(oal_config_get_output()),
-                     oal_input_name(oal_config_get_input()),
+                     oal_input_name(oal_config_get_input()), s_config.name,
                      oal_wifi_has_party() ? "true" : "false",
-                     oal_config_get_ring_ms());
+                     oal_config_get_ring_ms(),
+                     /* Truthful per request rather than per endpoint. A
+                      * name lands at once; everything else here decides
+                      * which tasks start or which pins are claimed, and
+                      * waits for a boot. Saying "reboot" after a rename
+                      * that already happened invites a pointless one. */
+                     (has_name && !has_roles && !has_channel && !has_output
+                      && !has_input && !has_delay && !has_ring && !has_party)
+                         ? "now" : "reboot");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, n);
 }

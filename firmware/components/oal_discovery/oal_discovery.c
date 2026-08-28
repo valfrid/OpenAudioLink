@@ -228,6 +228,34 @@ static void run_election(void)
     }
 }
 
+esp_err_t oal_discovery_set_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0' || strlen(name) >= sizeof(s_config.name)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    snprintf(s_config.name, sizeof(s_config.name), "%s", name);
+
+    /*
+     * Rebuilt here for the same reason the claim rebuilds it above: the
+     * announcement carries the name, so a node that has been renamed and
+     * does not rebuild keeps telling the network the old one, and every
+     * list on it stays wrong until a reboot.
+     *
+     * Unguarded against the announce task, exactly as the claim path is.
+     * The worst case is one malformed datagram if a rename lands mid-send,
+     * and the next announce is a few seconds behind it. A lock here would
+     * be the only lock in this file not protecting the peer table, for a
+     * write that happens when somebody types a name.
+     */
+    int length = build_announce();
+    if (length <= 0 || length >= (int)sizeof(s_announce)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    s_announce_len = length;
+    return ESP_OK;
+}
+
 size_t oal_discovery_peer_count(void)
 {
     if (s_peers_lock == NULL

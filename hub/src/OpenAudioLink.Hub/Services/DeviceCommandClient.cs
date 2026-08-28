@@ -172,6 +172,48 @@ public sealed class DeviceCommandClient
     }
 
     /// <summary>
+    /// Renames the node.
+    /// </summary>
+    /// <remarks>
+    /// The one setting on this endpoint that lands immediately. Everything
+    /// else decides which tasks start or which pins the I2S driver claims
+    /// and waits for a boot; a name decides nothing, it is a label on an
+    /// announce. Making a typo wait for a reboot is the kind of friction
+    /// that stops people fixing it.
+    ///
+    /// An empty name is a deliberate erase, restoring the node's
+    /// MAC-derived default — which is a real thing to want, because that
+    /// default is what makes an unnamed node recognisably the one just
+    /// provisioned.
+    /// </remarks>
+    public async Task<bool> SetNameAsync(
+        DeviceRecord device, string name, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Renaming {Device} to {Name}", device.Name, name);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { name }), cancellationToken);
+    }
+
+    /// <summary>
+    /// Sets how audio leaves the board: "i2s" or "usb".
+    /// </summary>
+    /// <remarks>
+    /// Asked for at provisioning and, until now, nowhere else — so a node
+    /// that grew a dongle after it was set up could not be told about it
+    /// without a re-provision, which costs the Wi-Fi password too.
+    ///
+    /// Applies at the next boot: it decides which output stage is brought
+    /// up, and the choice is made once when the audio path starts.
+    /// </remarks>
+    public async Task<bool> SetOutputAsync(
+        DeviceRecord device, string output, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Setting output on {Device} to {Output}", device.Name, output);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { output }), cancellationToken);
+    }
+
+    /// <summary>
     /// Sets what a Producer captures from: "line" or "mic".
     /// </summary>
     /// <remarks>

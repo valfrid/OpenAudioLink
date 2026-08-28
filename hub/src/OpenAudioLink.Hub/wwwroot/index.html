@@ -944,8 +944,23 @@
           `<button data-cmd="ota" data-id="${esc(d.id)}"${disabled}>Update</button> ` +
           `<button data-cmd="roles" data-id="${esc(d.id)}" ` +
           `data-roles="${esc(roles.join(','))}"${disabled}>Roles…</button> ` +
+          // The provisioning form asked for a name and nothing else could
+          // set one afterwards, so fixing a typo meant re-provisioning the
+          // node -- clearing its Wi-Fi credentials and retyping the
+          // password to correct a label. The only setting here that lands
+          // immediately, because a name decides nothing.
+          `<button data-cmd="name" data-id="${esc(d.id)}" ` +
+          `data-name="${esc(d.name ?? '')}"${disabled}>Rename…</button> ` +
           `<button data-cmd="channel" data-id="${esc(d.id)}" ` +
           `data-channel="${esc(d.status?.audioChannel ?? 'stereo')}"${disabled}>Speaker…</button> ` +
+          // Also provisioning-only until now, and the setting that makes a
+          // speaker silent while every counter looks healthy: usb with no
+          // dongle plugged in receives, buffers and plays nothing. The
+          // value rides on the face of the button for that reason.
+          `<button data-cmd="output" data-id="${esc(d.id)}" ` +
+          `data-output="${esc(d.status?.output ?? '')}"${disabled}>` +
+          `${d.status?.output ? `Out: ${esc(d.status.output)}…` : 'Output…'}` +
+          `</button> ` +
           // Per speaker rather than per room, which is what the switchboard
           // does. This one is for balancing a pair, or for a kitchen speaker
           // that is simply louder than the rest of its cast point.
@@ -1553,6 +1568,76 @@
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the ring: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'name') {
+        /*
+         * A prompt, prefilled with the current name, because renaming is
+         * almost always correcting one rather than inventing one.
+         *
+         * Blank is a real answer and the dialog says so: it clears the
+         * stored name and the node falls back to its MAC-derived default,
+         * which is what makes a freshly provisioned node recognisable.
+         */
+        const current = button.dataset.name ?? '';
+        const answer = prompt(
+          'Name for this node, up to 31 characters.\n\n' +
+          'Shown in this list, in the switchboard, and on the node\'s own\n' +
+          'page. It travels on the discovery announce, which is what makes\n' +
+          '31 the limit.\n\n' +
+          'Takes effect immediately — no reboot. Leave it empty to clear\n' +
+          'the name and go back to the default made from the MAC address.',
+          current);
+        if (answer === null) return;
+        const name = answer.trim();
+        if (name.length > 31) {
+          say('That is longer than 31 characters.');
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/name`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        if (response.ok) {
+          say(name
+            ? `Renamed to ${name}.`
+            : 'Name cleared; the node is back to its default.');
+          refreshDevices();
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not rename: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'output') {
+        /*
+         * Two choices, so a confirm. The dialog spends its words on what
+         * goes wrong rather than on what the setting is: a node set to usb
+         * with nothing plugged in is not obviously broken from this page,
+         * it is a speaker that stays quiet while its counters look fine.
+         */
+        const current = button.dataset.output === 'usb' ? 'usb' : 'i2s';
+        const next = current === 'usb' ? 'i2s' : 'usb';
+        const what = next === 'usb'
+          ? 'a USB audio dongle'
+          : 'the soldered I²S DAC';
+        if (!confirm(
+          `Send this node's audio out through ${what}?\n\n` +
+          `It is set to ${current} now. Make sure the hardware matches: a\n` +
+          'node set to usb with no dongle plugged in receives and buffers\n' +
+          'normally and plays nothing, which looks healthy everywhere except\n' +
+          'in the room.\n\n' +
+          'Stored now, in effect after the next reboot.')) {
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/output`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ output: next }),
+        });
+        if (response.ok) {
+          say(`Output set to ${next} — reboot this node for it to take effect.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the output: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'input') {
         /*

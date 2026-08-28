@@ -480,6 +480,92 @@ app.MapPost("/api/devices/{id}/ring",
 });
 
 /*
+ * The node's name, and the last of the provisioning form's settings to
+ * reach the admin GUI.
+ *
+ * Provisioning asks for network, name, roles, speaker and output, because
+ * that is the one moment the board is in your hands and you know which one
+ * it is. Everything but the network belongs here too — a node is named
+ * wrong, or grows a dongle, long after it was set up, and the alternative
+ * was re-provisioning it: clearing the Wi-Fi credentials and typing the
+ * password again to fix a typo in a label.
+ *
+ * Immediate, unlike its neighbours. The node rebuilds its announce, so
+ * every list on the network follows within a few seconds.
+ */
+app.MapPost("/api/devices/{id}/name",
+    async (string id, NameRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    // Trimmed, because a name with leading spaces sorts oddly in every list
+    // that shows it and looks like nothing at all in most of them.
+    var name = (request.Name ?? string.Empty).Trim();
+
+    // 31 characters plus a terminator: the width of the announce field, so
+    // a longer name is one no other device could display anyway. Checked
+    // here as well as on the node so the operator gets the limit rather
+    // than a bare 400 relayed from firmware.
+    if (name.Length > 31)
+    {
+        return Results.BadRequest(new
+        {
+            error = "name must be 31 characters or fewer; it travels on the "
+                  + "discovery announce, which is that wide",
+        });
+    }
+
+    var ok = await commands.SetNameAsync(device, name, cancellationToken);
+    return ok
+        ? Results.Ok(new
+        {
+            status = "stored",
+            name,
+            appliesAt = "now",
+            note = name.Length == 0 ? "cleared; the node falls back to its default name" : null,
+        })
+        : Results.StatusCode(502);
+});
+
+/*
+ * How audio leaves the board. Provisioning asked; nothing else could,
+ * until now.
+ *
+ * Worth having separately from the roles button beside it, because this is
+ * the setting that makes a silent speaker: a node set to usb with no dongle
+ * plugged in receives, buffers and plays nothing while every other counter
+ * on the page looks healthy. /status reports outputReady for exactly that
+ * case, and this is how the answer gets fixed once it is spotted.
+ */
+app.MapPost("/api/devices/{id}/output",
+    async (string id, OutputRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var output = request.Output?.Trim().ToLowerInvariant();
+    if (output is not ("i2s" or "usb"))
+    {
+        return Results.BadRequest(new
+        {
+            error = "output must be \"i2s\" or \"usb\"; it applies at the node's next reboot",
+        });
+    }
+
+    var ok = await commands.SetOutputAsync(device, output, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", output, appliesAt = "reboot" })
+        : Results.StatusCode(502);
+});
+
+/*
  * What a Producer captures from: a line-level ADC, or a microphone.
  *
  * One box, two jobs, never at once — a measurement microphone at the
@@ -1542,6 +1628,12 @@ internal sealed record RingRequest(int? RingMs);
 /// <c>inputStage</c>, because <c>input</c> was already the live ADC levels.
 /// </summary>
 internal sealed record InputRequest(string? Input);
+
+/// <summary>The node's name. Empty restores its MAC-derived default.</summary>
+internal sealed record NameRequest(string? Name);
+
+/// <summary>"i2s" or "usb" — which output stage the node brings up.</summary>
+internal sealed record OutputRequest(string? Output);
 
 internal sealed record CastPointRequest(string? Name, IReadOnlyList<string>? Destinations);
 
