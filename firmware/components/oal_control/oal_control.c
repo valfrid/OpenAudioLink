@@ -1467,7 +1467,11 @@ static esp_err_t ota_handler(httpd_req_t *req)
 
 esp_err_t oal_control_start(const oal_control_config_t *config)
 {
-    if (config == NULL || config->id == NULL || config->name == NULL
+    /* `name` is an array now, not a pointer, so the old NULL test against it
+     * could never fire — which the compiler says out loud under -Werror=address.
+     * Empty is the failure that actually matters: a node announcing a blank
+     * name is one no list can show. */
+    if (config == NULL || config->id == NULL || config->name[0] == '\0'
         || config->roles == OAL_ROLE_NONE
         || config->hardware_profile == NULL || config->firmware_version == NULL) {
         return ESP_ERR_INVALID_ARG;
