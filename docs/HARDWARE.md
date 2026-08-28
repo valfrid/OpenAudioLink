@@ -949,6 +949,9 @@ route is better supported and does not consume the port.
 
 ## Accessory: a second power feed, for a node whose USB port is taken
 
+Status: in hand and fitted to the USB-audio Consumer
+(`hardware-photos/09-consumer-usb-with-pd-trigger.jpg`).
+
 A node hosting a USB peripheral — the CX31993 audio dongle, or the Ethernet
 adapter above — has no USB-C socket left to be powered through, and it must
 also source VBUS for the thing it is hosting. Power therefore arrives on the
@@ -978,6 +981,16 @@ twenty — into the board, and through it into whatever USB peripheral is
 being hosted. Unshorted is 5 V, which is the only setting this project
 wants.
 
+**On the board actually bought, the selection pads carry no voltage
+silkscreen at all** — they are three pads marked `1`, `2`, `3` beside the
+`+` and `−` output pair, and nothing on the board says which is which
+(`hardware-photos/08-usb-c-pd-trigger.jpg`). That makes the instruction
+above easier rather than harder to follow: leave all three open and the
+question never arises. It also means there is no way to verify a guess from
+the board itself, so if a higher voltage is ever wanted, **measure the
+output on a meter before connecting anything to it** — a mislabelled guess
+costs the XIAO, the dongle, and whatever the dongle is plugged into.
+
 The higher voltages are genuinely useful, just not here: they are for
 feeding a buck converter, or a class-D amplifier that wants more headroom
 than 5 V allows. Neither is part of a node today. If one ever is, the
@@ -998,6 +1011,19 @@ plays — so the 5 V pad and VBUS are connected on that board. It is still the
 first thing to measure if a peripheral enumerates and then browns out under
 load, because a diode in that path would pass a light load and sag under a
 heavy one.
+
+### What the assembled node looks like
+
+Four things in a line, and no enclosure yet: the charger cable into the
+trigger board's USB-C socket, the trigger board's `+` and `−` to the XIAO's
+5 V and GND pads, the CX31993 dongle in the XIAO's own USB-C port, and the
+external antenna on its u.FL lead. The dongle's 3.5 mm output goes on to
+whatever is being driven.
+
+Note which socket is which, because they look alike and only one of them is
+an input: **the charger goes to the trigger board, never to the XIAO.** The
+XIAO's port is the one hosting the dongle, and that is the whole reason
+this accessory exists.
 
 ## Reference Analog Source
 

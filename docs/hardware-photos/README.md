@@ -40,9 +40,21 @@ setting exists to correct. See [`../TUNING.md`](../TUNING.md).
 | ![PCM1808 ADC board](06-pcm1808-adc.jpg) | **PCM1808 I²S ADC** with its own 24.576 MHz oscillator, which matters: the converter's measured rate came out at 47 999 Hz, 21 ppm from nominal, and a source that drifts is a problem no buffer solves. Line in on the 3.5 mm jack, I²S out on the header. |
 | ![Assembled producer](07-producer-assembled.jpg) | The turntable Producer, wired and working. XIAO on top, ADC below, antenna, USB power, and the line from the record player going into the jack. |
 
+## Powering a node whose USB port is busy
+
+A Consumer using the USB dongle has a problem the soldered DAC does not:
+its only USB-C socket is occupied by the dongle it is driving, and it has
+to *supply* that dongle rather than draw from it. Power has to arrive
+somewhere else.
+
+| | |
+| --- | --- |
+| ![USB-C PD trigger board](08-usb-c-pd-trigger.jpg) | **A USB-C PD trigger board.** A modern charger applies no voltage at all until the sink identifies itself on the CC pins, so bare wires to a USB-C charger get nothing — where an old USB-A charger would have handed over 5 V without being asked. This presents the right resistors, the charger turns on, and 5 V comes out on `+` and `−`. The pads marked `1`, `2`, `3` select higher voltages over PD. **Leave all three open.** Nothing on the board says which is which, and one of them puts 20 V onto a 5 V pin. |
+| ![Consumer with dongle and trigger board](09-consumer-usb-with-pd-trigger.jpg) | The finished USB-audio Consumer. Charger cable into the trigger board, trigger board's `+`/`−` to the XIAO's 5 V and GND, dongle in the XIAO's own port, antenna on its lead. Two USB-C sockets an inch apart that look identical and are not interchangeable: **the charger goes to the small purple board, never to the XIAO.** |
+
 ## Photograph notes
 
-Resized to 1400 px and stripped of EXIF before committing. The originals
-were phone photographs, which carry GPS coordinates and device identifiers,
-and this repository is public — the same reason no Wi-Fi credential has ever
-been committed to it.
+Resized and stripped of EXIF before committing. The originals were phone
+photographs, which carry GPS coordinates and device identifiers, and this
+repository is public — the same reason no Wi-Fi credential has ever been
+committed to it.
