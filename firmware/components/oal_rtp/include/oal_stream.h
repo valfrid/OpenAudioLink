@@ -113,6 +113,22 @@ typedef struct {
     uint32_t payload_errors;   /* samples differing from the pattern */
     uint32_t foreign_packets;  /* not our RTP profile */
     uint32_t last_ssrc;
+
+    /*
+     * One past the newest sample given to the playout, in the sender's RTP
+     * timestamp units, and whether anything has been given yet.
+     *
+     * Exists so a listener's question -- "are these two speakers together"
+     * -- has a number rather than an inference. Buffer depth was the proxy
+     * and it is a poor one: it mixes what has *arrived* with what is
+     * *playing*, so it swings with every burst while the sound does not
+     * move at all.
+     *
+     * newest_timestamp minus the ring depth is the position being played,
+     * on a timeline both nodes share because the sender defines it.
+     */
+    uint32_t newest_timestamp;
+    bool     have_newest;
     uint64_t last_packet_us;
 } oal_stream_consumer_state_t;
 

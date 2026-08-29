@@ -139,6 +139,25 @@ static void consumer_task(void *arg)
                 uint32_t frames = oal_rtp_frames_in((size_t)len);
                 if (frames > 0) {
                     sink(packet + OAL_RTP_HEADER_BYTES, frames);
+                    /*
+                     * One past the newest sample handed to the playout, on
+                     * the sender's timeline.
+                     *
+                     * This is what makes an offset between two speakers
+                     * measurable rather than inferred. Subtract the ring's
+                     * depth from it and the answer is the RTP timestamp
+                     * each node is *playing* -- and because RTP timestamps
+                     * come from the one sender, two nodes can be compared
+                     * directly without their clocks agreeing about
+                     * anything.
+                     *
+                     * Recorded after the sink, so it counts only audio the
+                     * buffer actually accepted. A packet dropped for a full
+                     * ring never reaches the speaker and must not move this
+                     * along, or the position would run ahead of the sound.
+                     */
+                    s_state.newest_timestamp = header.timestamp + frames;
+                    s_state.have_newest = true;
                 }
             }
         }

@@ -942,6 +942,25 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * used to become a permanent offset. */
                        "\"primedFrames\":%u,\"primeDiscardedFrames\":%u,"
                        "\"steerFrames\":%u,"
+                       /*
+                        * The sample this speaker is playing, on the
+                        * sender's timeline, and whether it means anything
+                        * yet.
+                        *
+                        * The one figure that answers "are these two
+                        * together" without inference. Depth was the proxy
+                        * and it conflates arrival with playback: a burst
+                        * raises it without the sound moving, which is why
+                        * it swings a hundred milliseconds in seconds while
+                        * two speakers stay in step.
+                        *
+                        * Comparable across nodes with no clock agreement,
+                        * because RTP timestamps come from the single
+                        * sender. It wraps at 2^32, about a day at 48 kHz;
+                        * the reader subtracts in unsigned arithmetic and
+                        * the wrap takes care of itself.
+                        */
+                       "\"playingTimestamp\":%" PRIu32 ",\"playingKnown\":%s,"
                        /* The low- and high-water marks of the last trace
                         * window. bufferedFrames is one instant, and a poll
                         * every fifteen seconds samples one moment in three
@@ -978,6 +997,11 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.primed_frames,
                        (unsigned)audio.prime_discarded_frames,
                        (unsigned)audio.steer_frames,
+                       /* Newest accepted, less what is still waiting. Both
+                        * read within microseconds of each other here, which
+                        * is far inside one frame. */
+                       c.newest_timestamp - (uint32_t)audio.buffered_frames,
+                       (c.have_newest && audio.playing) ? "true" : "false",
                        (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
                        (unsigned long long)audio.packets_submitted,
                        (unsigned)audio.late_packets, (unsigned)audio.tight_packets,

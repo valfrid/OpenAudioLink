@@ -964,23 +964,74 @@
       const panel = document.getElementById('sync-panel');
       if (consumers.length < 2) { panel.hidden = true; return; }
 
+      /*
+       * Each answer is stamped with the moment it landed here.
+       *
+       * The playing position is a point on a moving timeline, so comparing
+       * two nodes read at different instants would count the gap between
+       * the reads as an offset. The requests go out together and each
+       * arrival is noted, so the readings can be carried to one common
+       * moment below. What is left is response-travel asymmetry across a
+       * LAN -- a millisecond or two, well under anything audible.
+       */
       const rows = await Promise.all(consumers.map(async (d) => {
         try {
           const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/stream`,
             { cache: 'no-store' });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const s = await r.json();
-          return { device: d, playout: s.playout ?? null };
+          return { device: d, playout: s.playout ?? null, at: performance.now() };
         } catch {
-          return { device: d, playout: null };
+          return { device: d, playout: null, at: performance.now() };
         }
       }));
 
       const playing = rows.filter(r => r.playout && r.playout.playing);
       if (playing.length < 2) { panel.hidden = true; return; }
       panel.hidden = false;
+      const now = performance.now();
 
       const ms = frames => Math.round((frames ?? 0) / 48);
+
+      /*
+       * The real offset, at last, instead of a proxy for it.
+       *
+       * Each node reports the RTP timestamp it is playing. Those come from
+       * one sender, so they are directly comparable without the nodes'
+       * clocks agreeing about anything -- and unlike buffer depth they do
+       * not move when a burst arrives, because a burst changes what has
+       * been received and not what is being played.
+       *
+       * Carried to a common instant first: a node read 30 ms earlier has
+       * played 30 ms less since, and counting that as an offset is exactly
+       * the mistake the depth figure was already making.
+       */
+      const aligned = playing
+        .filter(r => r.playout.playingKnown)
+        .map(r => {
+          const since = (now - r.at) / 1000;           // seconds
+          // Unsigned 32-bit, so the timestamp wraps roughly once a day.
+          // Shifting into signed space keeps a comparison across the wrap
+          // from reading as half a day of offset.
+          return { row: r, pos: (r.playout.playingTimestamp >>> 0) / 48 + since * 1000 };
+        });
+
+      let offset = null;
+      if (aligned.length >= 2) {
+        const wrapped = (a, b) => {
+          const d = ((a - b) % 89478485 + 89478485 + 44739242) % 89478485 - 44739242;
+          return d;
+        };
+        let worst = 0;
+        for (let i = 0; i < aligned.length; i++) {
+          for (let j = i + 1; j < aligned.length; j++) {
+            const d = Math.abs(wrapped(aligned[i].pos, aligned[j].pos));
+            if (d > worst) worst = d;
+          }
+        }
+        offset = Math.round(worst);
+      }
+
       const depths = playing.map(r => ms(r.playout.bufferedFrames));
       const spread = Math.max(...depths) - Math.min(...depths);
 
@@ -989,9 +1040,26 @@
        * read as one source; by 20 the image smears; past 40 it is an
        * echo and nobody needs a page to tell them.
        */
-      const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
-      document.getElementById('sync-spread').innerHTML =
-        `<span class="rssi ${cls}">${spread} ms of buffer between them</span>`;
+      /*
+       * The headline is the offset when it can be had, and says so. Twenty
+       * milliseconds is the line: below it two speakers read as one source
+       * in a room, and by forty it is an echo.
+       *
+       * Falls back to the buffer spread only on firmware too old to report
+       * a playing position -- labelled differently, because it answers a
+       * different question and reading one as the other cost an afternoon.
+       */
+      if (offset !== null) {
+        const ocls = offset <= 20 ? 'good' : offset <= 40 ? 'fair' : 'poor';
+        document.getElementById('sync-spread').innerHTML =
+          `<span class="rssi ${ocls}">${offset} ms apart</span>` +
+          `<span class="muted"> · ${spread} ms of buffer between them</span>`;
+      } else {
+        const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
+        document.getElementById('sync-spread').innerHTML =
+          `<span class="rssi ${cls}">${spread} ms of buffer between them</span>` +
+          '<span class="muted"> · update the nodes to measure the real offset</span>';
+      }
 
       document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {
         const p = r.playout;

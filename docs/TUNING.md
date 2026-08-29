@@ -115,6 +115,21 @@ disturbing anyone's alignment. Not done.)*
 
 ## Two speakers that will not stay together
 
+**Read the "N ms apart" figure in the Speaker sync heading. Under 20 ms is
+together; past 40 is an echo.** That number is the real offset, measured
+rather than inferred, and it is the only figure on the page you have to
+read to answer "are my speakers in sync".
+
+Each node reports the RTP timestamp it is currently playing. Those come
+from the one sender, so two nodes can be compared directly without their
+clocks agreeing about anything, and the Hub carries both readings to a
+common instant before subtracting. Unlike buffer depth it does not move
+when a burst arrives, because a burst changes what has been *received*,
+not what is being *played*.
+
+Everything below is why the other numbers on that panel are not that, and
+can be skipped unless one of them looks alarming.
+
 **Buffer depth is not the offset.** An earlier version of this section said
 it was, and that was wrong in a way worth spelling out, because the Speaker
 sync panel is easy to misread.
