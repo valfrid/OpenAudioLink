@@ -355,6 +355,7 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
      * listening, which is the only reason it is not a bug report.
      */
     s_converge_below -= s_converge_below % OAL_RTP_CHANNELS;
+    s_state.steer_frames = (uint32_t)(s_converge_below / OAL_RTP_CHANNELS);
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
 }
@@ -673,6 +674,8 @@ static size_t take_chunk(int32_t *chunk)
             }
             s_primed = true;
             s_starved_chunks = 0;
+            s_state.primed_frames = (uint32_t)(s_available / OAL_RTP_CHANNELS);
+            s_state.prime_discarded_frames = (uint32_t)(excess / OAL_RTP_CHANNELS);
             /*
              * Warn rather than inform once this has happened before. A
              * first prime is the stream starting; a later one means the

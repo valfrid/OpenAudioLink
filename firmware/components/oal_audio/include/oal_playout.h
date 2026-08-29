@@ -100,6 +100,24 @@ typedef struct {
     uint32_t silence_frames;  /* inserted because the ring ran dry */
     uint32_t dropped_frames;  /* discarded because the ring was full */
     uint32_t underruns;       /* times it ran dry, however long each lasted */
+    /*
+     * Where this node started, and how much burst it threw away doing it.
+     *
+     * Two speakers are in step when their buffers hold the same amount --
+     * nothing here says when a sample is due, so equal depth is the whole
+     * of it. `steer_frames` is the line both nodes aim at and is identical
+     * on nodes with the same ring and delay, so a node sitting far from it
+     * is the one to look at.
+     *
+     * `prime_discarded_frames` is the overshoot dropped at the last prime.
+     * It used to be silently kept, and whatever a burst happened to
+     * deliver became that node's playback phase for the session. Reported
+     * because a large value on one node and a small one on the other is
+     * exactly the fault, and it is invisible from every other counter.
+     */
+    uint32_t primed_frames;           /* depth at the last prime */
+    uint32_t prime_discarded_frames;  /* overshoot dropped at that prime */
+    uint32_t steer_frames;            /* the line the fill is steered to */
     uint32_t trimmed_frames;  /* single frames dropped to walk the fill back down */
     uint32_t padded_frames;   /* single frames repeated to walk it back up */
     uint32_t write_errors;    /* the I²S driver refused a write */

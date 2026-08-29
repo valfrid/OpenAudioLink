@@ -113,6 +113,44 @@ node, or the offsets between them move too.
 and a per-node `alignMs` would let a group's depth be raised without
 disturbing anyone's alignment. Not done.)*
 
+## Two speakers that will not stay together
+
+**Look at the Speaker sync panel first.** It sits above the device list
+whenever two or more Consumers are playing, and it does the one
+subtraction that matters.
+
+The offset between two Consumers **is** the difference in their buffer
+depths. Nothing in this design says when a given sample is due — no
+presentation timestamp, no shared clock — so each node plays as fast as
+its own DAC asks, from whatever it holds. Same packets, same nominal rate:
+whichever holds more is playing older audio, by exactly that much.
+
+So the panel shows each speaker's depth, the line it is steered to, and
+the spread between them. Under about 10 ms two speakers read as one
+source; by 20 the image smears; past 40 it is an echo.
+
+| Column | What it tells you |
+| --- | --- |
+| Buffered | the depth, and its distance from the steering line |
+| Steering to | the same number on every node with the same ring and delay — a node far from it is the one that moved |
+| Primed at | where it started. Two nodes should agree here |
+| Burst dropped | overshoot discarded at prime. Before 0.33.0 this was silently kept, and whatever a burst delivered became that node's offset for the session |
+| Trims / pads | how much correcting it has needed |
+
+**A large spread that will not close** used to be the normal case and is
+now the interesting one. Before firmware 0.33.0 there was no correcting
+force at all between `pad_below` and `trim_above` — 150 ms on a 400 ms
+ring — so any offset acquired inside that band was permanent, and the only
+cure was restarting the stream. Since 0.33.0 both nodes prime at the same
+line and are steered back to it at about 0.5 ms a second, so **give a
+disagreement a few minutes before restarting anything.**
+
+If the spread stays wide while both nodes report depths close to their
+steering line, then depth is not the whole story on your network and the
+packets are reaching the two nodes at systematically different times.
+That is a different fault and worth saying so, because everything above
+assumes it is not happening.
+
 ## Reading the counters
 
 `curl http://<node>:41001/stream`, or the switchboard's stream table.

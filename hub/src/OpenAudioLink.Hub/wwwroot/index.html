@@ -132,6 +132,30 @@
     <span id="hub-update-note" class="empty"></span>
   </p>
 
+  <!--
+    Speaker sync.
+
+    The question two speakers in one room raise is not "what is this node
+    doing" but "do these two agree", and answering it meant reading a
+    serial log on each node at once. The offset between two consumers *is*
+    the difference in their buffer depths -- nothing in the design says
+    when a sample is due -- so the subtraction below is the whole
+    diagnosis, and the page can do it.
+  -->
+  <section id="sync-panel" hidden>
+    <h2>Speaker sync — <span id="sync-spread"></span></h2>
+    <table id="sync-table">
+      <thead>
+        <tr>
+          <th>Speaker</th><th>Buffered</th><th>Steering to</th>
+          <th>Primed at</th><th>Burst dropped</th><th>Trims / pads</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted" id="sync-note"></p>
+  </section>
+
   <h2>Devices</h2>
   <table id="devices" hidden>
     <thead>
@@ -876,6 +900,98 @@
       }));
     }
 
+    /*
+     * Every consumer's buffer depth, side by side, and the spread between
+     * them.
+     *
+     * Polls the consumers rather than only the expanded rows, because the
+     * whole point is not having to open two panels and hold two numbers in
+     * your head. Consumers only: a producer has no playout to compare, and
+     * a node that is offline has nothing to say.
+     *
+     * Hidden until there are two of them. One speaker is always perfectly
+     * in sync with itself, and a panel that says so is noise.
+     */
+    async function refreshSync() {
+      const consumers = (lastDevices ?? []).filter(d =>
+        d.online && (d.roles ?? []).includes('consumer')
+        && d.hardwareProfile !== 'windows-hub');
+      const panel = document.getElementById('sync-panel');
+      if (consumers.length < 2) { panel.hidden = true; return; }
+
+      const rows = await Promise.all(consumers.map(async (d) => {
+        try {
+          const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/stream`,
+            { cache: 'no-store' });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const s = await r.json();
+          return { device: d, playout: s.playout ?? null };
+        } catch {
+          return { device: d, playout: null };
+        }
+      }));
+
+      const playing = rows.filter(r => r.playout && r.playout.playing);
+      if (playing.length < 2) { panel.hidden = true; return; }
+      panel.hidden = false;
+
+      const ms = frames => Math.round((frames ?? 0) / 48);
+      const depths = playing.map(r => ms(r.playout.bufferedFrames));
+      const spread = Math.max(...depths) - Math.min(...depths);
+
+      /*
+       * Thresholds by ear, not by theory. Under about 10 ms two speakers
+       * read as one source; by 20 the image smears; past 40 it is an
+       * echo and nobody needs a page to tell them.
+       */
+      const cls = spread <= 10 ? 'good' : spread <= 25 ? 'fair' : 'poor';
+      document.getElementById('sync-spread').innerHTML =
+        `<span class="rssi ${cls}">${spread} ms apart</span>`;
+
+      document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {
+        const p = r.playout;
+        if (!p) {
+          return `<tr><td>${esc(r.device.name)}</td>` +
+            `<td colspan="5"><span class="rssi poor">no answer</span></td></tr>`;
+        }
+        if (!p.playing) {
+          return `<tr><td>${esc(r.device.name)}</td>` +
+            `<td colspan="5" class="muted">not playing</td></tr>`;
+        }
+        const depth = ms(p.bufferedFrames);
+        const steer = ms(p.steerFrames);
+        // Distance from the line this node is steered to, which is the
+        // same number on every node with the same ring and delay. A node
+        // far from it is the one that moved.
+        const off = steer ? depth - steer : null;
+        const offText = off === null ? '—'
+          : `${off > 0 ? '+' : ''}${off} ms`;
+        const offCls = off === null ? 'muted'
+          : Math.abs(off) <= 15 ? 'rssi good' : 'rssi fair';
+        return `<tr><td>${esc(r.device.name)}</td>` +
+          `<td><strong>${depth} ms</strong> ` +
+          `<span class="${offCls}">${offText}</span></td>` +
+          `<td>${steer ? steer + ' ms' : '—'}</td>` +
+          `<td>${ms(p.primedFrames)} ms</td>` +
+          `<td>${ms(p.primeDiscardedFrames)} ms</td>` +
+          `<td class="muted">${(p.trimmedFrames ?? 0).toLocaleString()} / ` +
+          `${(p.paddedFrames ?? 0).toLocaleString()}</td></tr>`;
+      }).join('');
+
+      /*
+       * Say what the number means, because a spread is only half the
+       * story: equal depth is equal delay as far as the packets reach
+       * both nodes together, which on one access point is a few
+       * milliseconds and was never the term that mattered.
+       */
+      document.getElementById('sync-note').textContent = spread <= 10
+        ? 'These are together. Depth is what sets the offset — same packets, '
+          + 'same rate, so whichever holds more is playing older audio.'
+        : 'Buffer depth is the offset. A node far from its steering line is '
+          + 'the one that moved; it is padded back at about 0.5 ms a second, '
+          + 'so give it a few minutes before restarting the stream.';
+    }
+
     function deviceStreamHtml(stream) {
       if (!stream || (!stream.role)) {
         return '<span class="muted">not streaming</span>';
@@ -1038,6 +1154,9 @@
 
       // Only the open ones, and only after the table exists to be filled.
       refreshDeviceStreams();
+      // Every consumer, open or not — the comparison is the point, and
+      // needing to expand two rows to make it is what this replaces.
+      refreshSync();
 
       const target = document.getElementById('tone-target');
       const selected = [...target.selectedOptions].map(o => o.value);
