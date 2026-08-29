@@ -208,6 +208,10 @@ static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
  */
 static size_t s_trim_above;
 static size_t s_pad_below;
+/* The steering line: pad slowly up to here, trim down above s_trim_above.
+ * Two nodes that share it are at the same depth, which is what being in
+ * step actually requires. See apply_target(). */
+static size_t s_converge_below;
 
 /** The rate the target was computed against, so it can be recomputed. */
 static uint32_t s_rate;
@@ -306,6 +310,52 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
      * worth counting before it becomes audible.
      */
     s_tight_below = s_target_samples / 4;
+
+    /*
+     * Where the fill is *steered* to, which is not the same as the target
+     * and is the thing that keeps two speakers together.
+     *
+     * The offset between two consumers is the difference in their buffer
+     * depths -- same packets, same DAC rate, so whichever holds more is
+     * playing older audio. Nothing here defines when a sample is due, so
+     * equal depth is the only thing that puts them in step.
+     *
+     * Before this there was no force at all between `pad_below` and
+     * `trim_above`: a 150 ms band, on a 400 ms ring, in which any depth was
+     * a resting place. Two nodes primed at different depths stayed apart
+     * until both happened to drift up to the trim line, which is the only
+     * value they shared -- tens of minutes at the natural surplus of about
+     * one frame a second. Audible the whole time, and cured by restarting
+     * the stream, which is what made it look like a startup fault.
+     *
+     * So the trim line becomes a setpoint approached from below as well.
+     * It, not the target, because riding high is worth keeping: measured on
+     * two nodes losing the same 2 000 ppm, the one whose ring rode high
+     * underran once every 380 seconds against every 10.5 for the one
+     * sitting low.
+     *
+     * A narrow band below it so pad and trim do not alternate into a
+     * warble. A sixteenth of the target is 12 ms at the usual 200 -- close
+     * enough that two speakers inside it are together, wide enough that the
+     * loop settles instead of dithering.
+     */
+    s_converge_below = s_trim_above - s_target_samples / 16;
+    if (s_converge_below < s_pad_below) {
+        s_converge_below = s_pad_below;
+    }
+    /*
+     * Down to a whole frame, and this is not defensive tidiness.
+     *
+     * Priming discards `available - converge_below` samples by advancing
+     * the read pointer. Everything else here is provably even, but this
+     * one is not: with the target clamped to the capacity ceiling the
+     * sixteenth truncates odd on odd ring sizes -- ring 51 gives 4055 --
+     * and an odd discard leaves the pointer mid-frame, playing left into
+     * right for the rest of the session. Found by the host test, not by
+     * listening, which is the only reason it is not a bug report.
+     */
+    s_converge_below -= s_converge_below % OAL_RTP_CHANNELS;
+
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
 }
 static uint32_t s_pad_phase;
@@ -585,7 +635,42 @@ static size_t take_chunk(int32_t *chunk)
          * them immediately would empty the ring again at once and click
          * through the whole first second.
          */
-        if (s_available >= s_target_samples) {
+        if (s_available >= s_converge_below) {
+            /*
+             * Start at exactly the steering line, never at whatever
+             * happened to have arrived.
+             *
+             * Two things here, and they fix the same fault. The line
+             * rather than the target, because the fill ends up there
+             * anyway -- the trim is what it settles against -- so priming
+             * lower only means minutes of climbing to a place it was
+             * always going. Steady-state latency is unchanged; what goes
+             * away is the journey.
+             *
+             * This test runs once per 5 ms chunk and packets arrive in
+             * bursts, so the ring can cross the target and keep going
+             * before the next look -- most of all at startup, which is the
+             * burstiest moment there is. Whatever depth that left became
+             * the node's playback phase for the whole session, and two
+             * nodes priming on different bursts were audibly apart with
+             * nothing to bring them back.
+             *
+             * Dropping the overshoot is the same operation the trim does,
+             * done once while the output is still silent, so it costs
+             * nothing to hear. What it buys is that both nodes start from
+             * the same number rather than from their own luck.
+             *
+             * The limit of this: equal depth is equal delay only as far as
+             * the packets reach both nodes together. On one access point
+             * that is a few milliseconds. It was never the term that
+             * mattered -- the prime overshoot was tens.
+             */
+            size_t excess = s_available - s_converge_below;
+            if (excess > 0) {
+                s_read = (s_read + excess) % s_capacity;
+                s_available -= excess;
+                s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
+            }
             s_primed = true;
             s_starved_chunks = 0;
             /*
@@ -595,12 +680,14 @@ static size_t take_chunk(int32_t *chunk)
              * heard. Logging both the same way hid exactly that.
              */
             if (s_state.underruns == 0) {
-                ESP_LOGI(TAG, "primed with %u frames; playing",
-                         (unsigned)(s_available / OAL_RTP_CHANNELS));
-            } else {
-                ESP_LOGW(TAG, "re-primed with %u frames after underrun %u",
+                ESP_LOGI(TAG, "primed at %u frames; playing (discarded %u of overshoot)",
                          (unsigned)(s_available / OAL_RTP_CHANNELS),
-                         (unsigned)s_state.underruns);
+                         (unsigned)(excess / OAL_RTP_CHANNELS));
+            } else {
+                ESP_LOGW(TAG, "re-primed at %u frames after underrun %u (discarded %u)",
+                         (unsigned)(s_available / OAL_RTP_CHANNELS),
+                         (unsigned)s_state.underruns,
+                         (unsigned)(excess / OAL_RTP_CHANNELS));
             }
         } else {
             xSemaphoreGive(s_lock);
@@ -731,9 +818,36 @@ static size_t take_chunk(int32_t *chunk)
      * One frame per four chunks is 0.10 %, under two cents, which is not,
      * and is fifty times faster than the natural surplus.
      */
-    if (s_available < s_pad_below) {
-        bool urgent = s_available < s_target_samples / 2;
-        if (urgent || (s_pad_phase++ & 3) == 0) {
+    if (s_available < s_converge_below) {
+        /*
+         * Three speeds now, not two.
+         *
+         * Urgent and short are unchanged and are about not running dry.
+         * The third is about two speakers agreeing: it acts anywhere below
+         * the steering line, so a node that primed shallow or was pushed
+         * down by a disturbance climbs back to the same depth as its
+         * partner instead of sitting wherever it landed.
+         *
+         * Half the rate the short tier uses: one frame per eight 5 ms
+         * chunks is 25 a second, 0.05 %, about one cent -- half of what
+         * the tier above already argues is inaudible. That is 0.52 ms of
+         * depth per second, so a 100 ms disagreement closes in a little
+         * over three minutes, against the tens of minutes the natural
+         * surplus of roughly one frame a second took.
+         *
+         * It should rarely have far to travel, because priming now starts
+         * at this same line. This tier is what recovers from a disturbance
+         * afterwards, not what does the initial climb.
+         */
+        unsigned mask;
+        if (s_available < s_target_samples / 2) {
+            mask = 0;   /* every chunk: 0.42 %, seven cents, nearly empty */
+        } else if (s_available < s_pad_below) {
+            mask = 3;   /* every fourth: 0.10 %, under two cents */
+        } else {
+            mask = 7;   /* every eighth: 0.05 %, one cent -- the steering tier */
+        }
+        if ((s_pad_phase++ & mask) == 0) {
             s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
             s_available += OAL_RTP_CHANNELS;
             s_state.padded_frames++;
