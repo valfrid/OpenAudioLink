@@ -2292,11 +2292,30 @@
       const access = [...new Set(involved.map(where))];
 
       // Empty when the Hub is the source. That is not a detail: a Hub
-      // stream reaches each node over the wire and then one radio hop, so
-      // two nodes on two access points share nothing and never contend.
+      // stream reaches each node over the wire and then one radio hop.
       // Node to node, the same two access points have to reach each other,
       // and that leg is in the audio path.
       const fromNode = !!document.getElementById('link-producer').value;
+
+      /*
+       * Different access points is not the same question as different air.
+       *
+       * This said two consumers on two access points "do not share a radio
+       * or contend for its airtime", which is true of the radios and false
+       * of the medium. 802.11 is CSMA/CA: two access points on one channel
+       * defer to each other's frames, so the airtime is shared whoever is
+       * transmitting. The note printed the channel and never compared it,
+       * which made it read as an all-clear on exactly the question being
+       * asked -- measured in a house where both access points sit on
+       * channel 8 and one consumer stalled for 974 ms.
+       *
+       * A mesh makes it worse rather than better: the backhaul is usually
+       * on the same channel too, so a packet to a node behind an extender
+       * crosses that channel twice.
+       */
+      const channels = [...new Set(involved
+        .map(d => d.status.channel).filter(c => c))];
+      const oneChannel = channels.length === 1;
 
       path.hidden = false;
       path.className = 'hint';
@@ -2312,10 +2331,21 @@
           'if it is wired, shared with the stream if it is not. Not comparable ' +
           'with a same-access-point run.';
       } else {
-        path.textContent =
-          `Consumers on different access points (${access.join(', ')}). ` +
-          'The Hub feeds each one over the wire, so they do not share a radio ' +
-          'or contend for its airtime.';
+        if (oneChannel) {
+          path.className = 'hint rssi fair';
+          path.textContent =
+            `Consumers on different access points (${access.join(', ')}) — but ` +
+            `both on channel ${channels[0]}, so they share the air even though ` +
+            'they do not share a radio. Two access points on one channel defer ' +
+            'to each other, and a mesh backhaul on that channel crosses it ' +
+            'twice. Different channels, or a wire, is what separates them.';
+        } else {
+          path.textContent =
+            `Consumers on different access points (${access.join(', ')}), on ` +
+            `channels ${channels.join(' and ')}. The Hub feeds each over the ` +
+            'wire and they are on separate air, so neither the radios nor the ' +
+            'airtime are shared.';
+        }
       }
     }
 

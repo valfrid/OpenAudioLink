@@ -157,6 +157,32 @@ and every spent frame is a phase shift, the cure moved speakers apart faster
 than anything moved them back. One node logged 100 792 trims against 34 287
 pads in three hours. Reverted in 0.35.0; keep the band wide.
 
+## Before tuning anything, rule out the hardware and the air
+
+Two faults have masqueraded as buffer problems, and both wasted more time
+than the tuning did.
+
+**A failing power adapter on one node.** It presented as that node's buffer
+swinging wildly while its partner sat still, and as a lopsided trim count —
+one node working many times harder than an identical one beside it. The
+supply feeds the Wi-Fi radio in transmit bursts, so a sagging rail becomes
+a radio problem, and a radio problem becomes a buffer problem two layers
+later. **Swap the adapter before touching `ringMs` or `delayMs`.**
+
+**Two access points on one channel.** Different access points are not
+different air. 802.11 is CSMA/CA, so two access points on the same channel
+defer to each other's frames and share the medium whoever is transmitting;
+a mesh backhaul on that channel crosses it twice. A node behind an extender
+therefore stalls far worse than one on the root, with identical hardware
+and firmware.
+
+**The tell for both is asymmetry.** Two identical nodes running the same
+image on the same network should show similar counters. When one shows four
+times the stalls, or twenty times the trims, that difference is not a
+property of the design — it is telling you the two nodes are not in the same
+situation. Look for what differs physically before changing a setting that
+applies to both.
+
 ## Reading the counters
 
 `curl http://<node>:41001/stream`, or the switchboard's stream table.
