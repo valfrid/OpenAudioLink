@@ -931,6 +931,15 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        "\"silenceFrames\":%u,\"droppedFrames\":%u,"
                        "\"underruns\":%u,\"trimmedFrames\":%u,"
                        "\"paddedFrames\":%u,"
+                       /* The three that answer "are these two speakers
+                        * together". Depth is the whole of sync here --
+                        * nothing says when a sample is due -- so two nodes
+                        * agree when their fills match, and steerFrames is
+                        * the line both aim at. primeDiscardedFrames is the
+                        * burst thrown away at the last prime, which is what
+                        * used to become a permanent offset. */
+                       "\"primedFrames\":%u,\"primeDiscardedFrames\":%u,"
+                       "\"steerFrames\":%u,"
                        /* The low- and high-water marks of the last trace
                         * window. bufferedFrames is one instant, and a poll
                         * every fifteen seconds samples one moment in three
