@@ -115,41 +115,47 @@ disturbing anyone's alignment. Not done.)*
 
 ## Two speakers that will not stay together
 
-**Look at the Speaker sync panel first.** It sits above the device list
-whenever two or more Consumers are playing, and it does the one
-subtraction that matters.
+**Buffer depth is not the offset.** An earlier version of this section said
+it was, and that was wrong in a way worth spelling out, because the Speaker
+sync panel is easy to misread.
 
-The offset between two Consumers **is** the difference in their buffer
-depths. Nothing in this design says when a given sample is due — no
-presentation timestamp, no shared clock — so each node plays as fast as
-its own DAC asks, from whatever it holds. Same packets, same nominal rate:
-whichever holds more is playing older audio, by exactly that much.
+Depth is *(newest sample received)* minus *(sample now playing)*. A burst of
+packets raises the first without touching the second, so on a busy channel
+the number swings tens of milliseconds in seconds while nothing audible
+changes at all. Two speakers reading 90 ms apart may be perfectly together.
 
-So the panel shows each speaker's depth, the line it is steered to, and
-the spread between them. Under about 10 ms two speakers read as one
-source; by 20 the image smears; past 40 it is an echo.
+**What actually moves a speaker's playback phase** is short: a padded frame
+(plays one sample slower), a trimmed frame (one faster), a re-prime after an
+underrun, or an overflow discard. Everything else is arrival, not playback.
+
+So read the panel this way:
 
 | Column | What it tells you |
 | --- | --- |
-| Buffered | the depth, and its distance from the steering line |
-| Steering to | the same number on every node with the same ring and delay — a node far from it is the one that moved |
-| Primed at | where it started. Two nodes should agree here |
-| Burst dropped | overshoot discarded at prime. Before 0.33.0 this was silently kept, and whatever a burst delivered became that node's offset for the session |
-| Trims / pads | how much correcting it has needed |
+| Buffered | how much audio is waiting. Swings with the network; not the offset |
+| Settles at | the trim line, where the fill comes to rest. Identical on nodes sharing a ring and delay |
+| Primed at | where each node started. **These should match** — if they do not, priming is not landing them together |
+| Burst dropped | overshoot discarded at prime, so a burst cannot become a permanent offset |
+| Trims / pads | **the column that matters.** Each one is a phase shift. Thousands per hour is a loop fighting the network, and it walks speakers apart |
 
-**A large spread that will not close** used to be the normal case and is
-now the interesting one. Before firmware 0.33.0 there was no correcting
-force at all between `pad_below` and `trim_above` — 150 ms on a 400 ms
-ring — so any offset acquired inside that band was permanent, and the only
-cure was restarting the stream. Since 0.33.0 both nodes prime at the same
-line and are steered back to it at about 0.5 ms a second, so **give a
-disagreement a few minutes before restarting anything.**
+**A speaker sitting at the top of its ring is the real fault to look for.**
+The ring then discards its oldest audio to make room, and a discard is a
+phase jump. Raise `ringMs` on that node: the trim line does not move, so
+this buys burst headroom without adding any latency. With a 400 ms ring the
+trim line sits at 300 and leaves only 100 ms of headroom, and stalls of
+287 ms have been measured on this network.
 
-If the spread stays wide while both nodes report depths close to their
-steering line, then depth is not the whole story on your network and the
-packets are reaching the two nodes at systematically different times.
-That is a different fault and worth saying so, because everything above
-assumes it is not happening.
+**What was tried and reverted, so it is not tried again.** Firmware 0.34.0
+padded the fill up toward a line 13 ms below the trim, reasoning that a
+shared setpoint would hold two speakers together. It made two speakers
+markedly worse and they never settled. The gap between the pad line and the
+trim line is not a missing correction — it is how much jitter the buffer
+absorbs without the servo touching the audio, and the fill swings about
+35 ms either side of its mark on working hardware. A 13 ms band put every
+ordinary burst across a threshold, and since every crossing spends a frame,
+and every spent frame is a phase shift, the cure moved speakers apart faster
+than anything moved them back. One node logged 100 792 trims against 34 287
+pads in three hours. Reverted in 0.35.0; keep the band wide.
 
 ## Reading the counters
 

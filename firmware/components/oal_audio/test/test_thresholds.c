@@ -34,7 +34,6 @@ typedef struct {
     size_t target;
     size_t trim_above;
     size_t pad_below;
-    size_t converge_below;
 } thresholds_t;
 
 static thresholds_t compute(unsigned ring_ms, unsigned delay_ms)
@@ -60,13 +59,6 @@ static thresholds_t compute(unsigned ring_ms, unsigned delay_ms)
 
     t.pad_below = t.target * 3 / 4;
 
-    t.converge_below = t.trim_above - t.target / 16;
-    if (t.converge_below < t.pad_below) {
-        t.converge_below = t.pad_below;
-    }
-    /* The sixteenth truncates odd once the target is clamped to the
-     * capacity ceiling; see apply_target(). */
-    t.converge_below -= t.converge_below % OAL_RTP_CHANNELS;
     return t;
 }
 
@@ -92,35 +84,37 @@ int main(void)
             /* Every line has to fit inside the ring, or the buffer is
              * steered at a depth it can never hold. */
             assert(t.trim_above < t.capacity);
-            assert(t.converge_below < t.capacity);
             assert(t.target <= t.capacity);
 
-            /* Steering below the trim line and above the short line: if
-             * these ever cross, pad and trim fight and the fill oscillates
-             * instead of settling -- which two speakers hear as wander. */
-            assert(t.pad_below <= t.converge_below);
-            assert(t.converge_below <= t.trim_above);
-
             /* The pad line stays under the target and the trim line over
-             * it, so an ordinary swing triggers neither. */
+             * it, so an ordinary swing triggers neither.
+             *
+             * The gap between them is the point, not an oversight. It is
+             * how much jitter the buffer absorbs without the servo acting,
+             * and 0.34.0 narrowed it to 13 ms on the theory that a shared
+             * setpoint would hold two speakers together. It did the
+             * opposite: every burst crossed the line, every crossing spent
+             * a frame, and a spent frame is a phase shift. Keep it wide. */
             assert(t.pad_below <= t.target);
             assert(t.trim_above >= t.target);
-
-            /* Priming now waits for converge_below, so a ring that cannot
-             * hold it would never start playing at all. */
-            assert(t.converge_below <= t.capacity);
+            size_t deadband = t.trim_above - t.pad_below;
+            /* Two fifths of the target at the very narrowest, which is a
+             * 50 ms ring with no delay -- there both the target and the
+             * trim line are clamped against capacity and the band closes
+             * to 15 ms. Everywhere else it is half the target. Measured
+             * across the range rather than reasoned: a first draft of this
+             * assertion said half and was simply wrong. */
+            assert(deadband * 5 >= t.target * 2);
 
             /* Whole frames throughout. The trim and pad move the read
              * pointer by exactly one frame, so a threshold on an odd
              * sample would let the pointer sit mid-frame and swap left for
              * right. Every one of these reduces to an even multiple of the
-             * millisecond figure -- except converge_below, which is
-             * rounded down because its sixteenth does not. */
+             * millisecond figure. */
             assert(t.capacity % OAL_RTP_CHANNELS == 0);
             assert(t.target % OAL_RTP_CHANNELS == 0);
             assert(t.trim_above % OAL_RTP_CHANNELS == 0);
             assert(t.pad_below % OAL_RTP_CHANNELS == 0);
-            assert(t.converge_below % OAL_RTP_CHANNELS == 0);
         }
     }
     printf("thresholds hold across %u-%u ms rings and 0-%u ms delay\n",
@@ -133,24 +127,27 @@ int main(void)
      * should have to say so here.
      */
     thresholds_t t = compute(400, 100);
-    printf("  ring 400 / delay 100 -> target %zu ms, pad %zu, steer %zu, trim %zu, cap %zu\n",
-           ms_of(t.target), ms_of(t.pad_below), ms_of(t.converge_below),
-           ms_of(t.trim_above), ms_of(t.capacity));
+    printf("  ring 400 / delay 100 -> target %zu ms, pad %zu, trim %zu, cap %zu\n",
+           ms_of(t.target), ms_of(t.pad_below), ms_of(t.trim_above),
+           ms_of(t.capacity));
     assert(ms_of(t.target) == 200);
     assert(ms_of(t.pad_below) == 150);
     assert(ms_of(t.trim_above) == 300);
-    /* 300 - 200/16 = 287.5, truncating to 287 */
-    assert(ms_of(t.converge_below) == 287);
 
     /*
-     * The band the two speakers settle inside. This is the fault's whole
-     * story: it used to be pad_below..trim_above, 150 ms wide, with no
-     * force anywhere in it, so two nodes could rest 150 ms apart forever.
+     * The quiet band, and the headroom above it.
+     *
+     * 150 ms of quiet band is what absorbs a burst without the servo
+     * touching the audio. The 100 ms above the trim line is what absorbs
+     * one without the ring overflowing, and an overflow discards the
+     * oldest audio -- a phase jump, which two speakers cannot afford.
+     * Stalls of 287 ms have been measured on this network, so a 400 ms
+     * ring is not generous here; raising ringMs buys headroom without
+     * moving either line or the latency.
      */
-    size_t band = ms_of(t.trim_above) - ms_of(t.converge_below);
-    printf("  settling band %zu ms (was %zu ms before steering)\n",
-           band, ms_of(t.trim_above) - ms_of(t.pad_below));
-    assert(band <= 15);
+    printf("  quiet band %zu ms, headroom above the trim line %zu ms\n",
+           ms_of(t.trim_above) - ms_of(t.pad_below),
+           ms_of(t.capacity) - ms_of(t.trim_above));
 
     printf("\nall threshold checks passed\n");
     return 0;

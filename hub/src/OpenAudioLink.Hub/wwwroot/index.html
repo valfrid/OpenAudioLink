@@ -147,7 +147,7 @@
     <table id="sync-table">
       <thead>
         <tr>
-          <th>Speaker</th><th>Buffered</th><th>Steering to</th>
+          <th>Speaker</th><th>Buffered</th><th>Settles at</th>
           <th>Primed at</th><th>Burst dropped</th><th>Trims / pads</th>
         </tr>
       </thead>
@@ -944,9 +944,9 @@
        * read as one source; by 20 the image smears; past 40 it is an
        * echo and nobody needs a page to tell them.
        */
-      const cls = spread <= 10 ? 'good' : spread <= 25 ? 'fair' : 'poor';
+      const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
       document.getElementById('sync-spread').innerHTML =
-        `<span class="rssi ${cls}">${spread} ms apart</span>`;
+        `<span class="rssi ${cls}">${spread} ms of buffer between them</span>`;
 
       document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {
         const p = r.playout;
@@ -960,9 +960,10 @@
         }
         const depth = ms(p.bufferedFrames);
         const steer = ms(p.steerFrames);
-        // Distance from the line this node is steered to, which is the
-        // same number on every node with the same ring and delay. A node
-        // far from it is the one that moved.
+        // Distance from the trim line, which is where the fill settles
+        // and is the same number on every node with the same ring and
+        // delay. Well below it is a node short of margin; at capacity is
+        // one overflowing, which discards audio and jumps its phase.
         const off = steer ? depth - steer : null;
         const offText = off === null ? '—'
           : `${off > 0 ? '+' : ''}${off} ms`;
@@ -979,17 +980,28 @@
       }).join('');
 
       /*
-       * Say what the number means, because a spread is only half the
-       * story: equal depth is equal delay as far as the packets reach
-       * both nodes together, which on one access point is a few
-       * milliseconds and was never the term that mattered.
+       * What this is and is not, because an earlier version of this panel
+       * said "buffer depth is the offset" and that is wrong.
+       *
+       * Depth is (newest received) minus (now playing). A burst raises the
+       * first without touching the second, so depth jumps while nothing
+       * audible changes -- which is why this number swings tens of
+       * milliseconds in seconds on a busy channel and does not mean the
+       * speakers moved apart. What actually shifts playback phase is a
+       * pad, a trim, a re-prime or an overflow, and the columns for those
+       * are the ones to read.
        */
-      document.getElementById('sync-note').textContent = spread <= 10
-        ? 'These are together. Depth is what sets the offset — same packets, '
-          + 'same rate, so whichever holds more is playing older audio.'
-        : 'Buffer depth is the offset. A node far from its steering line is '
-          + 'the one that moved; it is padded back at about 0.5 ms a second, '
-          + 'so give it a few minutes before restarting the stream.';
+      const full = playing.filter(r =>
+        ms(r.playout.bufferedFrames) >= ms(r.playout.capacityFrames ?? 0) - 5);
+      document.getElementById('sync-note').textContent = full.length
+        ? 'A speaker is at the top of its ring, so it is discarding audio to '
+          + 'make room — and a discard jumps its playback position. Raise '
+          + 'ringMs on it; that buys burst headroom without adding latency.'
+        : 'Buffer depth is not the offset. It is how much audio is waiting, '
+          + 'and a burst raises it without changing what is playing — so this '
+          + 'number swings on a busy channel and that alone is harmless. '
+          + 'Playback only shifts on a pad, a trim, a re-prime or an '
+          + 'overflow; watch the trims/pads column climbing.';
     }
 
     function deviceStreamHtml(stream) {
