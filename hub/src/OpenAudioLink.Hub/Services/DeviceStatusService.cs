@@ -94,6 +94,13 @@ public sealed class DeviceStatusService : BackgroundService
                 Bssid = status.Wifi?.Bssid,
                 Channel = status.Wifi?.Channel,
                 Rssi = status.Wifi?.Rssi,
+                // Same lesson as delayMs above, and this trio is proof it
+                // keeps happening: the node has reported roams since the
+                // roaming work and nothing ever carried it across, so the
+                // count existed and no page could show it.
+                Roams = status.Wifi?.Roams,
+                Disconnects = status.Wifi?.Disconnects,
+                LastReason = status.Wifi?.LastReason,
                 AudioChannel = status.AudioChannel,
                 Output = status.Output,
                 OutputReady = status.OutputReady,
@@ -305,5 +312,14 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("rssi")]
         public int? Rssi { get; init; }
+
+        [JsonPropertyName("roams")]
+        public int? Roams { get; init; }
+
+        [JsonPropertyName("disconnects")]
+        public int? Disconnects { get; init; }
+
+        [JsonPropertyName("lastReason")]
+        public int? LastReason { get; init; }
     }
 }

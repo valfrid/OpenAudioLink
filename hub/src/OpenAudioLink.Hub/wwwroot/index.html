@@ -387,12 +387,57 @@
 
     // The BSSID under the SSID, because in a mesh every node advertises the
     // same name and only the BSSID says which one this is.
+    /*
+     * ESP-IDF wifi_err_reason_t, for the handful that say something
+     * different about what to do next. Anything else shows as its number
+     * rather than as a guess.
+     */
+    const WIFI_REASON = {
+      1: 'unspecified', 2: 'auth expired', 3: 'left', 4: 'idle too long',
+      // The access point asking the node to go. In a house with two access
+      // points sharing an SSID this is steering, and it is fixed on the
+      // router, not on the node.
+      8: 'access point asked it to leave',
+      15: 'handshake timeout (wrong password?)',
+      // The node losing sight of the access point. Distance, an antenna, a
+      // position, or a wire -- never the router's doing.
+      200: 'beacon timeout', 201: 'no access point found',
+      202: 'authentication failed', 203: 'association failed',
+    };
+
     function wifiCell(status) {
       if (!status) return '—';
       if (!status.joined) return '<span class="muted">not joined</span>';
       const channel = status.channel ? ` · ch ${esc(status.channel)}` : '';
+
+      /*
+       * Roams and disconnects, because a link that comes and goes is
+       * invisible from every counter downstream of it.
+       *
+       * A node off the network for a few seconds loses a thousand
+       * consecutive packets, which reads as loss, as stalls, and as a
+       * buffer that will not settle -- and is none of those. This was
+       * diagnosed by reading a serial log on one node at a time, which is
+       * exactly what a house with several nodes makes impossible. The
+       * node has counted roams all along and nothing carried the number
+       * across.
+       */
+      const events = [];
+      if (status.roams) {
+        events.push(`${status.roams} roam${status.roams === 1 ? '' : 's'}`);
+      }
+      if (status.disconnects) {
+        const why = status.lastReason
+          ? ` (${WIFI_REASON[status.lastReason] ?? 'reason ' + status.lastReason})`
+          : '';
+        events.push(`${status.disconnects} drop${status.disconnects === 1 ? '' : 's'}${why}`);
+      }
+      const cls = status.disconnects ? 'rssi fair' : 'muted';
+      const line = events.length
+        ? `<br><span class="${cls}">${esc(events.join(' · '))}</span>` : '';
+
       return `${esc(status.ssid ?? '?')}${channel}` +
-        `<br><code class="muted">${esc(status.bssid ?? '?')}</code>`;
+        `<br><code class="muted">${esc(status.bssid ?? '?')}</code>${line}`;
     }
 
     /* ---------------------------------------------------------------

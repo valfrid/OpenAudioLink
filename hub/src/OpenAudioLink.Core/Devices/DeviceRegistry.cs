@@ -26,6 +26,29 @@ public sealed record DeviceStatus
     public int? Rssi { get; init; }
 
     /// <summary>
+    /// Times this node has changed access point, been disconnected, and why
+    /// the last disconnect happened. Null from firmware that predates them.
+    /// </summary>
+    /// <remarks>
+    /// The counters that separate a link fault from everything it looks
+    /// like downstream. A node that drops off for a few seconds loses a
+    /// thousand consecutive packets, and from the audio counters that is
+    /// indistinguishable from interference — same loss, same stalls, and a
+    /// completely different fix.
+    ///
+    /// <see cref="LastReason"/> is an ESP-IDF wifi_err_reason_t. 8 is
+    /// ASSOC_LEAVE, the access point asking the node to go, which is what
+    /// steering looks like from the node; 200 is BEACON_TIMEOUT, the node
+    /// losing the access point. One is fixed on the router and the other
+    /// with an antenna or a wire.
+    /// </remarks>
+    public int? Roams { get; init; }
+
+    public int? Disconnects { get; init; }
+
+    public int? LastReason { get; init; }
+
+    /// <summary>
     /// Extra playout delay this node holds, in milliseconds, or null from
     /// firmware that predates it.
     /// </summary>

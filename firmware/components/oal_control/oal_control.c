@@ -142,10 +142,12 @@ static int format_wifi(char *out, size_t out_size)
     return snprintf(out, out_size,
                     "{\"joined\":true,\"ssid\":\"%s\","
                     "\"bssid\":\"%02x:%02x:%02x:%02x:%02x:%02x\","
-                    "\"channel\":%d,\"rssi\":%d,\"roams\":%" PRIu32 "}",
+                    "\"channel\":%d,\"rssi\":%d,\"roams\":%" PRIu32 ","
+                    "\"disconnects\":%" PRIu32 ",\"lastReason\":%d}",
                     ssid, ap.bssid[0], ap.bssid[1], ap.bssid[2],
                     ap.bssid[3], ap.bssid[4], ap.bssid[5],
-                    (int)ap.primary, ap.rssi, oal_wifi_roams());
+                    (int)ap.primary, ap.rssi, oal_wifi_roams(),
+                    oal_wifi_disconnects(), oal_wifi_last_reason());
 }
 
 /*
@@ -272,7 +274,7 @@ static int format_ota(char *out, size_t out_size)
  * handlers and does not touch these.
  */
 static char s_roles[OAL_ROLES_STR_MAX];
-static char s_wifi[192];
+static char s_wifi[256];
 static char s_controller[160];
 static char s_join[96];
 static char s_input[112];

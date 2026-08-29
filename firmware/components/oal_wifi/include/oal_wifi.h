@@ -69,6 +69,21 @@ bool oal_wifi_has_party(void);
 uint32_t oal_wifi_roams(void);
 
 /**
+ * How many times this node has been disconnected since boot, and why the
+ * last one happened (an ESP-IDF wifi_err_reason_t; 0 if never).
+ *
+ * A node that drops off for seconds loses a thousand consecutive packets,
+ * which reads as interference from every counter downstream and is not.
+ * The reason separates the two cases that matter: 8, ASSOC_LEAVE, is the
+ * access point asking it to go -- steering, common where two access points
+ * share an SSID -- and 200, BEACON_TIMEOUT, is the node losing the access
+ * point. Steering is fixed on the router; a beacon timeout is fixed with
+ * an antenna, a position, or a wire.
+ */
+uint32_t oal_wifi_disconnects(void);
+int oal_wifi_last_reason(void);
+
+/**
  * Scan for access points and describe what was found, as JSON.
  *
  * The diagnostic this component was missing. A mesh advertises one SSID

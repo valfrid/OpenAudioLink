@@ -75,6 +75,24 @@ static const char *TAG = "oal_wifi";
 static EventGroupHandle_t s_events;
 static int s_retries;
 
+/*
+ * Link events, counted rather than only logged.
+ *
+ * Both were already detected here and written to the serial console, which
+ * is exactly where nobody can read them: a house has several nodes and one
+ * cable. A consumer losing a thousand consecutive packets is not jitter
+ * and not a buffer problem -- it is a node that left the network -- and
+ * without these the only visible symptom is loss, which looks like
+ * interference and gets treated as one.
+ *
+ * `s_last_reason` is the ESP-IDF disconnect reason. 8 is ASSOC_LEAVE, the
+ * access point asking the node to go, which is what steering looks like
+ * from this side; 200 is BEACON_TIMEOUT, the node losing the access point.
+ * They call for opposite fixes, so the number matters more than the count.
+ */
+static uint32_t s_disconnects;
+static int s_last_reason;
+
 /** The access point this node last held an address on. */
 static uint8_t s_last_bssid[6];
 static bool s_have_last_bssid;
@@ -281,6 +299,12 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, vo
         request_join();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_retries++;
+        s_disconnects++;
+        {
+            wifi_event_sta_disconnected_t *why =
+                (wifi_event_sta_disconnected_t *)data;
+            s_last_reason = why ? why->reason : 0;
+        }
 
         /*
          * Giving up is only ever an answer at boot, where a wrong password
@@ -399,6 +423,16 @@ static bool try_station(const char *ssid, const char *password)
 uint32_t oal_wifi_roams(void)
 {
     return s_roams;
+}
+
+uint32_t oal_wifi_disconnects(void)
+{
+    return s_disconnects;
+}
+
+int oal_wifi_last_reason(void)
+{
+    return s_last_reason;
 }
 
 int oal_wifi_scan_json(char *out, size_t out_size)
