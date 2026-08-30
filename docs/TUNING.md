@@ -160,6 +160,23 @@ this buys burst headroom without adding any latency. With a 400 ms ring the
 trim line sits at 300 and leaves only 100 ms of headroom, and stalls of
 287 ms have been measured on this network.
 
+**Two speakers resting at opposite ends of the band.** Measured on hardware:
+one node with **0 trims** sinking to the pad line, the other with **58 970**
+pinned at the trim line, 137 ms apart and stable. That is what a pair of
+crystals straddling the sender's rate does — a fast one drains until padding
+holds it up, a slow one fills until trimming holds it down — and the gap
+between them is the quiet band itself.
+
+Firmware 0.38.0 closes it with a slow correction toward the middle of the
+band, driven by a **forty-second average** of the fill rather than its
+instantaneous value. A burst moves the average almost not at all; a clock
+error moves it steadily, so the correction sees the one and is blind to the
+other. It spends about 13 frames a second, 0.027 %, and closes a 137 ms
+disagreement in a little over two minutes.
+
+If two speakers are more than about 20 ms apart and staying there, **give it
+three minutes before doing anything else.**
+
 **What was tried and reverted, so it is not tried again.** Firmware 0.34.0
 padded the fill up toward a line 13 ms below the trim, reasoning that a
 shared setpoint would hold two speakers together. It made two speakers
