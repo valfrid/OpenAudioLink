@@ -863,6 +863,18 @@
     const deviceStreams = new Map();
 
     /*
+     * A minute of offset readings, so one bad sample cannot decide what the
+     * page says.
+     *
+     * "Is it stable below 20 ms" is a question about a distribution, not
+     * about the instant somebody happened to look. A single delayed reply
+     * still slips through the round-trip filter now and then, and reading
+     * that as the system falling apart is exactly the misreading this panel
+     * exists to prevent.
+     */
+    const syncHistory = [];
+
+    /*
      * One device, opened out: everything the row had no space for, and the
      * buttons that act on it.
      *
@@ -975,14 +987,32 @@
        * LAN -- a millisecond or two, well under anything audible.
        */
       const rows = await Promise.all(consumers.map(async (d) => {
+        const sent = performance.now();
         try {
           const r = await fetch(`/api/devices/${encodeURIComponent(d.id)}/stream`,
             { cache: 'no-store' });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const s = await r.json();
-          return { device: d, playout: s.playout ?? null, at: performance.now() };
+          const back = performance.now();
+          /*
+           * Halfway through the round trip, not the moment it arrived.
+           *
+           * The node sampled its position while handling the request, one
+           * network leg before the answer reached here. Stamping the
+           * arrival made a reply delayed by a Wi-Fi retry read as that node
+           * being exactly that far behind -- seen as the offset jumping to
+           * 60 ms, once 200, and recovering on the next poll while nothing
+           * audible had happened at all.
+           *
+           * The midpoint is the standard estimate and is right when the two
+           * legs are equal. What it cannot fix is an asymmetric trip, so
+           * the round trip is kept and a slow one is thrown away below
+           * rather than believed.
+           */
+          return { device: d, playout: s.playout ?? null,
+                   at: sent + (back - sent) / 2, rtt: back - sent };
         } catch {
-          return { device: d, playout: null, at: performance.now() };
+          return { device: d, playout: null, at: performance.now(), rtt: Infinity };
         }
       }));
 
@@ -1006,8 +1036,16 @@
        * played 30 ms less since, and counting that as an offset is exactly
        * the mistake the depth figure was already making.
        */
+      /*
+       * A reading is only as good as the trip that carried it. With the
+       * midpoint estimate the worst error is half the round trip, so 40 ms
+       * bounds the uncertainty at 20 -- the same line the panel calls
+       * "together", and past it the number would be reporting the network
+       * rather than the speakers.
+       */
+      const RTT_LIMIT_MS = 40;
       const aligned = playing
-        .filter(r => r.playout.playingKnown)
+        .filter(r => r.playout.playingKnown && r.rtt <= RTT_LIMIT_MS)
         .map(r => {
           const since = (now - r.at) / 1000;           // seconds
           // Unsigned 32-bit, so the timestamp wraps roughly once a day.
@@ -1050,10 +1088,28 @@
        * different question and reading one as the other cost an afternoon.
        */
       if (offset !== null) {
-        const ocls = offset <= 20 ? 'good' : offset <= 40 ? 'fair' : 'poor';
+        // A minute at this refresh rate; old readings fall off the front.
+        syncHistory.push({ t: now, ms: offset });
+        while (syncHistory.length && now - syncHistory[0].t > 60000) {
+          syncHistory.shift();
+        }
+        const sorted = syncHistory.map(h => h.ms).sort((a, b) => a - b);
+        const typical = sorted[Math.floor(sorted.length / 2)];
+        const worst = sorted[sorted.length - 1];
+
+        /*
+         * Judged on the typical, not the instant. The headline still shows
+         * what it reads right now, because a live number is what somebody
+         * standing between two speakers wants, but the colour follows the
+         * median so a lone spike does not turn the panel red.
+         */
+        const ocls = typical <= 20 ? 'good' : typical <= 40 ? 'fair' : 'poor';
+        const settled = sorted.length > 3
+          ? `<span class="muted"> · typically ${typical} ms, worst ${worst}` +
+            `, over the last minute</span>`
+          : '';
         document.getElementById('sync-spread').innerHTML =
-          `<span class="rssi ${ocls}">${offset} ms apart</span>` +
-          `<span class="muted"> · ${spread} ms of buffer between them</span>`;
+          `<span class="rssi ${ocls}">${offset} ms apart</span>${settled}`;
       } else {
         const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
         document.getElementById('sync-spread').innerHTML =
@@ -1110,11 +1166,12 @@
         ? 'A speaker is at the top of its ring, so it is discarding audio to '
           + 'make room — and a discard jumps its playback position. Raise '
           + 'ringMs on it; that buys burst headroom without adding latency.'
-        : 'Buffer depth is not the offset. It is how much audio is waiting, '
-          + 'and a burst raises it without changing what is playing — so this '
-          + 'number swings on a busy channel and that alone is harmless. '
-          + 'Playback only shifts on a pad, a trim, a re-prime or an '
-          + 'overflow; watch the trims/pads column climbing.';
+        : 'Judge this on the typical figure, not the instant. A reply delayed '
+          + 'on the network carries a stale position, and although the round '
+          + 'trip is measured and the slow ones discarded, an occasional spike '
+          + 'gets through — it is this page being late, not the speakers '
+          + 'moving. Playback itself only shifts on a pad, a trim, a re-prime '
+          + 'or an overflow.';
     }
 
     function deviceStreamHtml(stream) {

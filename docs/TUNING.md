@@ -127,6 +127,15 @@ common instant before subtracting. Unlike buffer depth it does not move
 when a burst arrives, because a burst changes what has been *received*,
 not what is being *played*.
 
+**Judge it on the typical figure, not the instant.** The heading also shows
+what the offset has typically been over the last minute, and that is the
+one to read. The live number occasionally spikes — a reply delayed on the
+network carries a stale position, so the node it came from reads as that
+far behind. The round trip is measured and slow replies are thrown away,
+but an occasional one gets through. **That is the page being late, not the
+speakers moving.** Playback itself only shifts on a pad, a trim, a re-prime
+or an overflow, none of which move 60 ms in a moment.
+
 Everything below is why the other numbers on that panel are not that, and
 can be skipped unless one of them looks alarming.
 
