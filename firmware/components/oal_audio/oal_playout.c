@@ -209,6 +209,37 @@ static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
 static size_t s_trim_above;
 static size_t s_pad_below;
 
+/*
+ * Where two speakers are made to agree, and why it is an average.
+ *
+ * A node whose crystal runs fast against the sender drains and comes to
+ * rest on the pad line; one that runs slow accumulates and rests on the
+ * trim line. Two nodes straddling the sender's rate therefore settle a
+ * whole quiet band apart -- measured at 137 ms on hardware, with one node
+ * showing 0 trims and the other 58 970, which is what a pair of opposite
+ * clock errors looks like.
+ *
+ * Nothing else closes that. The urgent pad and trim below are about not
+ * running dry and not overflowing; inside the band they never fire, which
+ * is exactly the tolerance that lets the buffer absorb a burst.
+ *
+ * 0.34.0 tried to close it on the *instantaneous* fill and made everything
+ * worse: the fill swings ±150 ms on this network, so every burst crossed
+ * the line and spent a frame, and a spent frame is a phase shift. The
+ * average is the whole difference. Over about forty seconds a burst is
+ * nothing and a clock error is everything, so this corrects the one and
+ * cannot see the other.
+ */
+static int64_t s_fill_avg;      /* EWMA of s_available, shifted by AVG_SHIFT */
+static bool s_fill_avg_known;
+static size_t s_steer_to;       /* the centre of the quiet band */
+static size_t s_steer_slack;    /* no steering inside this, so it settles */
+static uint32_t s_steer_phase;
+
+/* 8192 chunks of 5 ms is about 41 seconds. Long against the worst stall
+ * measured here (3 s) and short against a listener's patience. */
+#define AVG_SHIFT 13
+
 
 /** The rate the target was computed against, so it can be recomputed. */
 static uint32_t s_rate;
@@ -314,12 +345,46 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
      * only one anything pushes back from. Not converge_below, which no
      * longer exists.
      */
-    s_state.steer_frames = (uint32_t)(s_trim_above / OAL_RTP_CHANNELS);
+    /*
+     * The centre of the quiet band, which is the one depth both nodes can
+     * share: the pad line is where a fast crystal lands and the trim line
+     * where a slow one does, so the midpoint belongs to neither and is
+     * reachable from both. Identical on any two nodes with the same ring
+     * and delay, which is what makes it an agreement rather than a
+     * coincidence.
+     */
+    s_steer_to = (s_pad_below + s_trim_above) / 2;
+    s_steer_to -= s_steer_to % OAL_RTP_CHANNELS;
+
+    /*
+     * A fortieth of the target either side -- 5 ms at the usual 200.
+     *
+     * The slack stops the loop dithering across its own setpoint, and it
+     * also *bounds the residual offset at twice its width*, because two
+     * nodes resting anywhere inside it are never corrected toward each
+     * other. That second property is the one that decides the number, and
+     * a first attempt at a tenth of the target left up to 40 ms on the
+     * table -- measured in simulation, not reasoned about.
+     *
+     * A tenth gave 10-34 ms across seeds, a fortieth 4-10, an eightieth
+     * 2-5 with a third more frames spent. A fortieth is the knee: inside
+     * what two speakers hear as one source, at about 13 frames a second of
+     * correction, which is 0.027 % and nowhere near audible.
+     *
+     * Narrow is affordable here only because the input is a forty-second
+     * average. On the instantaneous fill this width would be catastrophic,
+     * and 0.34.0 is the proof.
+     */
+    s_steer_slack = s_target_samples / 40;
+    s_steer_slack -= s_steer_slack % OAL_RTP_CHANNELS;
+
+    s_state.steer_frames = (uint32_t)(s_steer_to / OAL_RTP_CHANNELS);
 
     s_state.target_frames = (uint32_t)(s_target_samples / OAL_RTP_CHANNELS);
 }
 static uint32_t s_pad_phase;
 static uint32_t s_trim_phase;
+
 
 /*
  * Only the consumer task calls oal_playout_submit, so one scratch buffer
@@ -744,12 +809,30 @@ static size_t take_chunk(int32_t *chunk)
      * Trading seven cents of pitch against a discontinuity is worth it;
      * trading it against nothing in particular is not.
      */
+    /*
+     * The slow average, updated once per chunk before anything acts on it.
+     *
+     * Seeded rather than started from zero: a buffer that begins at the
+     * prime depth against an average that begins at nothing would steer
+     * hard upward for the first minute, which is a fault dressed as a
+     * feature.
+     */
+    if (!s_fill_avg_known) {
+        s_fill_avg = (int64_t)s_available << AVG_SHIFT;
+        s_fill_avg_known = true;
+    } else {
+        s_fill_avg += (int64_t)s_available - (s_fill_avg >> AVG_SHIFT);
+    }
+
+    bool acted = false;
+
     if (s_available > s_trim_above) {
         bool urgent = s_available > s_trim_above + (s_capacity - s_trim_above) / 2;
         if (urgent || (s_trim_phase++ & 3) == 0) {
             s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
             s_available -= OAL_RTP_CHANNELS;
             s_state.trimmed_frames++;
+            acted = true;
         }
     }
     /*
@@ -805,6 +888,38 @@ static size_t take_chunk(int32_t *chunk)
             s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
             s_available += OAL_RTP_CHANNELS;
             s_state.padded_frames++;
+            acted = true;
+        }
+    }
+
+    /*
+     * And the slow one, which is what actually holds two speakers together.
+     *
+     * Only when neither emergency fired this chunk, so the loop can never
+     * fight itself, and only on the average, so a burst is invisible to it.
+     * One frame per four chunks is 0.10 %, under two cents of pitch, and
+     * about 1 ms of depth per second -- a 137 ms disagreement closes in a
+     * little over two minutes.
+     *
+     * The slack either side is what stops it dithering. Without it the
+     * setpoint is a line the fill crosses constantly, every crossing spends
+     * a frame, and every spent frame is a phase shift -- which is precisely
+     * how 0.34.0 made two speakers worse instead of better.
+     */
+    if (!acted && s_steer_to > 0) {
+        size_t avg = (size_t)(s_fill_avg >> AVG_SHIFT);
+        bool low = avg + s_steer_slack < s_steer_to;
+        bool high = avg > s_steer_to + s_steer_slack;
+        if ((low || high) && (s_steer_phase++ & 3) == 0) {
+            if (low && s_available + OAL_RTP_CHANNELS <= s_capacity) {
+                s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
+                s_available += OAL_RTP_CHANNELS;
+                s_state.padded_frames++;
+            } else if (high && s_available >= OAL_RTP_CHANNELS) {
+                s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
+                s_available -= OAL_RTP_CHANNELS;
+                s_state.trimmed_frames++;
+            }
         }
     }
 
@@ -1075,6 +1190,9 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     s_splice_pending = true;
     s_trim_phase = 0;
     s_pad_phase = 0;
+    s_steer_phase = 0;
+    s_fill_avg = 0;
+    s_fill_avg_known = false;
 
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment
