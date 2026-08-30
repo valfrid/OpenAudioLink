@@ -1053,11 +1053,25 @@
        * the operator to update nodes that were already current. Twice
        * wrong: the threshold and the message.
        *
-       * 60 ms of wireless round trip bounds the placement error at 30. A
-       * node answering slower than that is busy or far away, and its
-       * position is worth less than the silence.
+       * 60 ms proved far too tight in the house. The node is an ESP32
+       * running an HTTP server while taking 200 packets a second and
+       * building a kilobyte of JSON, on a contended channel: clearing
+       * 60 ms is ordinary, not a fault, and the panel spent most of its
+       * time saying so instead of showing a number it had.
+       *
+       * The worst-case error is half the trip, but it is not the typical
+       * error and it largely cancels in the subtraction. Both nodes answer
+       * the same request with the same size of reply over the same air, so
+       * whatever bias the asymmetry causes lands on both and drops out of
+       * A minus B. What is left is noise, and noise is what the median over
+       * a minute is for.
+       *
+       * So the limit is now only about staleness -- past a quarter of a
+       * second the reading describes a moment too far gone to place -- and
+       * the accuracy comes from the median rather than from throwing
+       * samples away.
        */
-      const RTT_LIMIT_MS = 60;
+      const RTT_LIMIT_MS = 250;
       const tooSlow = playing.filter(r =>
         r.playout.playingKnown && r.rtt > RTT_LIMIT_MS).length;
       const oldFirmware = playing.filter(r => !r.playout.playingKnown).length;
@@ -1129,20 +1143,39 @@
           `<span class="rssi ${ocls}">${offset} ms apart</span>${settled}`;
       } else {
         /*
-         * Say which of the two reasons it is. They call for completely
-         * different actions, and guessing "update the nodes" at a node
-         * already running the newest firmware sends somebody to flash a
-         * board over a busy minute of Wi-Fi.
+         * One skipped sample must not throw away the answer.
+         *
+         * A minute of good readings is sitting in syncHistory, and the
+         * question -- "are these together" -- is about that minute, not
+         * about the poll that happened to be slow. Falling back to buffer
+         * depth here replaced a good answer with a worse quantity under
+         * the same heading, which is the misreading this panel exists to
+         * prevent, and it happened often enough to be most of what the
+         * page said.
          */
+        while (syncHistory.length && now - syncHistory[0].t > 60000) {
+          syncHistory.shift();
+        }
+        const recent = syncHistory.map(h => h.ms).sort((a, b) => a - b);
         const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
-        const why = oldFirmware
-          ? ' · update the nodes to measure the real offset'
-          : tooSlow
-            ? ' · nodes answering too slowly to place in time just now'
-            : ' · waiting for two readings';
-        document.getElementById('sync-spread').innerHTML =
-          `<span class="rssi ${cls}">${spread} ms of buffer between them</span>` +
-          `<span class="muted">${esc(why)}</span>`;
+        if (recent.length > 3 && !oldFirmware) {
+          const typical = recent[Math.floor(recent.length / 2)];
+          const worst = recent[recent.length - 1];
+          const ocls = typical <= 20 ? 'good' : typical <= 40 ? 'fair' : 'poor';
+          document.getElementById('sync-spread').innerHTML =
+            `<span class="rssi ${ocls}">typically ${typical} ms apart</span>` +
+            `<span class="muted"> · worst ${worst} over the last minute` +
+            ' · this reading skipped, the node answered slowly</span>';
+        } else {
+          const why = oldFirmware
+            ? ' · update the nodes to measure the real offset'
+            : tooSlow
+              ? ' · nodes answering too slowly to place in time just now'
+              : ' · waiting for two readings';
+          document.getElementById('sync-spread').innerHTML =
+            `<span class="rssi ${cls}">${spread} ms of buffer between them</span>` +
+            `<span class="muted">${esc(why)}</span>`;
+        }
       }
 
       document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {
