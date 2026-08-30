@@ -136,6 +136,19 @@ but an occasional one gets through. **That is the page being late, not the
 speakers moving.** Playback itself only shifts on a pad, a trim, a re-prime
 or an overflow, none of which move 60 ms in a moment.
 
+**The check that settles it without any argument: did a counter move?**
+Playback phase can shift only four ways — a padded frame, a trimmed frame,
+a re-prime after an underrun, or an overflow discard — and every one of
+them increments something. So an offset that jumps while `underruns`,
+`droppedFrames` and the late count all stay put **did not happen**. The
+audio cannot move without leaving a trace, and if nothing moved, the number
+is wrong rather than the speakers.
+
+Confirmed in exactly that way: a run showing jumps to 60 ms and once 200
+had zero lost and zero late packets throughout. Nothing in the audio path
+had touched the phase, so the reading was the only thing that could be at
+fault — and it was.
+
 Everything below is why the other numbers on that panel are not that, and
 can be skipped unless one of them looks alarming.
 
