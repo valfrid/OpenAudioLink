@@ -994,6 +994,11 @@
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const s = await r.json();
           const back = performance.now();
+          // The wireless leg alone, measured by the Hub. The trip seen from
+          // here also contains the browser-to-Hub legs, which are local and
+          // steady; gating on the total discarded good readings whenever
+          // this page was busy.
+          const nodeRtt = Number(r.headers.get('X-Oal-Node-Rtt-Ms'));
           /*
            * Halfway through the round trip, not the moment it arrived.
            *
@@ -1010,7 +1015,8 @@
            * rather than believed.
            */
           return { device: d, playout: s.playout ?? null,
-                   at: sent + (back - sent) / 2, rtt: back - sent };
+                   at: sent + (back - sent) / 2,
+                   rtt: Number.isFinite(nodeRtt) ? nodeRtt : back - sent };
         } catch {
           return { device: d, playout: null, at: performance.now(), rtt: Infinity };
         }
@@ -1037,13 +1043,24 @@
        * the mistake the depth figure was already making.
        */
       /*
-       * A reading is only as good as the trip that carried it. With the
-       * midpoint estimate the worst error is half the round trip, so 40 ms
-       * bounds the uncertainty at 20 -- the same line the panel calls
-       * "together", and past it the number would be reporting the network
-       * rather than the speakers.
+       * A reading is only as good as the trip that carried it: with the
+       * midpoint estimate the worst error is half the round trip.
+       *
+       * Against the *node's* trip, which the Hub measures and reports.
+       * A first version gated on the trip seen from this page -- browser to
+       * Hub to node and back -- at 40 ms, which a wireless hop clears
+       * routinely, so both readings were discarded and the panel then told
+       * the operator to update nodes that were already current. Twice
+       * wrong: the threshold and the message.
+       *
+       * 60 ms of wireless round trip bounds the placement error at 30. A
+       * node answering slower than that is busy or far away, and its
+       * position is worth less than the silence.
        */
-      const RTT_LIMIT_MS = 40;
+      const RTT_LIMIT_MS = 60;
+      const tooSlow = playing.filter(r =>
+        r.playout.playingKnown && r.rtt > RTT_LIMIT_MS).length;
+      const oldFirmware = playing.filter(r => !r.playout.playingKnown).length;
       const aligned = playing
         .filter(r => r.playout.playingKnown && r.rtt <= RTT_LIMIT_MS)
         .map(r => {
@@ -1111,10 +1128,21 @@
         document.getElementById('sync-spread').innerHTML =
           `<span class="rssi ${ocls}">${offset} ms apart</span>${settled}`;
       } else {
+        /*
+         * Say which of the two reasons it is. They call for completely
+         * different actions, and guessing "update the nodes" at a node
+         * already running the newest firmware sends somebody to flash a
+         * board over a busy minute of Wi-Fi.
+         */
         const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
+        const why = oldFirmware
+          ? ' · update the nodes to measure the real offset'
+          : tooSlow
+            ? ' · nodes answering too slowly to place in time just now'
+            : ' · waiting for two readings';
         document.getElementById('sync-spread').innerHTML =
           `<span class="rssi ${cls}">${spread} ms of buffer between them</span>` +
-          '<span class="muted"> · update the nodes to measure the real offset</span>';
+          `<span class="muted">${esc(why)}</span>`;
       }
 
       document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {

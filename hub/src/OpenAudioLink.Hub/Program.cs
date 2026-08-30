@@ -692,14 +692,37 @@ app.MapPost("/api/devices/{id}/stream/stop",
 });
 
 app.MapGet("/api/devices/{id}/stream",
-    async (string id, DeviceRegistry registry, DeviceCommandClient commands,
-           CancellationToken cancellationToken) =>
+    async (string id, HttpContext http, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
 {
     if (!registry.TryGet(id, out var device))
     {
         return Results.NotFound();
     }
+
+    /*
+     * How long the node itself took, reported separately from how long the
+     * whole thing took.
+     *
+     * The speaker-sync panel places a node's playing position in time by
+     * the round trip that carried it, and discards a reading whose trip was
+     * slow enough to make the placement meaningless. Measured in the
+     * browser that trip is browser to Hub to node and back again, and the
+     * only leg with real jitter in it is the wireless one. Gating on the
+     * total threw away perfectly good readings whenever the page itself was
+     * a little slow, and then told the operator to update firmware that was
+     * already current.
+     *
+     * A header rather than a field in the body, because the body is the
+     * node's own document relayed verbatim and nothing here should be
+     * putting the Hub's opinions inside it.
+     */
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
     using var stream = await commands.GetStreamAsync(device, cancellationToken);
+    var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started);
+    http.Response.Headers["X-Oal-Node-Rtt-Ms"] =
+        ((int)Math.Round(elapsed.TotalMilliseconds)).ToString();
+
     return stream is null
         ? Results.StatusCode(502)
         : Results.Text(stream.RootElement.GetRawText(), "application/json");
