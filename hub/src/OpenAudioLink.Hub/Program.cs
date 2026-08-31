@@ -105,7 +105,33 @@ app.Use(async (context, next) =>
 });
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+
+/*
+ * The page itself must revalidate, or an upgraded Hub serves an old
+ * switchboard.
+ *
+ * The no-store rule above covers /api, so the numbers were always fresh --
+ * and the page drawing them was not. A Hub updated to a version with a new
+ * column reported the new version in its header, from /api/health, while
+ * rendering the previous page from the browser's cache: the operator sees
+ * "0.50.0 — up to date" above a table that predates it, and the only clue
+ * is a column that should not be there.
+ *
+ * no-cache rather than no-store: the browser may keep the copy, it just
+ * has to ask first, and the static file middleware answers 304 from the
+ * ETag when nothing changed. Only documents, because the pages here carry
+ * their CSS and script inline and there is nothing else to revalidate.
+ */
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "no-cache, must-revalidate";
+        }
+    },
+});
 
 // The switchboard's short address, so a printed QR code or an NFC sticker
 // carries "/play#room=kitchen" rather than "/play.html#room=kitchen"
