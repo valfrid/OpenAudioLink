@@ -41,7 +41,27 @@ builder.Services.AddSingleton(sp => new FirmwareStore(
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
 builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
-builder.Services.AddHttpClient<DeviceCommandClient>();
+/*
+ * The same socket discipline as the status client below, and it was missing
+ * here — on the client that talks to nodes most.
+ *
+ * DeviceCommandClient carries every command and the /stream reads the
+ * switchboard makes for each speaker every few seconds. Registered bare it
+ * took .NET's defaults: an unbounded pool per server, held open for a
+ * minute. That is correct for a web service and wrong for an ESP32 with
+ * seven sockets in total, which stops accepting anything at all when they
+ * run out — no status, no portal, no OTA, and lwIP refusing every accept
+ * with errno 23.
+ *
+ * Seen as both nodes reporting "no answer (HTTP 502)" while the audio
+ * itself kept playing, because UDP needs no socket from that pool.
+ */
+builder.Services.AddHttpClient<DeviceCommandClient>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(10),
+        MaxConnectionsPerServer = 2,
+    });
 // A short timeout on purpose: a node that does not answer promptly is a
 // node whose reading would be stale anyway, and the poll comes round again.
 builder.Services.AddHttpClient(nameof(DeviceStatusService),
