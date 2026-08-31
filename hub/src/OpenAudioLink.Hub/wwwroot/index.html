@@ -1013,6 +1013,28 @@ and swap supplies between two nodes to find out.">Clock</th>
     const CLOCK_WINDOW_MS = 30 * 60 * 1000;
     const CLOCK_MIN_MS = 3 * 60 * 1000;
 
+    /*
+     * How uncertain the fit may be and still be worth printing, in ppm.
+     *
+     * Elapsed time is the wrong gate and shipping it as one was a mistake.
+     * A fit over three minutes of five-second polls, with the tens of
+     * milliseconds of timing jitter a round trip leaves behind, carries
+     * about 130 ppm of noise in its own slope -- so the column showed
+     * numbers that moved by a hundred between refreshes and invited
+     * exactly the misreading the rewrite was meant to end.
+     *
+     * The noise falls as the window grows: ~60 ppm at five minutes, ~21 at
+     * ten, ~12 at fifteen, ~4 at half an hour. Twenty-five is half the
+     * +/-50 band a healthy crystal sits in, which is the finest distinction
+     * this column ever has to make.
+     *
+     * Gating on the fit's own standard error rather than on the clock also
+     * makes it self-calibrating: a quiet network earns the figure sooner,
+     * a noisy one waits, and neither needs a guess about jitter baked in
+     * here.
+     */
+    const CLOCK_MAX_SIGMA_PPM = 25;
+
     /* Frames in one packet, at the 48 kHz and 5 ms this page assumes
      * everywhere it turns frames into milliseconds. */
     const FRAMES_PER_PACKET = 240;
@@ -1055,10 +1077,27 @@ and swap supplies between two nodes to find out.">Clock</th>
         sxx += dx * dx;
       }
       if (sxx <= 0) return null;
-      // Frames per millisecond against the nominal 48.
-      const ppm = (sxy / sxx / 48 - 1) * 1e6;
-      if (!Number.isFinite(ppm)) return null;
-      return { ppm, span };
+      const slope = sxy / sxx;                    // frames per millisecond
+      /*
+       * And how well that slope is actually pinned down, from the spread
+       * of the samples about it -- the standard error of a least-squares
+       * slope, sqrt(residual variance / Sxx).
+       *
+       * Measured from the data rather than assumed, so it answers with
+       * this network on this evening. It is what decides below whether the
+       * figure is printed at all, and it is the number whose absence made
+       * the first version of this column jump by a hundred ppm between
+       * refreshes while looking perfectly confident.
+       */
+      let ss = 0;
+      for (const p of hist) {
+        const e = (p.frames - my) - slope * (p.at - mx);
+        ss += e * e;
+      }
+      const ppm = (slope / 48 - 1) * 1e6;
+      const sigma = Math.sqrt(ss / (hist.length - 2) / sxx) / 48 * 1e6;
+      if (!Number.isFinite(ppm) || !Number.isFinite(sigma)) return null;
+      return { ppm, sigma, span };
     }
 
     async function refreshSync() {
@@ -1370,14 +1409,35 @@ and swap supplies between two nodes to find out.">Clock</th>
           clock = '<span class="muted" title="Needs the Hub sending, or a '
             + 'second speaker to compare against.">—</span>';
         } else {
+          /*
+           * Both fits carry error, so the difference carries both. Added
+           * in quadrature because the two are independent -- different
+           * counters, different replies, different timing.
+           */
+          const sigma = Math.sqrt(
+            fit.sigma * fit.sigma + (hubFit ? hubFit.sigma * hubFit.sigma : 0));
           const mine = Math.round(fit.ppm - reference);
-          const mag = Math.abs(mine);
-          const ccls = mag <= 50 ? 'rssi good' : mag <= 200 ? 'rssi fair' : 'rssi poor';
           const mins = Math.round(fit.span / 60000);
-          const title = `fitted over ${mins} min against `
-            + `${hubFit ? 'the Hub' : 'the other speakers'}`;
-          clock = `<span class="${ccls}" title="${title}">`
-            + `${mine > 0 ? '+' : ''}${mine} ppm</span>`;
+          const against = hubFit ? 'the Hub' : 'the other speakers';
+          if (sigma > CLOCK_MAX_SIGMA_PPM) {
+            /*
+             * Still too loose to print. Showing the running value would be
+             * showing its noise, which is what it did before and is the
+             * whole reason for the gate -- so say it is settling, and put
+             * the arithmetic on hover for anyone who wants to watch.
+             */
+            clock = `<span class="muted" title="Fitted over ${mins} min so `
+              + `far, and still worth ±${Math.round(sigma)} ppm of its own `
+              + `noise — wider than the ±50 a healthy crystal sits in, so `
+              + `the figure would be mostly noise. It sharpens as the square `
+              + `root of the samples; leave the page open.">settling</span>`;
+          } else {
+            const mag = Math.abs(mine);
+            const ccls = mag <= 50 ? 'rssi good' : mag <= 200 ? 'rssi fair' : 'rssi poor';
+            clock = `<span class="${ccls}" title="±${Math.round(sigma)} ppm, `
+              + `fitted over ${mins} min against ${against}">`
+              + `${mine > 0 ? '+' : ''}${mine} ppm</span>`;
+          }
         }
 
         return `<tr><td>${esc(r.device.name)}</td>` +

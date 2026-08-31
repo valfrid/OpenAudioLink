@@ -271,8 +271,31 @@ Two details it needs to be usable:
   ±40 ms of jitter, endpoint differencing over half an hour is worth about
   ±440 ppm — worthless for a figure whose interesting range is ±50. The
   fit over ~360 samples recovered a true +70 ppm as **+71**.
-- **Minutes, not seconds.** The column counts down the minutes until it
-  has three, and says so rather than showing a number it cannot support.
+- **Gate on the fit's uncertainty, not on the clock.** 0.55.0 printed the
+  figure once it had three minutes of samples, and three minutes is worth
+  roughly ±130 ppm of noise in the slope alone — so it jumped by a hundred
+  between refreshes while looking perfectly confident. 0.56.0 computes the
+  standard error of the slope from the residuals and stays on "settling"
+  until it is inside **±25 ppm**, half the ±50 band a healthy crystal sits
+  in. Measured from the data, so a quiet network earns the figure sooner
+  and a noisy one waits; hovering shows the current ± and how long it has
+  been fitting.
+
+The noise falls as the square root of the sample count. Simulated against
+five-second polls with ±40 ms of timing jitter, and checked against a
+known +70 ppm difference:
+
+| Window | Fit | Its own ± | |
+|---|---|---|---|
+| 3 min | +92 | ±66 | settling |
+| 5 min | +53 | ±32 | settling |
+| 10 min | +70 | ±11 | shown |
+| 15 min | +81 | ±7 | shown |
+| 30 min | +69 | ±2 | shown |
+
+So expect roughly ten minutes with the page open before the column says
+anything, and treat it as a measurement that is made once and then trusted
+— not a live readout.
 
 When the Hub is not the producer there is no local reference, and the
 column falls back to comparing the speakers with each other. That can say
