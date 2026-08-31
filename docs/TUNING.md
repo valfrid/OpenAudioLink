@@ -339,6 +339,15 @@ Two details it needs to be usable:
   very clock its buffer must keep up with — and serves the result on
   `/api/clocks`. No second fit, no subtraction, no browser in the path, and
   it keeps running with every page closed.
+- **The window and the poll interval are one decision, not two.** The
+  gate compares the fit's own uncertainty against 25 ppm, and that
+  uncertainty depends on both. Cutting the poll from 10 s to 30 s — a
+  change made to spare the nodes, and right on its own terms — tripled the
+  sample spacing and pushed a 30-minute window to **24.8 ppm** against
+  that gate. Sitting on the threshold, the column showed a figure, crossed
+  back, and read "settling" again. The window is an hour from 0.67.0,
+  which brings the same conditions to about 8.8 ppm and costs no extra
+  request to any node. **Change either one and re-check the arithmetic.**
 - **Gate on the fit's uncertainty, not on the clock.** 0.55.0 printed the
   figure once it had three minutes of samples, and three minutes is worth
   roughly ±130 ppm of noise in the slope alone — so it jumped by a hundred

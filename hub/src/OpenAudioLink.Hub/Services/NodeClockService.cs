@@ -77,12 +77,33 @@ public sealed class NodeClockService : BackgroundService
     public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// How far back the fit reaches. Longer resolves finer: the slope's
-    /// uncertainty falls as the span and as the square root of the count,
-    /// so half an hour turns tens of milliseconds of polling jitter into a
-    /// few ppm.
+    /// How far back the fit reaches.
     /// </summary>
-    private static readonly TimeSpan Window = TimeSpan.FromMinutes(30);
+    /// <remarks>
+    /// <para>
+    /// The slope's uncertainty falls as the span and as the square root of
+    /// the count, and since the count is the span over the poll interval it
+    /// improves faster than linearly with this number.
+    /// </para>
+    /// <para>
+    /// An hour, and it was half an hour until the poll went from ten
+    /// seconds to thirty for the node's sake. That tripled the spacing and
+    /// I did not re-check the arithmetic: with about 100 ms of jitter on an
+    /// HTTP read of a node, thirty samples-per-thirty-minutes lands at
+    /// <b>24.8 ppm</b> against a gate of 25. Sitting exactly on the
+    /// threshold, the column showed a figure, crossed back, and read
+    /// "settling" again — which is what it was reported doing.
+    /// </para>
+    /// <para>
+    /// An hour takes the same jitter to about 8.8 ppm, comfortably inside
+    /// the gate, and costs nothing but a longer memory: no extra request
+    /// reaches any node. What it does cost is responsiveness to a genuine
+    /// change — swap a power supply and the old rate stays in the window
+    /// for an hour — and for a crystal, which does not move, that is the
+    /// right trade.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan Window = TimeSpan.FromMinutes(60);
 
     /// <summary>
     /// Nothing before this much span, however many samples arrive. Fitting
