@@ -24,4 +24,27 @@ public interface IAudioSource : IDisposable
     /// up. Zero for sources that generate audio on demand.
     /// </summary>
     long UnderrunSamples => 0;
+
+    /// <summary>
+    /// Samples decoded and waiting to be sent, and how many the source
+    /// wants waiting before it considers itself charged.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both zero for a source that has no cushion to fill — a tone is
+    /// generated on demand, and a capture device is as fast as the room.
+    /// Only a source fetching from somewhere slower than real time has a
+    /// charge worth waiting for.
+    /// </para>
+    /// <para>
+    /// Reported rather than assumed, so anything showing progress shows
+    /// the real fill. A fixed countdown started at the press of a button
+    /// would keep counting while a station failed to open, and reach zero
+    /// having proved nothing.
+    /// </para>
+    /// </remarks>
+    long BufferedSamples => 0;
+
+    /// <inheritdoc cref="BufferedSamples"/>
+    long TargetBufferedSamples => 0;
 }

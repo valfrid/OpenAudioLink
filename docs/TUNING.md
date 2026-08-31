@@ -281,6 +281,37 @@ low** means the thread was not scheduled — GC, a busy machine, power
 management — and **send time high** means it was inside `SendTo`, which on
 a Wi-Fi host is an adapter blocked by a background scan.
 
+### Buffering at the Hub, and what it cannot fix
+
+Radio keeps **five seconds** of decoded audio ahead of the sender from
+0.54.0 (`RadioSource.Charge`, ring one second larger so a decoded block
+cannot lap it). The cost is latency, paid in full: five seconds between
+the station and the speakers, and the same again before a change of
+station is heard. Free for radio, which is already well behind live.
+
+It stays a `RadioSource` constant deliberately. The same five seconds on
+line-in or librespot would put five seconds between the needle and the
+sound.
+
+**It protects against one failure only: the source running dry.** It does
+nothing for a sender whose loop is not running, and the two are easy to
+confuse because both sound like a dropout. They are distinguishable, and
+the counters already do it:
+
+| | Hub sends | Node sees | Counter |
+|---|---|---|---|
+| Source dry | packets on time, carrying silence | nothing wrong — clean counters, no gaps | `UnderrunSamples`, "Source ran dry" in the log |
+| Send loop away | nothing at all | an **arrival gap** | `lateWakes`, recent stall / send ms |
+
+So before adding buffer, read which one is happening. Measured here: 13,299
+and 15,835 arrival gaps with zero loss — the second row, where no amount of
+buffering helps.
+
+The Play button counts the cushion down, −5 s to −1 s, from the fill the
+Hub reports rather than from a timer started on the click. A fixed
+countdown reaches zero just the same while a station fails to open, and
+announces a readiness that never happened.
+
 ### The catch-up cap no longer fits the ring it was sized against
 
 Measured in the house, two nodes, one stream: **zero packet loss** —

@@ -116,7 +116,20 @@ public sealed record StreamStatus(
     /// <summary>
     /// Late wakes during the last reporting window.
     /// </summary>
-    long RecentLateWakes = 0);
+    long RecentLateWakes = 0,
+    /// <summary>
+    /// Milliseconds of decoded audio the source is holding ahead of this
+    /// loop, and how many it wants before it counts as charged.
+    /// </summary>
+    /// <remarks>
+    /// Both zero for a source with no cushion to fill, which is every
+    /// source but radio. Present so a caller can show real progress
+    /// instead of a fixed countdown: a station that never opens leaves
+    /// this at zero, where a timer started on the button press would run
+    /// down to nothing and claim success.
+    /// </remarks>
+    long BufferedMs = 0,
+    long TargetBufferedMs = 0);
 
 /// <summary>
 /// Sends one RTP audio stream from any <see cref="IAudioSource"/>.
@@ -502,6 +515,11 @@ public sealed class RtpStreamer : IAsyncDisposable
         long lastStallReportMs = long.MinValue;
         double packetMs = format.PacketMilliseconds;
 
+        // Interleaved samples to milliseconds, in this stream's format.
+        long SourceMs(long samples) => samples <= 0
+            ? 0
+            : samples * 1000 / Math.Max(1, format.SampleRate * format.Channels);
+
         // Without this the loop below sends in clumps; see the type's remarks.
         using var timerResolution = new HighResolutionTimer();
 
@@ -739,6 +757,8 @@ public sealed class RtpStreamer : IAsyncDisposable
                     RecentLateWakes = reportedLateWakes,
                     Gen2Collections = GC.CollectionCount(2),
                     GcPauseMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
+                    BufferedMs = SourceMs(source.BufferedSamples),
+                    TargetBufferedMs = SourceMs(source.TargetBufferedSamples),
                 };
                 Thread.Sleep(1);
             }

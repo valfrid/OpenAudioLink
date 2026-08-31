@@ -1611,6 +1611,75 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
     // re-fetching separately would race the refresh that is already running.
     let lastCastPoints = [];
 
+    /*
+     * The station's cushion filling, counted down on the button that
+     * started it.
+     *
+     * Radio keeps five seconds of decoded audio ahead of the sender, and
+     * until that is charged the stream is running on whatever it has. The
+     * button is where somebody is already looking, so the wait goes there
+     * rather than into a message they have to find.
+     *
+     * Driven by the fill the Hub reports, not by a timer started on the
+     * click. A fixed countdown would run down to zero just the same while
+     * a station failed to open, announcing a readiness that never
+     * happened — and it is exactly the kind of number this project has
+     * been caught trusting before.
+     */
+    let charge = { id: null, seconds: 0 };
+
+    /*
+     * Repaint just this one button rather than the table.
+     *
+     * refreshCastPoints rewrites every row on a three second timer, which
+     * a countdown ticking four times a second cannot live inside: it would
+     * show the same figure for three seconds and then jump.
+     */
+    function paintCharge() {
+      for (const b of document.querySelectorAll('button[data-cp="play"]')) {
+        const counting = charge.id === b.dataset.id && charge.seconds > 0;
+        b.textContent = counting ? `−${charge.seconds} s` : 'Play';
+        b.disabled = counting;
+        b.title = counting
+          ? 'Filling the station buffer. It plays now; this is how much '
+            + 'cushion it still has to build against the station stalling.'
+          : '';
+      }
+    }
+
+    async function watchCharge(id) {
+      charge = { id, seconds: 0 };
+      const started = performance.now();
+      /*
+       * Thirty seconds and then give up counting.
+       *
+       * A station that only ever delivers at real time never gets ahead,
+       * so the cushion stops where its initial burst left it and the
+       * countdown would sit at the same figure for ever. Better to stop
+       * claiming to know than to leave a stuck number on the screen.
+       */
+      while (charge.id === id && performance.now() - started < 30000) {
+        let s;
+        try {
+          s = await (await fetch('/api/stream', { cache: 'no-store' })).json();
+        } catch {
+          break;
+        }
+        if (!s.running) break;
+        // Zero for every source that has no cushion to fill — a tone, a
+        // capture device — so they show no countdown rather than a fake one.
+        const target = s.targetBufferedMs ?? 0;
+        if (target <= 0) break;
+        const left = Math.ceil((target - (s.bufferedMs ?? 0)) / 1000);
+        charge.seconds = Math.max(0, left);
+        paintCharge();
+        if (left <= 0) break;
+        await new Promise(r => setTimeout(r, 250));
+      }
+      charge = { id: null, seconds: 0 };
+      paintCharge();
+    }
+
     async function refreshCastPoints() {
       let points = [];
       try {
@@ -1657,7 +1726,12 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
               : `<span class="rssi poor">${esc(p.receiver.error ?? 'not running')}</span>`;
         return `<tr><td>${esc(p.name)}</td><td>${members}</td>` +
           `<td>${receiver}</td><td>${state}</td>` +
-          `<td><button data-cp="play" data-id="${esc(p.id)}">Play</button> ` +
+          // Rendered from the same state paintCharge uses, so a countdown
+          // in progress survives this table being rewritten under it.
+          `<td><button data-cp="play" data-id="${esc(p.id)}"` +
+          `${charge.id === p.id && charge.seconds > 0 ? ' disabled' : ''}>` +
+          `${charge.id === p.id && charge.seconds > 0
+              ? `−${charge.seconds} s` : 'Play'}</button> ` +
           `<button data-cp="stop" data-id="${esc(p.id)}">Stop</button> ` +
           `<button data-cp="edit" data-id="${esc(p.id)}" ` +
           `data-name="${esc(p.name)}" ` +
@@ -1750,6 +1824,9 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
       castSay(payload.stopped
         ? `Playing ${payload.castPoint}; stopped ${payload.stopped} because they share a speaker.`
         : `Playing ${payload.castPoint}.`);
+      // Not awaited: it runs for as long as the cushion takes to fill, and
+      // the rest of this handler still has a failure to catch.
+      watchCharge(id);
       await refreshCastPoints();
 
       /*

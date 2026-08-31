@@ -60,13 +60,45 @@ namespace OpenAudioLink.Hub.Services;
 public sealed class RadioSource : IAudioSource
 {
     /// <summary>
-    /// Two seconds of buffer. Far more than the playout side's, and
-    /// deliberately: a station is on the far side of the internet, where a
-    /// stall is measured in seconds rather than the tens of milliseconds a
-    /// local sender manages. Latency costs nothing here — nobody is
-    /// listening to a turntable in the same room.
+    /// How much decoded audio to keep ahead of the sender: five seconds.
     /// </summary>
-    private static readonly TimeSpan Buffer = TimeSpan.FromSeconds(2);
+    /// <remarks>
+    /// <para>
+    /// Far more than the playout side's, and deliberately: a station is on
+    /// the far side of the internet, where a stall is measured in seconds
+    /// rather than the tens of milliseconds a local sender manages.
+    /// </para>
+    /// <para>
+    /// Latency is the whole cost, and it is paid in full — five seconds
+    /// between the station and the speakers, and the same again before a
+    /// change of station is heard. That is free for radio, which is already
+    /// well behind live and which nobody is playing along to. It would be
+    /// unusable for <see cref="SystemAudioSource"/> or librespot, where the
+    /// listener is in the room with the source, which is why this constant
+    /// lives here and not somewhere shared.
+    /// </para>
+    /// <para>
+    /// What it buys is protection against the source running dry, and
+    /// nothing else. It cannot help a sender whose loop is not running: a
+    /// dry source still sends packets, on time, carrying silence, so the
+    /// receiver's counters stay clean, while a stalled send loop sends
+    /// nothing at all and the receiver records an arrival gap. Those are
+    /// the two failures this project keeps confusing, and only the first
+    /// one is a buffering problem.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan Charge = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The ring itself, a second larger than <see cref="Charge"/>.
+    /// </summary>
+    /// <remarks>
+    /// The producer checks the high-water mark between writes, not within
+    /// one, so it can overshoot by whatever a single decoded block holds.
+    /// The slack absorbs that; without it the overshoot laps the ring and
+    /// overwrites audio that has not been sent, which is heard as skipping.
+    /// </remarks>
+    private static readonly TimeSpan Ring = Charge + TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// How long to wait before reconnecting, and it does not back off.
@@ -113,7 +145,11 @@ public sealed class RadioSource : IAudioSource
     /// start overwriting audio that has not been sent yet. That is heard as
     /// skipping rather than as a gap, which makes it easy to misread.
     /// </remarks>
-    private int HighWater => _format.SampleRate * _format.Channels * 3 / 2;
+    private int HighWater => Samples(Charge);
+
+    /// <summary>Interleaved samples in the given span of time.</summary>
+    private int Samples(TimeSpan span) =>
+        (int)(_format.SampleRate * _format.Channels * span.TotalSeconds);
 
     /// <summary>The station's own name, once it has given one.</summary>
     private string _station;
@@ -124,8 +160,7 @@ public sealed class RadioSource : IAudioSource
         _format = format;
         _http = http;
         _logger = logger;
-        _buffer = new AudioRingBuffer(
-            (int)(format.SampleRate * format.Channels * Buffer.TotalSeconds));
+        _buffer = new AudioRingBuffer(Samples(Ring));
 
         _station = $"Internet radio: {url}";
         Description = _station;
@@ -140,6 +175,10 @@ public sealed class RadioSource : IAudioSource
     public string Description { get; private set; }
 
     public long UnderrunSamples => _buffer.UnderrunSamples;
+
+    public long BufferedSamples => _buffer.Available;
+
+    public long TargetBufferedSamples => HighWater;
 
     public void ReadFrames(Span<float> destination) => _buffer.Read(destination);
 
