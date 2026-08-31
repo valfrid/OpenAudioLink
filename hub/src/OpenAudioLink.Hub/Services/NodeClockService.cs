@@ -16,7 +16,12 @@ namespace OpenAudioLink.Hub.Services;
 /// </param>
 /// <param name="SpanSeconds">How long the fit covers.</param>
 /// <param name="Samples">How many readings are in it.</param>
-public sealed record ClockFit(double Ppm, double SigmaPpm, long SpanSeconds, int Samples);
+/// <param name="Suspect">
+/// The rate is too far from nominal to be a crystal, so the counter behind
+/// it is the likelier fault. See <see cref="NodeClockService"/>.
+/// </param>
+public sealed record ClockFit(
+    double Ppm, double SigmaPpm, long SpanSeconds, int Samples, bool Suspect);
 
 /// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
@@ -70,6 +75,33 @@ public sealed class NodeClockService : BackgroundService
 
     /// <summary>Frames per millisecond at the profile's 48 kHz.</summary>
     private const double FramesPerMs = 48.0;
+
+    /// <summary>
+    /// Past this, the reading is not a crystal and must not be shown as
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Quartz does not do this. A healthy crystal sits inside tens of ppm;
+    /// the worst seen here was a node pulled to 178 by a failing power
+    /// supply, and a genuine 2,000 ppm — a fifth of a percent — would be
+    /// audible as pitch rather than visible only as a number. So a figure
+    /// this large means the counter feeding it is wrong, which is exactly
+    /// what happened: firmware before 0.39.0 lost part of a frame on every
+    /// write to the sink and reported about −4,000.
+    /// </para>
+    /// <para>
+    /// This replaces a check that compared framesPlayed against the node's
+    /// total uptime, which was the wrong test and shipped broken. A node
+    /// that sat idle before it started streaming has legitimately played
+    /// less than its uptime — thirty seconds of idle in an hour is a ratio
+    /// of 0.9917 — so the band meant to catch a leak caught every ordinary
+    /// node instead. A rate cannot be fooled that way: the fit only
+    /// accumulates while the node is playing, so idle time is absent from
+    /// it rather than mixed into it.
+    /// </para>
+    /// </remarks>
+    private const double ImplausiblePpm = 2000.0;
 
     private readonly record struct Sample(double AtMs, long Frames);
 
@@ -286,7 +318,9 @@ public sealed class NodeClockService : BackgroundService
             return null;
         }
 
-        return new ClockFit(ppm, sigma, (long)(span / 1000), samples.Count);
+        return new ClockFit(
+            ppm, sigma, (long)(span / 1000), samples.Count,
+            Math.Abs(ppm) > ImplausiblePpm);
     }
 
     private sealed record StreamResponse

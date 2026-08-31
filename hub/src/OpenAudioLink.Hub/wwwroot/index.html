@@ -1008,30 +1008,6 @@ and swap supplies between two nodes to find out.">Clock</th>
      */
     const CLOCK_MAX_SIGMA_PPM = 25;
 
-    /*
-     * Whether a node's played-frame counter is losing frames, judged
-     * against the only clock that needs nobody's agreement: the node's own
-     * uptime.
-     *
-     * A node playing since it booted should have played uptime x 48000
-     * frames. Uptime is whole seconds, so this resolves a few hundred ppm
-     * over an hour -- useless for measuring a crystal and exactly right for
-     * catching one bleeding thousands, which is what a firmware bug before
-     * 0.39.0 did.
-     *
-     * One-sided on purpose: a node may legitimately have played *less* than
-     * its uptime, having been idle before the stream started, so only a
-     * short count near a full uptime's worth is suspicious.
-     */
-    function countsLeak(r) {
-      const up = r.device.status?.uptimeSeconds ?? 0;
-      const played = r.playout?.framesPlayed ?? 0;
-      if (up < 900) return false;                 // too soon to tell
-      const ratio = played / (up * 48000);
-      // Between "most of its life" and "all of it": below 0.9 the node was
-      // simply idle for a while, above 0.999 it is keeping up.
-      return ratio > 0.9 && ratio < 0.999;
-    }
 
 
     async function refreshSync() {
@@ -1294,26 +1270,25 @@ and swap supplies between two nodes to find out.">Clock</th>
          */
         const fit = clocks[r.device.id] ?? null;
         let clock = '<span class="muted">—</span>';
-        if (countsLeak(r)) {
+        if (fit?.suspect) {
           /*
-           * Checked first, and checked at all because it happened. A
-           * firmware bug counted each write to the sink as `bytes / 8` and
-           * discarded the remainder every call, so framesPlayed ran
-           * permanently slow and two healthy speakers read about -4000 ppm.
-           * Their trim counts said a few hundred, and a real -4000 would
-           * have needed 691,200 trims an hour against 144,548 in the node's
-           * whole life -- the evidence was on the same screen as the wrong
-           * number, and nothing was looking at it.
+           * The Hub judged the rate too far from nominal to be a crystal,
+           * so the counter behind it is the likelier fault. Quartz does not
+           * drift by a fifth of a percent, and firmware before 0.39.0 lost
+           * part of a frame on every write to the sink and read about
+           * -4000 ppm.
            *
-           * framesPlayed against the node's own uptime needs no other clock
-           * and nobody's agreement. When it does not hold, the fault is in
-           * the counter, and saying so beats printing a crystal error that
-           * does not exist.
+           * The first version of this check was made here, comparing
+           * framesPlayed against the node's total uptime, and it was wrong:
+           * a node idle before it started streaming has legitimately played
+           * less than its uptime, so it fired on healthy nodes. The rate
+           * cannot be fooled that way and the Hub owns the judgement, which
+           * is where a judgement belongs.
            */
-          clock = '<span class="rssi poor" title="This node\'s framesPlayed '
-            + 'is not keeping pace with its own uptime, so it cannot measure '
-            + 'anything. A firmware bug before 0.39.0 lost a fraction of a '
-            + 'frame on every write to the sink. Update the node.">counter '
+          clock = '<span class="rssi poor" title="This rate is too far from '
+            + 'nominal to be a crystal, so the frame counter behind it is '
+            + 'the likelier fault. Firmware before 0.39.0 lost a fraction of '
+            + 'a frame on every write to the sink. Update the node.">counter '
             + 'faulty</span>';
         } else if (fit === null) {
           clock = '<span class="muted" title="The Hub fits this over half an '

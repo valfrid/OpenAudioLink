@@ -318,13 +318,23 @@ actually moved. On the ordinary path it is now exact however the driver
 splits the write.
 
 **The lesson worth keeping is the second one.** Nothing was watching the
-measurement. The panel now checks `framesPlayed` against the node's *own
-uptime* — a comparison that needs no other clock and nobody's agreement,
-since a node playing since boot should have played `uptime × 48000`
-frames. When it has not, the column says **counter faulty** instead of
-printing a crystal error that does not exist. Whole-second uptime resolves
-a few hundred ppm over an hour: useless for measuring a crystal, exactly
-right for catching one bleeding thousands.
+measurement, so the column now refuses a reading it cannot believe: past
+**±2000 ppm** it says **counter faulty** rather than printing a crystal
+error that does not exist. Quartz does not drift by a fifth of a percent,
+and a genuine error that size would be audible as pitch rather than only
+visible as a number.
+
+The first version of that guard was wrong and shipped, which is worth
+recording too. It compared `framesPlayed` against the node's *total
+uptime*, on the reasoning that a node playing since boot should have
+played `uptime × 48000` frames — but a node that sat idle before the
+stream started has legitimately played less than its uptime. Thirty
+seconds of idle in an hour is a ratio of 0.9917, inside the suspect band,
+so the check meant to catch a leaking counter fired on **every ordinary
+node**. A rate cannot be fooled that way: the Hub's fit only accumulates
+while a node is playing, so idle time is absent from it rather than mixed
+into it. The judgement lives in the Hub with the measurement, not in the
+page that draws it.
 
 The noise falls as the square root of the sample count. Simulated against
 five-second polls with ±40 ms of timing jitter, and checked against a
