@@ -235,10 +235,38 @@ static bool s_fill_avg_known;
 static size_t s_steer_to;       /* the centre of the quiet band */
 static size_t s_steer_slack;    /* no steering inside this, so it settles */
 static uint32_t s_steer_phase;
+static size_t s_resync_above;   /* fill beyond this, in samples, is a step back */
+static uint32_t s_resync_held;  /* consecutive chunks the fill has been out */
 
 /* 8192 chunks of 5 ms is about 41 seconds. Long against the worst stall
  * measured here (3 s) and short against a listener's patience. */
 #define AVG_SHIFT 13
+
+/*
+ * How far out of step a speaker may be before it stops walking back and
+ * simply steps back, in milliseconds of fill.
+ *
+ * Above the sender's catch-up cap, and that is the whole reason for the
+ * number. A stalled send loop releases up to 100 ms in one lump, and that
+ * lump reaches *every* speaker in the same instant — so it lifts both
+ * fills equally, leaves the difference between them untouched, and is
+ * absorbed by the ring with nothing audible happening. Jumping on that
+ * would put a click in both speakers to fix a disagreement that does not
+ * exist. So the threshold sits above it: 120 ms is reached only by
+ * something one-sided, which is what a re-prime after a dropout is.
+ *
+ * The cost of a jump is one discontinuity on one speaker. The cost of not
+ * jumping is 1 ms a second of creep — nearly three minutes at 170 ms out,
+ * with the two speakers a slap echo apart for all of it. Below the
+ * threshold the creep is still the right tool and is left alone.
+ */
+#define RESYNC_MS 120
+
+/* Confirm before stepping: a jump is not something to do on one chunk's
+ * reading. Two hundred chunks is a second of the fill genuinely sitting
+ * out there, which no burst does — the emergency trim is already eating
+ * one by then. */
+#define RESYNC_CONFIRM_CHUNKS 200
 
 
 /** The rate the target was computed against, so it can be recomputed. */
@@ -377,6 +405,28 @@ static void apply_target(uint32_t rate, uint32_t target_ms)
      */
     s_steer_slack = s_target_samples / 40;
     s_steer_slack -= s_steer_slack % OAL_RTP_CHANNELS;
+
+    s_resync_above = (size_t)rate * RESYNC_MS / 1000 * OAL_RTP_CHANNELS;
+    /*
+     * A floor, not a constant. The quiet band grows with the target -- at
+     * 650 ms of delay it is nearly six hundred milliseconds wide -- and a
+     * fixed 120 would then fire on swings that are ordinary there. So take
+     * whichever is larger: far enough out to be a real disagreement at any
+     * depth, and never closer than the sender's burst at the shallow end.
+     * The host test asserts both, and caught this the first time round.
+     */
+    {
+        /* Rounded up to a whole frame: the trim to even below
+         * would otherwise land one sample under the floor. */
+        size_t half = (s_trim_above - s_pad_below) / 2;
+        half = (half + OAL_RTP_CHANNELS - 1)
+             / OAL_RTP_CHANNELS * OAL_RTP_CHANNELS;
+        if (s_resync_above < half) {
+            s_resync_above = half;
+        }
+    }
+    s_resync_above -= s_resync_above % OAL_RTP_CHANNELS;
+    s_resync_held = 0;
 
     s_state.steer_frames = (uint32_t)(s_steer_to / OAL_RTP_CHANNELS);
 
@@ -826,7 +876,68 @@ static size_t take_chunk(int32_t *chunk)
 
     bool acted = false;
 
-    if (s_available > s_trim_above) {
+    /*
+     * Far enough out to step back rather than walk back.
+     *
+     * Checked before the emergency paths because it supersedes them: those
+     * shave one frame at a time toward a threshold, and the point here is
+     * that shaving is too slow to be worth doing at this distance.
+     *
+     * On the instantaneous fill, held for a second, rather than on the
+     * average. The average is deliberately slow -- forty-one seconds -- so
+     * that a burst cannot steer the loop, and waiting that long to notice
+     * a speaker is a tenth of a second out defeats the purpose. A second
+     * of confirmation is enough to know the fill is genuinely sitting
+     * there, and RESYNC_MS is set above the sender's burst so an absorbed
+     * lump is not mistaken for a disagreement.
+     */
+    if (s_resync_above > 0 && s_steer_to > 0) {
+        size_t error = s_available > s_steer_to
+            ? s_available - s_steer_to : s_steer_to - s_available;
+        if (error > s_resync_above) {
+            s_resync_held++;
+        } else {
+            s_resync_held = 0;
+        }
+
+        if (s_resync_held >= RESYNC_CONFIRM_CHUNKS) {
+            if (s_available > s_steer_to) {
+                /* Holding too much: drop the excess and play newer audio. */
+                size_t excess = s_available - s_steer_to;
+                s_read = (s_read + excess) % s_capacity;
+                s_available -= excess;
+                s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
+                s_state.resyncs++;
+                acted = true;
+            }
+            /*
+             * Deliberately one-directional: it discards, it never winds
+             * back.
+             *
+             * Winding back to *add* depth means replaying audio already
+             * handed to the sink, and at this distance that is a fifth of
+             * a second of it. The ring behind the read pointer is not
+             * reserved -- the writer fills forward into it -- so a bulk
+             * rewind is a race against how much new audio has arrived, and
+             * losing that race hands the DAC whatever happened to be
+             * there. One frame at a time, as the pad does, the exposure is
+             * a frame; two hundred milliseconds at a time it is not worth
+             * having.
+             *
+             * Nor is it needed. A node this far below the setpoint is
+             * about to underrun, and the underrun path already re-primes
+             * to the target in one step -- a jump by another name, and one
+             * that fills from real audio rather than from history. The
+             * fill that needs help is the one riding high, which nothing
+             * else brings down quickly.
+             */
+            s_resync_held = 0;
+            /* The average describes a fill that no longer exists. */
+            s_fill_avg = (int64_t)s_available << AVG_SHIFT;
+        }
+    }
+
+    if (!acted && s_available > s_trim_above) {
         bool urgent = s_available > s_trim_above + (s_capacity - s_trim_above) / 2;
         if (urgent || (s_trim_phase++ & 3) == 0) {
             s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
@@ -910,7 +1021,27 @@ static size_t take_chunk(int32_t *chunk)
         size_t avg = (size_t)(s_fill_avg >> AVG_SHIFT);
         bool low = avg + s_steer_slack < s_steer_to;
         bool high = avg > s_steer_to + s_steer_slack;
-        if ((low || high) && (s_steer_phase++ & 3) == 0) {
+        /*
+         * How hard to pull, from how far out it is.
+         *
+         * A fixed rate is the same 1 ms a second whether the speaker is
+         * 5 ms out or 90, and the second case is the one somebody can
+         * hear: 90 ms took a minute and a half to close, which is longer
+         * than the gap between disturbances on a busy evening, so it
+         * never arrived.
+         *
+         * The rate near home is untouched -- one frame in four chunks,
+         * a tenth of a percent, under two cents of pitch -- because that
+         * is what stops the loop dithering and 0.34.0 is the record of
+         * what happens when it is disturbed. Only the far half is
+         * quicker, and only while it is far: a quarter of the target out
+         * is 0.42 %, about seven cents, for the seconds it takes to get
+         * back inside.
+         */
+        size_t error = high ? avg - s_steer_to : s_steer_to - avg;
+        uint32_t mask = error > s_target_samples / 4 ? 0u
+                      : error > s_target_samples / 8 ? 1u : 3u;
+        if ((low || high) && (s_steer_phase++ & mask) == 0) {
             if (low && s_available + OAL_RTP_CHANNELS <= s_capacity) {
                 s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
                 s_available += OAL_RTP_CHANNELS;

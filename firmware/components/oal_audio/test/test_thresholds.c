@@ -29,12 +29,27 @@
 #define TARGET_FRACTION_NUM 3
 #define TARGET_FRACTION_DEN 4
 
+/* Mirrors oal_playout.c, like every other constant here: this runs on the
+ * host and cannot include the component. The mirroring is the reason the
+ * file exists -- an earlier drift between the two shipped a trim line
+ * nobody had checked. */
+#define RESYNC_MS 120
+
 typedef struct {
     size_t capacity;
     size_t target;
     size_t trim_above;
     size_t pad_below;
+    size_t steer_to;
+    size_t resync_above;
 } thresholds_t;
+
+/* The sender releases at most this much audio in one catch-up burst
+ * (MaxCatchUpPackets in RtpStreamer). It reaches every speaker in the same
+ * instant, so it lifts both fills equally and changes the difference
+ * between them by nothing -- which is why the step-back threshold has to
+ * sit above it. */
+#define SENDER_BURST_MS 100
 
 static thresholds_t compute(unsigned ring_ms, unsigned delay_ms)
 {
@@ -58,6 +73,30 @@ static thresholds_t compute(unsigned ring_ms, unsigned delay_ms)
     }
 
     t.pad_below = t.target * 3 / 4;
+
+    t.steer_to = (t.pad_below + t.trim_above) / 2;
+    t.steer_to -= t.steer_to % OAL_RTP_CHANNELS;
+
+    t.resync_above = (size_t)rate * RESYNC_MS / 1000 * OAL_RTP_CHANNELS;
+    /*
+     * A floor, not a constant. The quiet band grows with the target -- at
+     * 650 ms of delay it is nearly six hundred milliseconds wide -- and a
+     * fixed 120 would then fire on swings that are ordinary there. So take
+     * whichever is larger: far enough out to be a real disagreement at any
+     * depth, and never closer than the sender's burst at the shallow end.
+     * The host test asserts both, and caught this the first time round.
+     */
+    {
+        /* Rounded up to a whole frame: the trim to even below
+         * would otherwise land one sample under the floor. */
+        size_t half = (t.trim_above - t.pad_below) / 2;
+        half = (half + OAL_RTP_CHANNELS - 1)
+             / OAL_RTP_CHANNELS * OAL_RTP_CHANNELS;
+        if (t.resync_above < half) {
+            t.resync_above = half;
+        }
+    }
+    t.resync_above -= t.resync_above % OAL_RTP_CHANNELS;
 
     return t;
 }
@@ -111,8 +150,23 @@ int main(void)
              * sample would let the pointer sit mid-frame and swap left for
              * right. Every one of these reduces to an even multiple of the
              * millisecond figure. */
+            /* The step-back threshold must clear an ordinary catch-up
+             * burst. A burst reaches both speakers at once and moves
+             * neither relative to the other, so stepping back on one would
+             * be a click in both to fix a disagreement that never existed.
+             * This is the assertion that stops somebody lowering
+             * RESYNC_MS for a faster recovery without noticing what it
+             * would start firing on. */
+            assert(ms_of(t.resync_above) > SENDER_BURST_MS);
+
+            /* And it must sit outside the quiet band, or the step-back
+             * would fight the creep for the same millisecond. */
+            assert(t.resync_above >= (t.trim_above - t.pad_below) / 2);
+
             assert(t.capacity % OAL_RTP_CHANNELS == 0);
             assert(t.target % OAL_RTP_CHANNELS == 0);
+            assert(t.steer_to % OAL_RTP_CHANNELS == 0);
+            assert(t.resync_above % OAL_RTP_CHANNELS == 0);
             assert(t.trim_above % OAL_RTP_CHANNELS == 0);
             assert(t.pad_below % OAL_RTP_CHANNELS == 0);
         }

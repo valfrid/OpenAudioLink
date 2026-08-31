@@ -980,7 +980,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * 50-75, 75 and over. A minimum is one draw; this
                         * is the shape. */
                        "\"marginBuckets\":[%u,%u,%u,%u,%u],"
-                       "\"framesPlayed\":%llu,\"writeErrors\":%u},"
+                       "\"framesPlayed\":%llu,\"writeErrors\":%u,\"resyncs\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
                        c.rx_buffer_bytes,
@@ -1012,6 +1012,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.margin_buckets[4],
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
+                       (unsigned)audio.resyncs,
                        stats);
     }
 

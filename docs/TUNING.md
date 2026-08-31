@@ -211,6 +211,62 @@ and every spent frame is a phase shift, the cure moved speakers apart faster
 than anything moved them back. One node logged 100 792 trims against 34 287
 pads in three hours. Reverted in 0.35.0; keep the band wide.
 
+## Two speakers that fall out of step, and how they get back
+
+**One speaker is a different problem from two, and the second one is the
+hard one.** A single speaker riding high or low is inaudible — nothing to
+compare it against — and a rare hiccup passes. Two speakers a tenth of a
+second apart is a slap echo in the room, and it lasts until the loop walks
+them back together.
+
+Fill difference *is* phase difference. Both speakers receive the same
+packets, so `newest received` is the same for both, and
+`playing = newest − buffered`. Two nodes at 198 ms and 319 ms of fill are
+121 ms apart in what you hear, exactly.
+
+**What used to make that last minutes.** The steering creep moves phase at
+one frame in four chunks — about **1 ms per second** — and the rate was the
+same whether a speaker was 5 ms out or 90. Measured against the runs:
+
+| fills | apart | before | from 0.40.0 |
+| --- | --- | --- | --- |
+| 198 / 319 ms | 121 ms | 85 s | ~55 s |
+| 26 / 394 ms | 368 ms | 126 s | **~1 s** |
+
+If disturbances arrive more often than the recovery takes, the speakers
+never converge at all — which is what "with frequency we end up 100 ms
+apart" means.
+
+**Two changes, and the second one has a hard limit worth understanding.**
+
+The creep is now proportional: about 4 ms/s past a quarter of the target,
+2 ms/s past an eighth, and the original 1 ms/s near home. **The rate near
+the setpoint is untouched**, because that is what stops the loop dithering
+and 0.34.0 is the record of what happens when it is disturbed.
+
+Past `RESYNC_MS` the speaker stops walking and steps — one discontinuity,
+counted as a **step-back** in the sync panel. A click on one speaker beats
+three minutes of slap echo, and only one of those is a choice anybody
+would make twice.
+
+**Why the step-back threshold cannot simply be lowered.** It is 120 ms,
+and it must stay above the sender's 100 ms catch-up burst. A burst reaches
+every speaker in the same instant, lifts both fills equally, and leaves
+the difference between them untouched — so it is absorbed with nothing
+audible happening. Stepping back on it would put a click in *both*
+speakers to fix a disagreement that never existed. That is why the 121 ms
+case above still takes ~55 seconds: at 94 ms from the setpoint it is under
+the threshold by design, and the proportional creep is all that can help
+it. The host test asserts `resync_above > 100 ms` so nobody lowers it
+without meeting that argument.
+
+The threshold is a floor rather than a constant: the quiet band grows with
+the target, so at 650 ms of delay it takes whichever is larger.
+
+**If step-backs keep appearing**, the fault is not the one this fixes. A
+node collecting them is a node whose link keeps knocking it out of step,
+and the loss shape and Wi-Fi drop counters are where that shows.
+
 ## Before tuning anything, rule out the hardware and the air
 
 Two faults have masqueraded as buffer problems, and both wasted more time

@@ -1324,7 +1324,24 @@ and swap supplies between two nodes to find out.">Clock</th>
           `<td>${ms(p.primedFrames)} ms</td>` +
           `<td>${clock}</td>` +
           `<td class="muted">${(p.trimmedFrames ?? 0).toLocaleString()} / ` +
-          `${(p.paddedFrames ?? 0).toLocaleString()}</td></tr>`;
+          `${(p.paddedFrames ?? 0).toLocaleString()}` +
+          /*
+           * Step-backs get their own line rather than hiding inside the
+           * trim and pad totals they also increment. One of these is a
+           * deliberate discontinuity -- the speaker was far enough out of
+           * step to be worth a click -- and that is a different event from
+           * the thousands of single frames either side of it. A node
+           * collecting them is a node whose link keeps knocking it out,
+           * which is not the fault the step-back exists to fix.
+           */
+          `${(p.resyncs ?? 0) > 0
+              ? `<br><span class="rssi fair" title="Times this speaker was `
+                + `far enough out of step to be put back in one step rather `
+                + `than walked back. Each is one audible discontinuity here, `
+                + `taken instead of minutes at a tenth of a second from the `
+                + `other speaker.">${p.resyncs} step-back`
+                + `${p.resyncs === 1 ? '' : 's'}</span>`
+              : ''}</td></tr>`;
       }).join('');
 
       /*

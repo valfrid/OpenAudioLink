@@ -123,6 +123,24 @@ typedef struct {
     uint32_t write_errors;    /* the I²S driver refused a write */
 
     /*
+     * Times the fill was put back to the setpoint in one step rather than
+     * walked there.
+     *
+     * The creep moves phase at about 1 ms a second, so a speaker left
+     * 170 ms out of step with its partner takes nearly three minutes to
+     * rejoin it — and if disturbances arrive faster than that it never
+     * does. A jump costs one audible discontinuity on one speaker; being
+     * a tenth of a second apart from the other speaker costs a slap echo
+     * for the whole three minutes, and only one of those is worth having.
+     *
+     * Counted because it is a phase shift, and this project's rule is
+     * that nothing may move the audio without leaving a trace. A node
+     * doing this repeatedly is a node whose link keeps knocking it out,
+     * which is a different fault from the one this fixes.
+     */
+    uint32_t resyncs;         /* fill put back to the setpoint in one step */
+
+    /*
      * How close the ring came to empty, and to full, over the last
      * completed trace window.
      *
