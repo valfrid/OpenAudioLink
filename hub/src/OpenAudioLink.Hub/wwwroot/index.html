@@ -1039,6 +1039,33 @@ and swap supplies between two nodes to find out.">Clock</th>
      * everywhere it turns frames into milliseconds. */
     const FRAMES_PER_PACKET = 240;
 
+    /*
+     * Whether a node's played-frame counter is losing frames, judged
+     * against the only clock that needs nobody's agreement: the node's
+     * own uptime.
+     *
+     * A node that has been playing since it booted should have played
+     * uptime x 48000 frames. Uptime is whole seconds, so this resolves a
+     * few hundred ppm over an hour -- useless for measuring a crystal and
+     * perfectly good for catching a counter that is bleeding thousands.
+     *
+     * Deliberately generous, and one-sided in the direction that matters.
+     * The node may legitimately have played *less* than its uptime -- it
+     * was idle before the stream started, which is the normal case -- so
+     * only a short count near a full uptime's worth is suspicious, and the
+     * check needs the node to have been streaming for most of its life to
+     * say anything at all.
+     */
+    function countsLeak(r) {
+      const up = r.device.status?.uptimeSeconds ?? 0;
+      const played = r.playout?.framesPlayed ?? 0;
+      if (up < 900) return false;                 // too soon to tell
+      const ratio = played / (up * 48000);
+      // Between "most of its life" and "all of it": below 0.9 the node was
+      // simply idle for a while, above 0.999 it is keeping up.
+      return ratio > 0.9 && ratio < 0.999;
+    }
+
     function clockSample(id, at, frames) {
       let hist = clockHistory.get(id);
       // Counters run backwards only across a reboot or a restarted
@@ -1408,6 +1435,31 @@ and swap supplies between two nodes to find out.">Clock</th>
         } else if (reference === null) {
           clock = '<span class="muted" title="Needs the Hub sending, or a '
             + 'second speaker to compare against.">—</span>';
+        } else if (countsLeak(r)) {
+          /*
+           * The counter this is built on is not keeping up with the node's
+           * own clock, so nothing derived from it can be believed.
+           *
+           * Checked because it happened. A firmware bug counted each write
+           * to the sink as `bytes / 8` and discarded the remainder every
+           * call, so framesPlayed ran permanently slow and two healthy
+           * speakers read about -4000 ppm against the Hub. Their trim
+           * counts said a few hundred, and a real -4000 would have needed
+           * 691,200 trims an hour against 144,548 in the node's whole life
+           * -- the evidence to catch it was on the same screen the wrong
+           * number was on, and no code was looking at it.
+           *
+           * So the panel now checks itself. framesPlayed against the
+           * node's *own* uptime needs no other clock to be right and needs
+           * no agreement with anybody: it should be the sample rate. When
+           * it is not, the fault is in the counter, and saying so beats
+           * printing a crystal error that does not exist.
+           */
+          clock = '<span class="rssi poor" title="This node\'s framesPlayed '
+            + 'is not keeping pace with its own uptime, so it cannot measure '
+            + 'anything. A firmware bug before 0.39.0 lost a fraction of a '
+            + 'frame on every write to the sink. Update the node.">counter '
+            + 'faulty</span>';
         } else {
           /*
            * Both fits carry error, so the difference carries both. Added

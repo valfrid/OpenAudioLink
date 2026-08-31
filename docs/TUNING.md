@@ -281,6 +281,39 @@ Two details it needs to be usable:
   and a noisy one waits; hovering shows the current ± and how long it has
   been fitting.
 
+### A counter that undercounts reads exactly like a slow crystal
+
+The first thing the new column found was a bug in itself. Two speakers
+reported about **−4054 and −3836 ppm** against the Hub, steadily, for an
+hour — and both were fine.
+
+The refutation was on the same screen. A node running 4,000 ppm slow
+accumulates that much surplus audio and must discard it: **691,200 trims
+an hour**. The nodes showed 144,548 and 190,474 *lifetime*, with buffers
+sitting on the 225 ms setpoint, neither draining nor filling. The trims
+are a physical consequence and cannot be argued with, so the ppm figure
+was wrong by roughly eight times.
+
+The cause was in the playout task. Each write to the sink counted
+`written / 8` frames and threw the remainder away — every call, not once
+per chunk. A frame is eight bytes and the driver is under no obligation to
+stop on one, so a chunk split across two writes lost most of a frame, and
+a trailing write of four bytes counted as nothing at all. Silent,
+permanent, and one-directional: `framesPlayed` could only run slow.
+
+Fixed in firmware 0.39.0 by counting once, from the bytes the chunk
+actually moved. On the ordinary path it is now exact however the driver
+splits the write.
+
+**The lesson worth keeping is the second one.** Nothing was watching the
+measurement. The panel now checks `framesPlayed` against the node's *own
+uptime* — a comparison that needs no other clock and nobody's agreement,
+since a node playing since boot should have played `uptime × 48000`
+frames. When it has not, the column says **counter faulty** instead of
+printing a crystal error that does not exist. Whole-second uptime resolves
+a few hundred ppm over an hour: useless for measuring a crystal, exactly
+right for catching one bleeding thousands.
+
 The noise falls as the square root of the sample count. Simulated against
 five-second polls with ±40 ms of timing jitter, and checked against a
 known +70 ppm difference:

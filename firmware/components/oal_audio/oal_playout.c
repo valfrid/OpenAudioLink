@@ -1100,8 +1100,29 @@ static void playout_task(void *arg)
                 break;
             }
             offset += written;
-            s_state.frames_played += written / (OAL_RTP_CHANNELS * sizeof(int32_t));
         }
+        /*
+         * Counted from the bytes this chunk actually moved, once, rather
+         * than from each write's own quotient.
+         *
+         * A frame is eight bytes and the driver is under no obligation to
+         * stop on one. The old line did `written / 8` per call and threw
+         * the remainder away every time, so a chunk that took two writes
+         * could lose most of a frame and one that took several could lose
+         * several -- a write of four bytes counted as nothing at all.
+         *
+         * Silent, permanent, and one-directional: the counter can only run
+         * slow. It reads exactly like a slow crystal, which is what it was
+         * taken for. Two speakers reported about -4000 ppm against the Hub
+         * while their buffers sat on the setpoint and their trim counts
+         * said a few hundred -- and a real -4000 would have needed 691,200
+         * trims an hour, against 144,548 in the node's whole life.
+         *
+         * The chunk is a whole number of frames, so on the ordinary path
+         * this is exact however the driver split it. A short write can
+         * still lose up to one frame, once, instead of once per call.
+         */
+        s_state.frames_played += offset / (OAL_RTP_CHANNELS * sizeof(int32_t));
 
         trace();
     }
