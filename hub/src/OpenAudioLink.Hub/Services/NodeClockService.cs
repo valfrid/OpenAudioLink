@@ -53,11 +53,28 @@ public sealed record ClockFit(
 public sealed class NodeClockService : BackgroundService
 {
     /// <summary>
-    /// Same cadence as <see cref="DeviceStatusService"/>. The fit wants
-    /// samples rather than freshness, and over half an hour this is 180 of
-    /// them — far past the point where more stops helping.
+    /// Half a minute, chosen for the node's sake rather than the fit's.
     /// </summary>
-    public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+    /// <remarks>
+    /// <para>
+    /// This started at ten seconds, matching
+    /// <see cref="DeviceStatusService"/>, and that was a poor trade. It put
+    /// a second request per node on top of the status poll the Hub already
+    /// makes and whatever the open page is asking for, on a device with
+    /// very few sockets — the same scarcity the status client's handler
+    /// configuration exists to respect, where running out stops a node
+    /// accepting anything at all.
+    /// </para>
+    /// <para>
+    /// The fit barely notices. Thirty seconds is sixty samples across the
+    /// window instead of a hundred and eighty, and the slope's uncertainty
+    /// grows only as the square root of the count — about 7 ppm at half an
+    /// hour rather than 4, both comfortably inside the 25 ppm this refuses
+    /// to print above. Three times less load for a third of a ppm that
+    /// nobody can act on.
+    /// </para>
+    /// </remarks>
+    public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// How far back the fit reaches. Longer resolves finer: the slope's
