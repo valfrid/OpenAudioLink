@@ -34,7 +34,10 @@ builder.Services.AddSingleton(new HubPaths(dataDirectory));
 builder.Services.AddSingleton(new HubNetworkSetting(builder.Configuration["Hub:Network"]));
 builder.Services.AddSingleton(librespot);
 builder.Services.AddSingleton<DeviceRegistry>();
-builder.Services.AddSingleton(new FirmwareStore(dataDirectory));
+// Resolved rather than constructed inline so the store can log what it
+// prunes; it deletes all but the newest few images at startup.
+builder.Services.AddSingleton(sp => new FirmwareStore(
+    dataDirectory, sp.GetRequiredService<ILoggerFactory>().CreateLogger<FirmwareStore>()));
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
 builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();

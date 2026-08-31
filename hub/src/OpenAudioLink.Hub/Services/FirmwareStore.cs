@@ -23,15 +23,98 @@ public sealed record FirmwareImage(
 /// </summary>
 public sealed class FirmwareStore
 {
-    private readonly string _directory;
+    /// <summary>
+    /// How many images to keep. Everything older is deleted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing pruned this directory before, so it grew for the life of the
+    /// Hub: every upload and every fetched release stayed for ever, in the
+    /// data directory and in a page listing all of them. An image is around
+    /// a megabyte, and a list of thirty is one nobody can pick from.
+    /// </para>
+    /// <para>
+    /// Five, because the reason to keep any old image at all is to go back
+    /// to one — and going back more than a release or two is a decision to
+    /// rebuild, not to pick from a list. Kept by the version inside the
+    /// image, the same order the page offers them in, so "the five newest"
+    /// means the same thing in both places.
+    /// </para>
+    /// </remarks>
+    public const int KeepImages = 5;
 
-    public FirmwareStore(string dataDirectory)
+    private readonly string _directory;
+    private readonly ILogger<FirmwareStore>? _logger;
+
+    public FirmwareStore(string dataDirectory, ILogger<FirmwareStore>? logger = null)
     {
         _directory = Path.Combine(dataDirectory, "firmware");
         Directory.CreateDirectory(_directory);
+        _logger = logger;
+
+        // At startup as well as on upload, so a Hub that has been collecting
+        // images since before this existed is tidied once rather than
+        // staying full until the next upload happens to trim it.
+        Prune();
     }
 
     public string DirectoryPath => _directory;
+
+    /// <summary>
+    /// Deletes all but the <paramref name="keep"/> newest images, newest by
+    /// the version inside the image. Returns what it removed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Best effort, and deliberately so: a delete that fails is skipped and
+    /// the next prune will try again. That is also what makes this safe
+    /// against an update in flight. On Windows the file is open while the
+    /// static handler streams it, so the delete throws and the image stays;
+    /// on Unix the delete succeeds but the open handle keeps serving the
+    /// bytes until the download ends. Either way a node mid-OTA gets the
+    /// whole image, which is the one outcome that must not be got wrong —
+    /// a truncated OTA is a speaker that has to be recovered over USB.
+    /// </para>
+    /// <para>
+    /// An image whose version cannot be read sorts last and so is pruned
+    /// first, which matches how the page refuses to offer it by default.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<string> Prune(int keep = KeepImages)
+    {
+        if (keep < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(keep), keep, "At least one image must be kept.");
+        }
+
+        var removed = new List<string>();
+        foreach (var image in List().Skip(keep))
+        {
+            if (!TrySanitize(image.File, out var path))
+            {
+                continue;
+            }
+            try
+            {
+                File.Delete(path);
+                removed.Add(image.File);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // In use, most likely by an update downloading right now.
+                _logger?.LogDebug(ex, "Could not remove {File}; leaving it", image.File);
+            }
+        }
+
+        if (removed.Count > 0)
+        {
+            _logger?.LogInformation(
+                "Removed {Count} old firmware image(s), keeping the newest {Keep}: {Files}",
+                removed.Count, keep, string.Join(", ", removed));
+        }
+        return removed;
+    }
 
     /// <summary>
     /// Newest firmware first, by the version inside the image.
@@ -171,9 +254,15 @@ public sealed class FirmwareStore
         }
 
         var info = new FileInfo(path);
-        return new FirmwareImage(
+        var saved = new FirmwareImage(
             info.Name, info.Length, ComputeSha256(path), info.LastWriteTimeUtc,
             ReadDescriptor(head.AsSpan(0, read)));
+
+        // Here rather than in each caller: an upload and a fetched release
+        // both land through this method, and putting it in one of them
+        // would have left the other growing.
+        Prune();
+        return saved;
     }
 
     /// <summary>

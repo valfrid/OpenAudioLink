@@ -67,6 +67,59 @@ public class FirmwareStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Saving_prunes_all_but_the_newest_few()
+    {
+        var store = new FirmwareStore(_dir);
+        for (var minor = 1; minor <= FirmwareStore.KeepImages + 3; minor++)
+        {
+            await Save(store, $"node-0.{minor}.0.bin", $"0.{minor}.0");
+        }
+
+        var kept = store.List();
+        Assert.Equal(FirmwareStore.KeepImages, kept.Count);
+        // Newest by the version inside the image, not by when it was written.
+        Assert.Equal("0.8.0", kept[0].Descriptor?.Version);
+        Assert.Equal("0.4.0", kept[^1].Descriptor?.Version);
+    }
+
+    [Fact]
+    public async Task Pruning_goes_by_version_not_by_upload_order()
+    {
+        var store = new FirmwareStore(_dir);
+        // Uploaded newest first, so file order and version order disagree.
+        foreach (var minor in new[] { 9, 8, 7, 6, 5, 4, 3 })
+        {
+            await Save(store, $"node-0.{minor}.0.bin", $"0.{minor}.0");
+        }
+
+        var kept = store.List().Select(i => i.Descriptor?.Version).ToList();
+        Assert.Equal(new[] { "0.9.0", "0.8.0", "0.7.0", "0.6.0", "0.5.0" }, kept);
+    }
+
+    [Fact]
+    public async Task Pruning_at_startup_tidies_a_directory_that_predates_it()
+    {
+        // Written straight to disk: a store that has been collecting images
+        // since before anything pruned them.
+        Directory.CreateDirectory(Path.Combine(_dir, "firmware"));
+        for (var minor = 1; minor <= 9; minor++)
+        {
+            await File.WriteAllBytesAsync(
+                Path.Combine(_dir, "firmware", $"node-0.{minor}.0.bin"),
+                FakeImage.Application(version: $"0.{minor}.0"));
+        }
+
+        Assert.Equal(FirmwareStore.KeepImages, new FirmwareStore(_dir).List().Count);
+    }
+
+    [Fact]
+    public void Pruning_refuses_to_keep_nothing()
+    {
+        var store = new FirmwareStore(_dir);
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.Prune(0));
+    }
+
+    [Fact]
     public async Task Save_then_list_reports_size_and_checksum()
     {
         var store = new FirmwareStore(_dir);
