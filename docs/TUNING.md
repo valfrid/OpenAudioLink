@@ -216,6 +216,18 @@ pads in three hours. Reverted in 0.35.0; keep the band wide.
 Two faults have masqueraded as buffer problems, and both wasted more time
 than the tuning did.
 
+**A power supply can pull the playback clock by hundreds of ppm.** The
+sync panel's Clock column reports each node's playback rate against the
+sender. Two identical boards on identical firmware measured **+5 ppm and
+−178 ppm** — and swapping only the power supplies between them moved the
+error to the other board within minutes. A crystal should sit inside ±50;
+beyond a couple of hundred, suspect the supply before the board, and the
+swap is the test that settles it.
+
+The loop corrects it either way — that −178 ppm node held 4 ms of offset
+all night — so this is about knowing which hardware to distrust rather
+than about rescuing the audio.
+
 **A failing power adapter on one node.** It presented as that node's buffer
 swinging wildly while its partner sat still, and as a lopsided trim count —
 one node working many times harder than an identical one beside it. The

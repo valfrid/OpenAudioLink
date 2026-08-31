@@ -148,7 +148,7 @@
       <thead>
         <tr>
           <th>Speaker</th><th>Buffered</th><th>Settles at</th>
-          <th>Primed at</th><th>Burst dropped</th><th>Trims / pads</th>
+          <th>Primed at</th><th>Clock</th><th>Trims / pads</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -1199,12 +1199,44 @@
           : `${off > 0 ? '+' : ''}${off} ms`;
         const offCls = off === null ? 'muted'
           : Math.abs(off) <= 15 ? 'rssi good' : 'rssi fair';
+        /*
+         * This node's playback clock against the sender's, in parts per
+         * million, from counters already on the page.
+         *
+         * Over any stretch the sender delivered R frames and the DAC
+         * consumed P, and the difference is exactly what the loop had to
+         * add or discard: R = P + trims - pads. So the rate ratio is P/R
+         * and the error is (pads - trims) / framesPlayed. Negative means
+         * this node plays slow, accumulates audio, and trims to keep up.
+         *
+         * Worth its column because it names a cause instead of a symptom.
+         * "One node trims ten times more than its twin" is a puzzle;
+         * "-177 ppm against -5" is a hardware fault with an address. A
+         * crystal should be inside +/-50; beyond a couple of hundred
+         * something is pulling it, and swapping the power supply between
+         * two nodes will say whether it is the board or the supply.
+         *
+         * Read it long, not fresh. Emergency pads during a stall inflate
+         * the pad count, and the climb from priming to the setpoint is
+         * spent frames too, so a node up for a minute reports mostly
+         * transient. Both wash out over an hour.
+         */
+        const played = p.framesPlayed ?? 0;
+        let clock = '<span class="muted">—</span>';
+        if (played > 48000 * 60) {
+          const ppm = Math.round(
+            ((p.paddedFrames ?? 0) - (p.trimmedFrames ?? 0)) * 1e6 / played);
+          const mag = Math.abs(ppm);
+          const ccls = mag <= 50 ? 'rssi good' : mag <= 200 ? 'rssi fair' : 'rssi poor';
+          clock = `<span class="${ccls}">${ppm > 0 ? '+' : ''}${ppm} ppm</span>`;
+        }
+
         return `<tr><td>${esc(r.device.name)}</td>` +
           `<td><strong>${depth} ms</strong> ` +
           `<span class="${offCls}">${offText}</span></td>` +
           `<td>${steer ? steer + ' ms' : '—'}</td>` +
           `<td>${ms(p.primedFrames)} ms</td>` +
-          `<td>${ms(p.primeDiscardedFrames)} ms</td>` +
+          `<td>${clock}</td>` +
           `<td class="muted">${(p.trimmedFrames ?? 0).toLocaleString()} / ` +
           `${(p.paddedFrames ?? 0).toLocaleString()}</td></tr>`;
       }).join('');
