@@ -702,6 +702,79 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 36: the first long run without the connection bug (planned)
+
+**Not yet performed.** Written down before it is run so the result is
+read against a stated expectation rather than against whatever we hoped
+for afterwards.
+
+### Why it is needed
+
+Every long run in this series was made by a Hub whose `DeviceCommandClient`
+had no connection limit — unbounded pooling per node, held open a minute
+idle, on a device with seven sockets in total. Hub 0.65.0 fixed that, and
+the short run immediately after showed **stalls falling from 27 % to 2.6 %
+on one node and 35 % to 6.3 % on the other**, with a 1 484-packet dropout
+disappearing entirely.
+
+Which means the series has no valid baseline. Every buffer conclusion,
+every tuning constant and every "the sender is stalling" diagnosis was
+measured against a Hub that was quietly starving its own nodes of sockets.
+Some of those conclusions will survive and some will not, and there is no
+way to know which without a long run on a Hub that does not have the bug.
+
+### Setup
+
+Hub 0.65.0, firmware 0.39.0 on both consumers. Internet radio, the source
+with the 5 s cushion, so a station hiccup cannot be confused with a
+sender stall. `ringMs` 400, `delayMs` 100 on both nodes — unchanged, so
+this is comparable with run 34. **Switchboard closed for the duration**:
+an open page asks each node for `/stream` about once a second and the
+point is to measure the system, not the observer.
+
+Several hours at least. Overnight is better.
+
+### What to record at the end
+
+| | |
+| --- | --- |
+| Duration, packets sent | |
+| Received / expected, per node | |
+| Lost, and its shape | |
+| Arrival stalls: count, ppm, worst | |
+| Late packets, per node | |
+| Jitter | |
+| Clock ppm and its ±, per node | |
+| Wi-Fi drops and last reason, per node | |
+| Source underrun samples | |
+| Late wakes, worst stall, worst send, GC pause | |
+| Speaker offset: typical and worst | |
+
+### What each outcome would mean
+
+**Stalls stay near 2-6 % and the offset stays under 20 ms.** The system is
+where it should be, the connection bug was the dominant fault all along,
+and the catch-up cap's broken invariant — a 100 ms burst against 75 ms of
+headroom — is real but no longer reached often enough to matter. Nothing
+further to fix; tag it.
+
+**Stalls stay low but the offset still spikes past 40 ms.** The cap
+invariant is the live fault after all, and fixing it is the next change:
+either the cap comes down to the headroom or the steering setpoint moves
+below the midpoint to make room.
+
+**Stalls climb back toward 25 %.** Something outside the Hub's control
+plane is doing it, and the per-window figures — `recentStallMs` against
+`recentSendMs` against `recentGcPauseMs` — say which. Send time larger is
+the network stack; stall larger with the collection tracking it is
+allocation in the source pipeline; stall larger with the collection flat
+is the machine or its power management.
+
+**One node's figures diverge from the other's.** That node's link, not the
+sender. The differential rule has held every time in this series: what
+both nodes see together comes from the sending end, what one sees alone is
+its own radio.
+
 ## Run 35: the turntable, and what a second air hop costs
 
 **2026-08-22.** Vinylspelare (PCM1808 ADC) producing to two consumers,
