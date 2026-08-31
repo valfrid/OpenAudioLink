@@ -2530,9 +2530,29 @@ and swap supplies between two nodes to find out.">Clock</th>
         : (() => {
             const mean = ((stats.meanGapX100 ?? 100) / 100).toFixed(2);
             const allSingle = stats.singleLosses === stats.lossEvents;
-            const label = allSingle ? 'all isolated' : `longest ${stats.longestGap ?? 0}`;
+            /*
+             * The longest burst in time as well as in packets, because the
+             * two read completely differently and only one of them names
+             * the fault.
+             *
+             * "longest 1484 · 1484.00 packets per burst" is a true
+             * description of a node that went deaf for seven and a half
+             * seconds, and nobody reads it that way. At 5 ms a packet, a
+             * burst is a duration, and a duration in seconds is
+             * unmistakably a link that dropped rather than a channel that
+             * is busy -- congestion loses scattered packets, an
+             * association loss takes everything until it comes back.
+             */
+            const longest = stats.longestGap ?? 0;
+            const label = allSingle ? 'all isolated' : `longest ${longest}`;
+            const gapMs = longest * 5;
+            const asTime = gapMs >= 1000
+              ? `<br><span class="rssi poor">${(gapMs / 1000).toFixed(1)} s of `
+                + `audio missing in one go — that is a link that went away, `
+                + `not a busy one. Check this node's Wi-Fi drops.</span>`
+              : '';
             return `${stats.lossEvents} loss bursts · ${label}` +
-              `<br><span class="muted">${mean} packets per burst</span>`;
+              `<br><span class="muted">${mean} packets per burst</span>` + asTime;
           })();
 
       // Ticks are RTP units; at 48 kHz a buffer is sized in milliseconds,
