@@ -1025,6 +1025,40 @@ an input: **the charger goes to the trigger board, never to the XIAO.** The
 XIAO's port is the one hosting the dongle, and that is the whole reason
 this accessory exists.
 
+## Supply quality, and what a capacitor will and will not buy
+
+A node's playback clock was measured **178 ppm slow** on one power supply
+and inside ±20 ppm on two others, on the same board. The error followed the
+supply across a swap onto a second board, so it is the supply and not the
+crystal.
+
+That is a large pull for supply variation, and the mechanism is **not
+established**. The likeliest candidate is transient sag: `VUSB` feeds a
+Wi-Fi radio that draws in bursts, and a supply with high output impedance —
+or a thin cable — dips on every transmission. What that does to the 40 MHz
+oscillator's operating point is plausible rather than proven. A scope on
+the 3V3 rail during transmission would settle it, and nobody has looked.
+
+**What is worth fitting, in order of likely effect:**
+
+| | | |
+| --- | --- | --- |
+| **Bulk, 100–470 µF across the 5 V input** | electrolytic or low-ESR polymer, close to the board | The one that addresses burst sag, because it holds charge across a transmission |
+| 100 nF ceramic at the module | | Already present on the XIAO and inside the module. Adding more does little |
+
+So the useful part is the **bulk** capacitor, not another decoupler. Two
+cautions: it will not rescue a supply that sags below the regulator's
+dropout and stays there — that is a cable or a supply problem, not a
+filtering one — and a large capacitance across a USB input draws an inrush
+spike at plug-in that some supplies answer by shutting down. 100–220 µF is
+usually safe; past that, an inrush limiter earns its place.
+
+**None of this is required for working audio.** The playout's trim absorbed
+that 178 ppm node all night and held its speaker within 4 ms of its
+partner. This is about a node not depending on which charger came to hand,
+which matters more for somebody building from these notes than it did for
+the bench that found it.
+
 ## Reference Analog Source
 
 ```text
