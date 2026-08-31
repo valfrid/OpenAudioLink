@@ -415,6 +415,43 @@ Hub reports rather than from a timer started on the click. A fixed
 countdown reaches zero just the same while a station fails to open, and
 announces a readiness that never happened.
 
+### Does the source change how well the speakers agree?
+
+It can, but only through the sender, and it is worth being clear why.
+Every speaker gets **byte-identical packets at the same moment** — same
+SSRC, same sequence, same timestamps, written in one loop. A source cannot
+reach one speaker and not another. What it can do is change *the sender's
+timing*, and that becomes a differential offset one step later: a
+catch-up burst lifts both buffers by the same ~100 ms, whichever speaker
+was already nearer its trim line crosses it and trims, and a trim moves
+that speaker's playback phase while the other's stays put. Same burst,
+one speaker moves.
+
+So the question "is Spotify worse than radio for sync" reduces to "does
+the Hub stall more under Spotify", and these differ in ways that make it
+plausible:
+
+| | Internet radio | Spotify (librespot) |
+| --- | --- | --- |
+| Source cushion | **5 s** (`RadioSource.Charge`) | **500 ms** (`LibrespotInstance.HighWater`) |
+| Work on this PC | HTTP fetch, decode, resample | all of that **plus** a separate librespot process doing network, decryption and Vorbis decode |
+| Reader thread | dedicated | dedicated |
+
+The 500 ms was chosen as "about double the worst stall measured over that
+hour", and the worst stall measured since is **265 ms** — so it is no
+longer double anything. Its own comment says the number is too small if
+underruns survive it, and `UnderrunSamples` on `/api/stream` is what
+answers that.
+
+**Do not settle this by reasoning.** From 0.62.0 the sender reports
+`recentGcPauseMs` per window alongside the stall and send figures, and a
+collection is the one pause no thread priority escapes — the runtime
+suspends every managed thread, the send loop included. Play radio, read
+the Hub line in the sync note; play Spotify, read it again. If the stall
+and the collection figures rise together under Spotify, the cause is
+allocation in that pipeline and the fix is there. If they do not, the
+source is not the difference and something else is.
+
 ### The catch-up cap no longer fits the ring it was sized against
 
 Measured in the house, two nodes, one stream: **zero packet loss** —

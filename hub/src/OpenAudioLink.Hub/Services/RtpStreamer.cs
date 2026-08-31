@@ -118,6 +118,24 @@ public sealed record StreamStatus(
     /// </summary>
     long RecentLateWakes = 0,
     /// <summary>
+    /// Milliseconds this process spent paused for garbage collection during
+    /// the last reporting window.
+    /// </summary>
+    /// <remarks>
+    /// The per-window twin of <see cref="GcPauseMs"/>, and the only one of
+    /// the two that can be lined up against a stall. A collection suspends
+    /// every managed thread, this one included, however it is prioritised —
+    /// so a window where this and <see cref="RecentStallMs"/> move together
+    /// is a window the runtime stopped, and the fix is upstream in whatever
+    /// the source pipeline allocates rather than anywhere in this loop.
+    ///
+    /// Which makes it the number that compares two sources. Spotify runs a
+    /// decode-and-resample pipe reader that radio does not, so "does the
+    /// sender stall more under Spotify" is answerable by reading this with
+    /// each one playing.
+    /// </remarks>
+    long RecentGcPauseMs = 0,
+    /// <summary>
     /// Milliseconds of decoded audio the source is holding ahead of this
     /// loop, and how many it wants before it counts as charged.
     /// </summary>
@@ -503,6 +521,8 @@ public sealed class RtpStreamer : IAsyncDisposable
         long reportedStallMs = 0;
         long reportedSendMs = 0;
         long reportedLateWakes = 0;
+        long reportedGcPauseMs = 0;
+        long gcAtWindowStart = (long)GC.GetTotalPauseDuration().TotalMilliseconds;
 
         // The loudest sample this reporting window, and when the window
         // started. Reset each report so a stream that goes quiet says so
@@ -724,6 +744,14 @@ public sealed class RtpStreamer : IAsyncDisposable
                     recentSendMs = 0;
                     recentLateWakes = 0;
 
+                    // A difference rather than a counter: the runtime only
+                    // offers the total, and a total cannot be lined up
+                    // against a stall that happened in one particular
+                    // second.
+                    long gcNow = (long)GC.GetTotalPauseDuration().TotalMilliseconds;
+                    reportedGcPauseMs = gcNow - gcAtWindowStart;
+                    gcAtWindowStart = gcNow;
+
                     lastPeakReportMs = clock.ElapsedMilliseconds;
                 }
 
@@ -755,6 +783,7 @@ public sealed class RtpStreamer : IAsyncDisposable
                     RecentStallMs = reportedStallMs,
                     RecentSendMs = reportedSendMs,
                     RecentLateWakes = reportedLateWakes,
+                    RecentGcPauseMs = reportedGcPauseMs,
                     Gen2Collections = GC.CollectionCount(2),
                     GcPauseMs = (long)GC.GetTotalPauseDuration().TotalMilliseconds,
                     BufferedMs = SourceMs(source.BufferedSamples),

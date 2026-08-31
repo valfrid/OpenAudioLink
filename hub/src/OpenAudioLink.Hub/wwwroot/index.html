@@ -1383,6 +1383,17 @@ and swap supplies between two nodes to find out.">Clock</th>
         if ((hub.recentLateWakes ?? 0) > 0) {
           bits.push(`${hub.recentLateWakes} late wakes`);
         }
+        /*
+         * The one pause no thread priority can duck: a collection suspends
+         * every managed thread, this loop included. So it is also the
+         * number that compares two sources — Spotify runs a decode and
+         * resample pipe reader that radio does not — and "does the sender
+         * stall more under Spotify" is answered by reading it with each
+         * one playing rather than by arguing about it.
+         */
+        if ((hub.recentGcPauseMs ?? 0) > 0) {
+          bits.push(`${hub.recentGcPauseMs} ms collecting garbage`);
+        }
         if (sinking) {
           sender = 'Every speaker is below its setpoint and only the sender '
             + 'can put that back — a stall longer than the 100 ms catch-up cap '
@@ -1390,13 +1401,19 @@ and swap supplies between two nodes to find out.">Clock</th>
             + 'about 1 ms a second. ';
         }
         if (bits.length) {
+          const stall = hub.recentStallMs ?? 0;
+          const gc = hub.recentGcPauseMs ?? 0;
           sender += `Hub in the last second: ${bits.join(', ')}. `
-            + ((hub.recentSendMs ?? 0) >= (hub.recentStallMs ?? 0)
+            + ((hub.recentSendMs ?? 0) >= stall
                 ? 'Send time is the larger, so it is the network stack — on '
                   + 'Wi-Fi usually a background scan or adapter power saving. '
-                : 'The thread was not scheduled rather than blocked in the '
-                  + 'socket: garbage collection, a busy machine, or power '
-                  + 'management. ');
+                : gc > 0 && gc * 2 >= stall
+                  ? 'The collection accounts for most of that stall, so the '
+                    + 'fix is upstream in whatever the source is allocating — '
+                    + 'no thread priority escapes a collection. '
+                  : 'The thread was not scheduled rather than blocked in the '
+                    + 'socket, and the runtime was not the cause: a busy '
+                    + 'machine, or power management. ');
         } else if (sinking) {
           sender += 'The Hub reports no stall this second, so watch it across '
             + 'a few refreshes before blaming it. ';
