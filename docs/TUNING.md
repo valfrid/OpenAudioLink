@@ -243,8 +243,7 @@ the house both speakers once showed about **−1000 ppm at the same moment**,
 which reads as two dying crystals and is nothing of the sort: two
 independent crystals do not drift together, and a real 1000 ppm error —
 a tenth of a percent — would be audible as pitch, not as a number on a
-page. What it says is that the source was running fast and both nodes were
-trimming to keep up with it.
+page. Something at the sending end moved both of them together.
 
 So the figure decomposes. What every node shares is **common mode** and
 belongs to the sender; what is left after subtracting it is that node's own
@@ -252,12 +251,41 @@ error, and only that part can be blamed on hardware on the shelf. The panel
 does this split from 0.53.0: it colours each row on the node's own error,
 still shows the raw figure, names the common drift underneath the table
 when it exceeds 100 ppm, and puts the leftover on hover. Before that split
-a fast source painted two healthy boards red.
+a sender-side event painted two healthy boards red.
 
-A shared drift is not itself a fault. Every node follows the sender, so
-they stay with each other and the audio is fine; it is worth knowing
-because it points at the source — a soundcard, a resampler, a capture
-device — rather than at the speakers.
+### What a shared drift is, and what it is not
+
+It is **not the source's clock**, and that guess cost an evening. The
+source cannot pull the send rate at all: `RtpStreamer` paces from a
+`Stopwatch` — the sending PC's own clock — at the nominal rate, and
+`RadioSource` decodes, resamples to the Hub's rate and writes into a ring
+its producer blocks on at a 1.5 s high-water mark. A fast station therefore
+backs up against that mark and a slow one makes the Hub send silence and
+count `UnderrunSamples`. Neither moves the RTP timestamp rate by one part
+in a million. Internet radio, a soundcard, a capture device — none of them
+can do this, so do not go looking there.
+
+What can, and did: **the send loop catching up.** When the send thread has
+been away, `due` runs ahead of `packetsSent` and the loop sends every owed
+packet back to back, capped at `MaxCatchUpPackets` — 100 ms of audio in one
+burst, to every endpoint, inside the same loop. Each node's buffer jumps by
+the whole burst at once and any node near `trim_above` emergency-trims.
+4800 frames inside a 30 s measurement window is 3300 ppm, so a *partial*
+trim on both nodes is more than enough to read as −1000 ppm on both. This
+is common mode by construction: identical packets, one loop.
+
+So when the column goes deep negative on every speaker together, read
+`lateWakes` and the recent stall and send figures on `/api/stream`. They
+separate the two faults that share the symptom: **stall high with send time
+low** means the thread was not scheduled — GC, a busy machine, power
+management — and **send time high** means it was inside `SendTo`, which on
+a Wi-Fi host is an adapter blocked by a background scan.
+
+Stacked on top of any of it is a measurement artifact worth knowing. The
+window starts empty when the page is opened, so the first figure ever shown
+is exactly 30 s wide, and a single catch-up burst inside those 30 s
+dominates it completely. Bad figures that "improve after a while" are the
+window filling, not the speakers recovering.
 
 **A failing power adapter on one node.** It presented as that node's buffer
 swinging wildly while its partner sat still, and as a lopsided trim count —

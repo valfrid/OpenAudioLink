@@ -1239,8 +1239,11 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
        * rate*, so it moves when either end does. Seen in the house:
        * both speakers reporting about -1000 ppm at the same moment. Two
        * crystals cannot drift together like that, and a real 1000 ppm
-       * would be audible as pitch -- what it actually says is that the
-       * source was running fast and both nodes were trimming to keep up.
+       * would be audible as pitch -- something at the sending end moved
+       * both of them together. Usually the send loop catching up after a
+       * stall: one burst of owed packets, identical to every endpoint,
+       * and every node trims at once. See TUNING.md; it is not the
+       * source's clock, which cannot reach the send rate at all.
        *
        * So the number is split. The median across nodes is common mode
        * and belongs to the sender; what is left after subtracting it is
@@ -1372,9 +1375,10 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
        */
       const drift = common !== null && Math.abs(common) >= 100
         ? `All speakers read about ${common > 0 ? '+' : ''}${common} ppm together, `
-          + 'which is the source rate, not the speakers — they follow it and '
-          + 'stay with each other. Read each one against that figure, not '
-          + 'against zero. '
+          + 'so this came from the sending end, not the speakers — they moved '
+          + 'as one and stayed with each other. Read each one against that '
+          + 'figure rather than against zero, and check the Hub’s late '
+          + 'wakes and stall figures before suspecting any board. '
         : '';
       document.getElementById('sync-note').textContent = drift + (full.length
         ? 'A speaker is at the top of its ring, so it is discarding audio to '
