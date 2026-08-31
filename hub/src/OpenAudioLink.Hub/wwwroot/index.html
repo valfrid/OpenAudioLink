@@ -1363,13 +1363,15 @@ and swap supplies between two nodes to find out.">Clock</th>
        * statement is still which node disagrees with the others.
        */
       let hubFit = null;
+      let hub = null;
       try {
         const s = await (await fetch('/api/stream', { cache: 'no-store' })).json();
         if (s.running && (s.packetsSent ?? 0) > 0) {
+          hub = s;
           hubFit = clockRate(clockSample(
-            ' hub', performance.now(), s.packetsSent * FRAMES_PER_PACKET));
+            'hub:sender', performance.now(), s.packetsSent * FRAMES_PER_PACKET));
         } else {
-          clockHistory.delete(' hub');
+          clockHistory.delete('hub:sender');
         }
       } catch { /* the reference is optional; the median below covers it */ }
       /*
@@ -1530,7 +1532,57 @@ and swap supplies between two nodes to find out.">Clock</th>
           : 'The Hub is not the sender here, so Clock compares the speakers '
             + 'with each other. It can say which one disagrees, not which one '
             + 'is right. ';
-      document.getElementById('sync-note').textContent = drift + (full.length
+
+      /*
+       * Every speaker below its setpoint at once, and the Hub's own health,
+       * because those two belong in the same sentence.
+       *
+       * A speaker cannot refill its own buffer out of nothing. The margin
+       * is only rebuilt by consuming slower -- one padded frame every four
+       * chunks, about 1 ms per second -- so a buffer that keeps sinking is
+       * losing audio faster than that, and the only place audio goes
+       * missing is before it is sent. The catch-up cap discards whatever a
+       * stall owed beyond 100 ms, permanently, and the send loop's own
+       * counters say how often that is happening. They were reported by
+       * the Hub and shown nowhere, which made "look at the sender" advice
+       * nobody could act on.
+       */
+      const steerMs = r => ms(r.playout.steerFrames);
+      const sinking = playing.length >= 2 && playing.every(r =>
+        steerMs(r) > 0 && ms(r.playout.bufferedFrames) < steerMs(r) - 30);
+
+      let sender = '';
+      if (hub) {
+        const bits = [];
+        if ((hub.recentStallMs ?? 0) > 0) {
+          bits.push(`${hub.recentStallMs} ms away`);
+        }
+        if ((hub.recentSendMs ?? 0) > 0) {
+          bits.push(`${hub.recentSendMs} ms in one send`);
+        }
+        if ((hub.recentLateWakes ?? 0) > 0) {
+          bits.push(`${hub.recentLateWakes} late wakes`);
+        }
+        if (sinking) {
+          sender = 'Every speaker is below its setpoint and only the sender '
+            + 'can put that back — a stall longer than the 100 ms catch-up cap '
+            + 'discards the rest for good, and a speaker rebuilds margin at '
+            + 'about 1 ms a second. ';
+        }
+        if (bits.length) {
+          sender += `Hub in the last second: ${bits.join(', ')}. `
+            + ((hub.recentSendMs ?? 0) >= (hub.recentStallMs ?? 0)
+                ? 'Send time is the larger, so it is the network stack — on '
+                  + 'Wi-Fi usually a background scan or adapter power saving. '
+                : 'The thread was not scheduled rather than blocked in the '
+                  + 'socket: garbage collection, a busy machine, or power '
+                  + 'management. ');
+        } else if (sinking) {
+          sender += 'The Hub reports no stall this second, so watch it across '
+            + 'a few refreshes before blaming it. ';
+        }
+      }
+      document.getElementById('sync-note').textContent = sender + drift + (full.length
         ? 'A speaker is at the top of its ring, so it is discarding audio to '
           + 'make room — and a discard jumps its playback position. Raise '
           + 'ringMs on it; that buys burst headroom without adding latency.'
