@@ -271,6 +271,18 @@ Two details it needs to be usable:
   ±40 ms of jitter, endpoint differencing over half an hour is worth about
   ±440 ppm — worthless for a figure whose interesting range is ±50. The
   fit over ~360 samples recovered a true +70 ppm as **+71**.
+- **Measured by the Hub, not by the page.** Until 0.59.0 the fit lived in
+  the browser, and the browser is the wrong house for it: closing the tab
+  threw every sample away, so a measurement needing tens of minutes
+  restarted each time somebody opened the panel — and opening it is the
+  only reason it exists. On a phone it never got that far, since a
+  backgrounded tab has its timers throttled and the surviving samples were
+  too sparse to fit at all. `NodeClockService` now polls each consumer's
+  `/stream` every 10 s, fits against the Hub's own `Stopwatch` — the same
+  counter `RtpStreamer` paces from, so the node is measured against the
+  very clock its buffer must keep up with — and serves the result on
+  `/api/clocks`. No second fit, no subtraction, no browser in the path, and
+  it keeps running with every page closed.
 - **Gate on the fit's uncertainty, not on the clock.** 0.55.0 printed the
   figure once it had three minutes of samples, and three minutes is worth
   roughly ±130 ppm of noise in the slope alone — so it jumped by a hundred

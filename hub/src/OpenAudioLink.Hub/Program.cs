@@ -74,6 +74,10 @@ builder.Services.AddSingleton<FirmwareFetcher>();
 builder.Services.AddSingleton<HubUpdater>();
 builder.Services.AddHostedService<DiscoveryService>();
 builder.Services.AddHostedService<DeviceStatusService>();
+// Singleton as well as hosted: the endpoint reads the fits the loop
+// builds, and two instances would each measure half as often.
+builder.Services.AddSingleton<NodeClockService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeClockService>());
 // Puts a node-to-node stream back after a roam takes it away. Only node
 // producers: what the Hub sends itself is already supervised by whatever
 // is driving it.
@@ -219,6 +223,11 @@ app.MapGet("/api/devices", (DeviceRegistry registry) => Results.Ok(registry.Snap
 
 app.MapGet("/api/devices/{id}", (string id, DeviceRegistry registry) =>
     registry.TryGet(id, out var device) ? Results.Ok(device) : Results.NotFound());
+
+// Every node's crystal against this Hub's, measured by the Hub so it
+// survives the page being closed. See NodeClockService for why that
+// matters more than it sounds.
+app.MapGet("/api/clocks", (NodeClockService clocks) => Results.Ok(clocks.Snapshot()));
 
 app.MapGet("/api/firmware", (FirmwareStore store) => Results.Ok(store.List()));
 
