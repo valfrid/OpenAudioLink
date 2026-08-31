@@ -228,30 +228,55 @@ The loop corrects it either way — that −178 ppm node held 4 ms of offset
 all night — so this is about knowing which hardware to distrust rather
 than about rescuing the audio.
 
-The Clock figure is a **rate over the last minute**, not an average since
-boot, and the difference matters when testing a change. The cumulative
-counters carry the climb from priming at 200 ms to the steering band at
-220 — 960 frames of net padding that is not a crystal error and never
-leaves the totals. On a node nine minutes old that alone is 37 ppm, and it
-reads highest on a freshly booted node, which is exactly the node somebody
-studies after swapping its supply. Hovering shows the since-boot figure
-beside it; the two disagreeing is itself informative.
+### Measuring the clocks, and why pads and trims cannot do it
 
-**Read the column across the speakers before reading any one row.** Clock
-measures a node against *the sender*, so it moves when either end does. In
-the house both speakers once showed about **−1000 ppm at the same moment**,
-which reads as two dying crystals and is nothing of the sort: two
-independent crystals do not drift together, and a real 1000 ppm error —
-a tenth of a percent — would be audible as pitch, not as a number on a
-page. Something at the sending end moved both of them together.
+Until 0.55.0 the Clock column was computed from pads and trims:
+`(pads − trims) / framesPlayed`. The algebra is sound — the sender
+delivered R frames, the DAC consumed P, and `R = P + trims − pads` — and
+the figure was still useless, for a reason worth keeping.
 
-So the figure decomposes. What every node shares is **common mode** and
-belongs to the sender; what is left after subtracting it is that node's own
-error, and only that part can be blamed on hardware on the shelf. The panel
-does this split from 0.53.0: it colours each row on the node's own error,
-still shows the raw figure, names the common drift underneath the table
-when it exceeds 100 ppm, and puts the leftover on hover. Before that split
-a sender-side event painted two healthy boards red.
+**A pad or a trim is a phase correction, and corrections have two causes
+that the counters cannot separate.** One is a crystal running at the wrong
+rate. The other is the buffer recovering from a disturbance. The second is
+enormously larger: a single 100 ms catch-up burst forces about 4,800 frames
+of trim, which over a one-minute window reads as **1,600 ppm** — while a
+real crystal error is tens. There is no window both short enough to be
+responsive and long enough to bury a disturbance that big. Corrections
+also arrive *after* their cause, so a window catches the recovery without
+the event, and the column swung by thousands of ppm while the hardware sat
+there doing nothing wrong. Two speakers reading −936 and −998 at the same
+moment came from exactly this, and it prompted a hunt for two failing
+crystals that did not exist.
+
+Common-mode subtraction (0.53.0) helped and did not fix it. Subtracting
+the median removes a disturbance both nodes felt equally, but the quantity
+being measured was still corrections, not clocks.
+
+**From 0.55.0 the clocks are measured directly, and the ring is not in it
+at all.** A node's `framesPlayed` is its I²S sample counter; the Hub's
+`packetsSent` follows the send loop's `Stopwatch`, including across a
+capped catch-up. Both are sampled against one common observer — the
+browser — and fitted by least squares over up to half an hour of polls.
+The browser's own clock error lands in both fits and **cancels exactly in
+the subtraction**, leaving the node's crystal against the Hub's.
+
+Nothing in that path touches the buffer, so a burst, a stall, a trim or a
+re-prime does not move it.
+
+Two details it needs to be usable:
+
+- **Least squares, not the two ends.** Each reading is stamped a round
+  trip away from when the counter was really read, so an endpoint pair
+  inherits the timing error of two particular samples. Simulated with
+  ±40 ms of jitter, endpoint differencing over half an hour is worth about
+  ±440 ppm — worthless for a figure whose interesting range is ±50. The
+  fit over ~360 samples recovered a true +70 ppm as **+71**.
+- **Minutes, not seconds.** The column counts down the minutes until it
+  has three, and says so rather than showing a number it cannot support.
+
+When the Hub is not the producer there is no local reference, and the
+column falls back to comparing the speakers with each other. That can say
+which one disagrees; it cannot say which one is right.
 
 ### What a shared drift is, and what it is not
 

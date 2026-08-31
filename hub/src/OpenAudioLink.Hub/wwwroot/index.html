@@ -149,11 +149,13 @@
         <tr>
           <th>Speaker</th><th>Buffered</th><th>Settles at</th>
           <th>Primed at</th>
-          <th title="Playback rate against the sender, over the last minute.
-Blank for the first half minute after opening this page, and unsettled for
-a little after that: the corrections it counts are whole frames, so a short
-window is mostly rounding. A figure every speaker shares is the source
-rate; hover a reading to see what is left over as the node's own.">Clock</th>
+          <th title="This speaker's crystal against the Hub's, in parts per
+million, fitted over minutes of samples. It is a measurement of the clocks
+alone: a burst, a stall, a trim or a re-prime does not move it. Counts down
+the minutes until it has enough samples to mean anything — a crystal error
+is tens of ppm, and that cannot be seen in a few seconds. Inside ±50 is a
+normal crystal; past a couple of hundred, suspect the power supply first
+and swap supplies between two nodes to find out.">Clock</th>
           <th>Trims / pads</th>
         </tr>
       </thead>
@@ -881,23 +883,6 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
     const syncHistory = [];
 
     /*
-     * Per node, a minute of raw playout counters, so the clock figure can
-     * be a rate rather than a lifetime average.
-     *
-     * The counters are cumulative since boot, and the climb from priming
-     * at 200 ms to the steering band at 220 is 960 frames of net padding
-     * that has nothing to do with any crystal. It never leaves the totals,
-     * so a lifetime figure reads high, and reads highest on a node that
-     * just booted -- which is precisely the node somebody is looking at
-     * after swapping its power supply. Measured at 37 ppm of error on a
-     * node nine minutes old.
-     *
-     * Differencing two readings a minute apart removes it entirely, along
-     * with everything else that happened before the window.
-     */
-    const clockHistory = new Map();
-
-    /*
      * One device, opened out: everything the row had no space for, and the
      * buttons that act on it.
      *
@@ -993,33 +978,87 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
      * in sync with itself, and a panel that says so is noise.
      */
     /*
-     * One node's playback rate against the sender, over the last minute of
-     * polls. Null until there is half a minute of audio to divide by --
-     * the corrections are whole frames, so a shorter window is mostly
-     * quantisation, which is why the figure is blank for the first several
-     * refreshes after opening the page and jumpy for a few after that.
+     * Every clock in the house, measured against one common observer.
+     *
+     * The old figure counted pads and trims, and it could not answer the
+     * question anybody actually has. A pad or a trim is a *phase*
+     * correction, and corrections come from two completely different
+     * causes: a crystal running at the wrong rate, and the buffer
+     * recovering from a disturbance. The second dwarfs the first. A single
+     * 100 ms catch-up burst forces ~4 800 frames of trim, which over a
+     * minute reads as 1 600 ppm -- while a real crystal error is tens.
+     * There is no window short enough to be responsive and long enough to
+     * bury a disturbance that large, so the column swung wildly and told
+     * nobody anything about their hardware.
+     *
+     * This measures the clocks directly instead. A node's framesPlayed is
+     * its I2S sample counter; the Hub's packetsSent tracks its Stopwatch.
+     * Both are read here, against this browser's clock -- so both carry
+     * whatever error this browser's clock has, and **subtracting one from
+     * the other cancels it exactly**. What is left is the node's crystal
+     * against the Hub's crystal, which is the number the buffer arithmetic
+     * could never isolate.
+     *
+     * Nothing here touches the ring, so a burst, a stall, a trim or a
+     * re-prime moves it not at all. Those are still worth watching, and
+     * the Buffered and Trims columns are where they show.
      */
-    function clockPpm(r) {
-      const p = r.playout;
-      const played = p.framesPlayed ?? 0;
-      let hist = clockHistory.get(r.device.id);
-      if (!hist || played < (hist[hist.length - 1]?.played ?? 0)) {
-        // Counters run backwards only across a reboot; start again.
+    const clockHistory = new Map();
+
+    /* Long, because the thing being measured is small. Timing noise on a
+     * sample is tens of milliseconds; over three minutes that is a floor
+     * of a few hundred ppm on two endpoints alone, which is why the fit
+     * below uses every sample instead. Half an hour of them resolves the
+     * tens of ppm a crystal actually differs by. */
+    const CLOCK_WINDOW_MS = 30 * 60 * 1000;
+    const CLOCK_MIN_MS = 3 * 60 * 1000;
+
+    /* Frames in one packet, at the 48 kHz and 5 ms this page assumes
+     * everywhere it turns frames into milliseconds. */
+    const FRAMES_PER_PACKET = 240;
+
+    function clockSample(id, at, frames) {
+      let hist = clockHistory.get(id);
+      // Counters run backwards only across a reboot or a restarted
+      // stream; either way the old samples describe a different clock run.
+      if (!hist || frames < (hist[hist.length - 1]?.frames ?? 0)) {
         hist = [];
-        clockHistory.set(r.device.id, hist);
+        clockHistory.set(id, hist);
       }
-      const at = performance.now();
-      hist.push({ t: at, played,
-                  pads: p.paddedFrames ?? 0, trims: p.trimmedFrames ?? 0 });
-      while (hist.length > 2 && at - hist[0].t > 60000) {
-        hist.shift();
+      hist.push({ at, frames });
+      while (hist.length > 2 && at - hist[0].at > CLOCK_WINDOW_MS) hist.shift();
+      return hist;
+    }
+
+    /*
+     * Least squares through every sample, not the difference of the two
+     * ends.
+     *
+     * Each reading is stamped a round trip away from when the counter was
+     * really read, so an endpoint pair inherits the timing error of two
+     * particular samples and jitters by hundreds of ppm. A fit over
+     * several hundred of them averages that away, and it is the
+     * difference between a number that settles and one that dances --
+     * which was the complaint.
+     */
+    function clockRate(hist) {
+      if (!hist || hist.length < 4) return null;
+      const span = hist[hist.length - 1].at - hist[0].at;
+      if (span < CLOCK_MIN_MS) return null;
+      let sx = 0, sy = 0;
+      for (const p of hist) { sx += p.at; sy += p.frames; }
+      const mx = sx / hist.length, my = sy / hist.length;
+      let sxy = 0, sxx = 0;
+      for (const p of hist) {
+        const dx = p.at - mx;
+        sxy += dx * (p.frames - my);
+        sxx += dx * dx;
       }
-      const first = hist[0];
-      const last = hist[hist.length - 1];
-      const dPlayed = last.played - first.played;
-      if (dPlayed <= 48000 * 30) return null;
-      return Math.round(
-        ((last.pads - first.pads) - (last.trims - first.trims)) * 1e6 / dPlayed);
+      if (sxx <= 0) return null;
+      // Frames per millisecond against the nominal 48.
+      const ppm = (sxy / sxx / 48 - 1) * 1e6;
+      if (!Number.isFinite(ppm)) return null;
+      return { ppm, span };
     }
 
     async function refreshSync() {
@@ -1232,40 +1271,53 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
       }
 
       /*
-       * Every node's rate first, because one node's figure means nothing
-       * on its own.
-       *
-       * The Clock figure is the node measured *against the Hub's send
-       * rate*, so it moves when either end does. Seen in the house:
-       * both speakers reporting about -1000 ppm at the same moment. Two
-       * crystals cannot drift together like that, and a real 1000 ppm
-       * would be audible as pitch -- something at the sending end moved
-       * both of them together. Usually the send loop catching up after a
-       * stall: one burst of owed packets, identical to every endpoint,
-       * and every node trims at once. See TUNING.md; it is not the
-       * source's clock, which cannot reach the send rate at all.
-       *
-       * So the number is split. The median across nodes is common mode
-       * and belongs to the sender; what is left after subtracting it is
-       * the node's own error, and that is the only part any hardware on
-       * the shelf can be blamed for. Colouring on the absolute figure
-       * pointed at two innocent boards.
+       * Every clock sampled first, because a rate means nothing until
+       * there is something to state it against.
        */
       const rates = new Map();
       for (const r of playing) {
-        const ppm = clockPpm(r);
-        if (ppm !== null) rates.set(r.device.id, ppm);
+        // Stamped at the round-trip midpoint, same as the offset above:
+        // the counter was read one network leg before the reply landed.
+        const hist = clockSample(r.device.id, r.at, r.playout.framesPlayed ?? 0);
+        const fit = clockRate(hist);
+        if (fit) rates.set(r.device.id, fit);
       }
+
       /*
-       * Two rates at least, or there is no common mode to speak of. With
-       * one reading the median is that reading, every node subtracts to
-       * exactly zero, and the column would report perfect health on a
-       * board that is genuinely off. One node cannot tell you which end
-       * of the link is drifting; it takes a second to vote.
+       * The Hub's own clock, sampled the same way, so the speakers have
+       * something local to be measured against.
+       *
+       * packetsSent follows the send loop's Stopwatch -- including across a
+       * capped catch-up, which moves the counter forward without writing
+       * packets -- so it tracks the sending PC's crystal and not the
+       * delivery pattern.
+       *
+       * Absent when the Hub is not the producer, and then the median of the
+       * speakers stands in: with no local reference the best available
+       * statement is still which node disagrees with the others.
        */
-      const rateList = [...rates.values()].sort((a, b) => a - b);
-      const common = rateList.length >= 2
-        ? rateList[Math.floor(rateList.length / 2)] : null;
+      let hubFit = null;
+      try {
+        const s = await (await fetch('/api/stream', { cache: 'no-store' })).json();
+        if (s.running && (s.packetsSent ?? 0) > 0) {
+          hubFit = clockRate(clockSample(
+            ' hub', performance.now(), s.packetsSent * FRAMES_PER_PACKET));
+        } else {
+          clockHistory.delete(' hub');
+        }
+      } catch { /* the reference is optional; the median below covers it */ }
+      /*
+       * The reference every speaker is reported against.
+       *
+       * The Hub when it is sending, because that is the clock the buffers
+       * actually have to keep up with. Otherwise the median of the
+       * speakers, which cannot say who is right but can still say who
+       * disagrees -- and needs two, since with one the median is that one
+       * and every node subtracts to a flattering zero.
+       */
+      const rateList = [...rates.values()].map(f => f.ppm).sort((a, b) => a - b);
+      const reference = hubFit ? hubFit.ppm
+        : rateList.length >= 2 ? rateList[Math.floor(rateList.length / 2)] : null;
 
       document.querySelector('#sync-table tbody').innerHTML = rows.map(r => {
         const p = r.playout;
@@ -1289,51 +1341,43 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
         const offCls = off === null ? 'muted'
           : Math.abs(off) <= 15 ? 'rssi good' : 'rssi fair';
         /*
-         * This node's playback clock against the sender's, in parts per
-         * million, from counters already on the page.
+         * This node's sample clock against the reference, in parts per
+         * million: how fast its crystal runs, and nothing else.
          *
-         * Over any stretch the sender delivered R frames and the DAC
-         * consumed P, and the difference is exactly what the loop had to
-         * add or discard: R = P + trims - pads. So the rate ratio is P/R
-         * and the error is (pads - trims) / framesPlayed. Negative means
-         * this node plays slow, accumulates audio, and trims to keep up.
+         * Both were fitted against this browser's clock, so the browser's
+         * own error is in both and cancels in the subtraction. Nothing in
+         * it comes from the ring, so a burst, a stall or a trim leaves it
+         * where it was -- which is the whole point, and what the old
+         * pad-and-trim figure could never manage.
          *
-         * Worth its column because it names a cause instead of a symptom.
-         * "One node trims ten times more than its twin" is a puzzle;
-         * "-177 ppm against -5" is a hardware fault with an address. A
-         * crystal should be inside +/-50; beyond a couple of hundred
-         * something is pulling it, and swapping the power supply between
-         * two nodes will say whether it is the board or the supply.
-         *
-         * Read it long, not fresh. Emergency pads during a stall inflate
-         * the pad count, and the climb from priming to the setpoint is
-         * spent frames too, so a node up for a minute reports mostly
-         * transient. Both wash out over an hour.
+         * A crystal should sit inside +/-50 ppm. Beyond a couple of
+         * hundred something is pulling it, and swapping the power supply
+         * between two nodes says whether it is the board or the supply.
+         * Positive is fast, and a fast node drains its buffer and pads.
          */
-        const own = rates.get(r.device.id) ?? null;
+        const fit = rates.get(r.device.id) ?? null;
         let clock = '<span class="muted">—</span>';
-        if (own !== null) {
-          /*
-           * Coloured on what is left after the sender's own drift, since
-           * that is the only part this board is answerable for. The figure
-           * shown is still the raw one, because it is what the node is
-           * really doing and hiding it would just move the confusion.
-           */
-          const mine = common === null ? own : own - common;
+        if (fit === null) {
+          // Say which, because "nothing yet" and "nothing to compare
+          // against" look identical and need different patience.
+          const hist = clockHistory.get(r.device.id);
+          const got = hist ? hist[hist.length - 1].at - hist[0].at : 0;
+          const left = Math.ceil((CLOCK_MIN_MS - got) / 60000);
+          clock = `<span class="muted" title="A crystal error is tens of ppm, `
+            + `so it takes minutes of samples to see one at all.">`
+            + `${left > 0 ? `${left} min` : '—'}</span>`;
+        } else if (reference === null) {
+          clock = '<span class="muted" title="Needs the Hub sending, or a '
+            + 'second speaker to compare against.">—</span>';
+        } else {
+          const mine = Math.round(fit.ppm - reference);
           const mag = Math.abs(mine);
           const ccls = mag <= 50 ? 'rssi good' : mag <= 200 ? 'rssi fair' : 'rssi poor';
-          const lifePlayed = p.framesPlayed ?? 0;
-          const life = lifePlayed > 48000 * 60
-            ? Math.round(((p.paddedFrames ?? 0) - (p.trimmedFrames ?? 0))
-                         * 1e6 / lifePlayed)
-            : null;
-          const bits = [];
-          if (common !== null && Math.abs(own - common) >= 5) {
-            bits.push(`${mine > 0 ? '+' : ''}${mine} ppm of its own`);
-          }
-          if (life !== null) bits.push(`since boot ${life > 0 ? '+' : ''}${life} ppm`);
-          const title = bits.length ? ` title="${bits.join(', ')}"` : '';
-          clock = `<span class="${ccls}"${title}>${own > 0 ? '+' : ''}${own} ppm</span>`;
+          const mins = Math.round(fit.span / 60000);
+          const title = `fitted over ${mins} min against `
+            + `${hubFit ? 'the Hub' : 'the other speakers'}`;
+          clock = `<span class="${ccls}" title="${title}">`
+            + `${mine > 0 ? '+' : ''}${mine} ppm</span>`;
         }
 
         return `<tr><td>${esc(r.device.name)}</td>` +
@@ -1362,24 +1406,18 @@ rate; hover a reading to see what is left over as the node's own.">Clock</th>
         ms(r.playout.bufferedFrames) >= ms(r.playout.capacityFrames ?? 0) - 5);
 
       /*
-       * Say the common-mode figure out loud when it is large. A reader
-       * looking at two speakers both showing -1000 ppm will otherwise
-       * conclude both boards are broken, which is what happened here.
-       * Nothing is wrong with a shared drift -- every node follows the
-       * sender and they stay together -- so the sentence names the source
-       * and moves on rather than raising an alarm.
-       *
-       * The threshold is 100 ppm because that is well past what a crystal
-       * spread will produce in common between two boards, so a figure this
-       * big and this shared is the source, not the speakers.
+       * Name what the Clock column is against, because the same number
+       * means different things in the two cases and only one of them can
+       * convict a board.
        */
-      const drift = common !== null && Math.abs(common) >= 100
-        ? `All speakers read about ${common > 0 ? '+' : ''}${common} ppm together, `
-          + 'so this came from the sending end, not the speakers — they moved '
-          + 'as one and stayed with each other. Read each one against that '
-          + 'figure rather than against zero, and check the Hub’s late '
-          + 'wakes and stall figures before suspecting any board. '
-        : '';
+      const drift = rates.size === 0 ? ''
+        : hubFit
+          ? 'Clock is each speaker against the Hub, both fitted over minutes '
+            + 'of samples. It measures crystals only — a burst, a stall or a '
+            + 'trim does not move it. '
+          : 'The Hub is not the sender here, so Clock compares the speakers '
+            + 'with each other. It can say which one disagrees, not which one '
+            + 'is right. ';
       document.getElementById('sync-note').textContent = drift + (full.length
         ? 'A speaker is at the top of its ring, so it is discarding audio to '
           + 'make room — and a discard jumps its playback position. Raise '
