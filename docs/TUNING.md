@@ -228,6 +228,15 @@ The loop corrects it either way — that −178 ppm node held 4 ms of offset
 all night — so this is about knowing which hardware to distrust rather
 than about rescuing the audio.
 
+The Clock figure is a **rate over the last minute**, not an average since
+boot, and the difference matters when testing a change. The cumulative
+counters carry the climb from priming at 200 ms to the steering band at
+220 — 960 frames of net padding that is not a crystal error and never
+leaves the totals. On a node nine minutes old that alone is 37 ppm, and it
+reads highest on a freshly booted node, which is exactly the node somebody
+studies after swapping its supply. Hovering shows the since-boot figure
+beside it; the two disagreeing is itself informative.
+
 **A failing power adapter on one node.** It presented as that node's buffer
 swinging wildly while its partner sat still, and as a lopsided trim count —
 one node working many times harder than an identical one beside it. The

@@ -875,6 +875,23 @@
     const syncHistory = [];
 
     /*
+     * Per node, a minute of raw playout counters, so the clock figure can
+     * be a rate rather than a lifetime average.
+     *
+     * The counters are cumulative since boot, and the climb from priming
+     * at 200 ms to the steering band at 220 is 960 frames of net padding
+     * that has nothing to do with any crystal. It never leaves the totals,
+     * so a lifetime figure reads high, and reads highest on a node that
+     * just booted -- which is precisely the node somebody is looking at
+     * after swapping its power supply. Measured at 37 ppm of error on a
+     * node nine minutes old.
+     *
+     * Differencing two readings a minute apart removes it entirely, along
+     * with everything else that happened before the window.
+     */
+    const clockHistory = new Map();
+
+    /*
      * One device, opened out: everything the row had no space for, and the
      * buttons that act on it.
      *
@@ -1222,13 +1239,39 @@
          * transient. Both wash out over an hour.
          */
         const played = p.framesPlayed ?? 0;
+        let hist = clockHistory.get(r.device.id);
+        if (!hist || played < (hist[hist.length - 1]?.played ?? 0)) {
+          // Counters run backwards only across a reboot; start again.
+          hist = [];
+          clockHistory.set(r.device.id, hist);
+        }
+        hist.push({ t: now, played,
+                    pads: p.paddedFrames ?? 0, trims: p.trimmedFrames ?? 0 });
+        while (hist.length > 2 && now - hist[0].t > 60000) {
+          hist.shift();
+        }
+
         let clock = '<span class="muted">—</span>';
-        if (played > 48000 * 60) {
+        const first = hist[0];
+        const last = hist[hist.length - 1];
+        const dPlayed = last.played - first.played;
+        // Half a minute of audio before the rate means anything: the
+        // corrections are whole frames, so a short window is mostly
+        // quantisation.
+        if (dPlayed > 48000 * 30) {
           const ppm = Math.round(
-            ((p.paddedFrames ?? 0) - (p.trimmedFrames ?? 0)) * 1e6 / played);
+            ((last.pads - first.pads) - (last.trims - first.trims)) * 1e6 / dPlayed);
           const mag = Math.abs(ppm);
           const ccls = mag <= 50 ? 'rssi good' : mag <= 200 ? 'rssi fair' : 'rssi poor';
-          clock = `<span class="${ccls}">${ppm > 0 ? '+' : ''}${ppm} ppm</span>`;
+          // The lifetime figure stays available on hover: one says what the
+          // board is doing now, the other what it has done since it booted,
+          // and a disagreement between them is itself worth seeing.
+          const life = played > 48000 * 60
+            ? Math.round(((p.paddedFrames ?? 0) - (p.trimmedFrames ?? 0)) * 1e6 / played)
+            : null;
+          const title = life === null ? ''
+            : ` title="since boot: ${life > 0 ? '+' : ''}${life} ppm"`;
+          clock = `<span class="${ccls}"${title}>${ppm > 0 ? '+' : ''}${ppm} ppm</span>`;
         }
 
         return `<tr><td>${esc(r.device.name)}</td>` +
