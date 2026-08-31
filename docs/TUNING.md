@@ -281,6 +281,47 @@ low** means the thread was not scheduled — GC, a busy machine, power
 management — and **send time high** means it was inside `SendTo`, which on
 a Wi-Fi host is an adapter blocked by a background scan.
 
+### The catch-up cap no longer fits the ring it was sized against
+
+Measured in the house, two nodes, one stream: **zero packet loss** —
+146,369 of 146,369 on one, 146,370 of 146,370 on the other — jitter of
+1.27 and 1.54 ms, and 13 and 14 late packets in twelve minutes. Nothing
+wrong with the air at all. And yet 13,299 and 15,835 *delivery stalls*,
+worst case 265 ms and 259 ms.
+
+Two independent radios in different rooms agreeing on a worst case within
+six milliseconds of each other, with no loss and no jitter to speak of, is
+not a Wi-Fi fault. Packets that were never sent arrive nowhere, together.
+**The sender was not sending for a quarter of a second at a time.**
+
+Then the arithmetic that turns that into trims. `MaxCatchUpPackets` caps a
+catch-up burst at 100 ms, and its rule is that the cap must fit under the
+receiver's headroom above where the ring rests. When it was written, the
+ring rested at the target — on a 400 ms ring with 100 ms delay that is
+trim_above (300) − target (200) = 100 ms, and the cap fitted exactly.
+
+Firmware 0.38.0 then added steering, which parks the ring at the middle of
+the quiet band instead: `(pad_below + trim_above) / 2` = **225 ms**. The
+headroom became 75 ms. The cap stayed at 100. Nobody revisited it, because
+the two constants live in different repositories and neither mentions the
+other.
+
+So every full-size burst now lands the node at about 325 ms — above its
+300 ms trim line — and it trims one frame per chunk until it is back down.
+The panel showed exactly this: both buffers jumping **+102 and +106 ms in
+the same instant**, both above the trim line, followed by ~2,900 and
+~1,400 trims in thirty seconds. That is a Clock reading of a couple of
+thousand ppm, on two boards with nothing whatever wrong with them.
+
+The invariant is `cap ≤ trim_above − steer_to`. Do not fix it by dropping
+the cap to 15 packets: the warning on that constant still stands, and a
+cap below the length of a real stall turns a burst the ring could have
+absorbed into a gap that no ring can. **Fix the sender's stalls and the
+cap never fires.** The other lever, if the stalls prove unfixable, is to
+bias `s_steer_to` below the midpoint — that buys burst headroom at the
+cost of underrun margin, and this system is measurably short of the first
+and not the second.
+
 Stacked on top of any of it is a measurement artifact worth knowing. The
 window starts empty when the page is opened, so the first figure ever shown
 is exactly 30 s wide, and a single catch-up burst inside those 30 s

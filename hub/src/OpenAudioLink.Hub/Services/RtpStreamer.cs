@@ -132,15 +132,40 @@ public sealed class RtpStreamer : IAsyncDisposable
     /// Most packets a stall may release at once: 100 ms of audio.
     ///
     /// The rule is that this belongs just under the receiver's headroom
-    /// above its playout target — a burst that fits in the ring costs
-    /// nothing, and one that does not is trimmed at the far end anyway. It
-    /// is tempting to make it smaller to be gentle, and that is a mistake:
-    /// anything the cap discards is gone for good, so a cap below the
-    /// length of a stall converts a burst the receiver could have absorbed
-    /// into a gap that no buffer can. Simulated against the observed
-    /// sender, a 40 ms cap produced an underrun on every stall while a
-    /// 100 ms cap produced almost none.
+    /// above <em>where its ring actually rests</em> — a burst that fits
+    /// costs nothing, and one that does not is trimmed at the far end
+    /// anyway. It is tempting to make it smaller to be gentle, and that is
+    /// a mistake: anything the cap discards is gone for good, so a cap
+    /// below the length of a stall converts a burst the receiver could
+    /// have absorbed into a gap that no buffer can. Simulated against the
+    /// observed sender, a 40 ms cap produced an underrun on every stall
+    /// while a 100 ms cap produced almost none.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This rule is currently violated, and it is measurable.</b> When
+    /// the cap was written the ring rested at the playout target, so on the
+    /// default 400 ms ring with 100 ms delay the headroom was
+    /// trim_above (300) − target (200) = 100 ms and the cap fitted exactly.
+    /// Firmware 0.38.0 then added steering, which parks the ring at the
+    /// middle of the quiet band — (pad_below + trim_above) / 2, or 225 ms —
+    /// and quietly ate 25 ms of that headroom. Nothing here was revisited.
+    /// </para>
+    /// <para>
+    /// So every full-size catch-up burst now lands the receiver at about
+    /// 325 ms, above its 300 ms trim line, and the node then trims one
+    /// frame at a time for tens of seconds to get back down. Observed on
+    /// two nodes at once: both buffers jumped +102 and +106 ms in the same
+    /// moment, both to a depth above the trim line, with zero packet loss
+    /// and about 1.3 ms of jitter — the burst, not the air.
+    /// </para>
+    /// <para>
+    /// The invariant to hold is <c>cap ≤ trim_above − steer_to</c>, which
+    /// is 75 ms today. Do not simply drop the cap to 15 to satisfy it: the
+    /// warning above still stands, and a sender stalling for 260 ms is the
+    /// real fault. Fix the stalls first and this never fires.
+    /// </para>
+    /// </remarks>
     private const int MaxCatchUpPackets = 20;
 
     /// <summary>
