@@ -237,6 +237,28 @@ reads highest on a freshly booted node, which is exactly the node somebody
 studies after swapping its supply. Hovering shows the since-boot figure
 beside it; the two disagreeing is itself informative.
 
+**Read the column across the speakers before reading any one row.** Clock
+measures a node against *the sender*, so it moves when either end does. In
+the house both speakers once showed about **−1000 ppm at the same moment**,
+which reads as two dying crystals and is nothing of the sort: two
+independent crystals do not drift together, and a real 1000 ppm error —
+a tenth of a percent — would be audible as pitch, not as a number on a
+page. What it says is that the source was running fast and both nodes were
+trimming to keep up with it.
+
+So the figure decomposes. What every node shares is **common mode** and
+belongs to the sender; what is left after subtracting it is that node's own
+error, and only that part can be blamed on hardware on the shelf. The panel
+does this split from 0.53.0: it colours each row on the node's own error,
+still shows the raw figure, names the common drift underneath the table
+when it exceeds 100 ppm, and puts the leftover on hover. Before that split
+a fast source painted two healthy boards red.
+
+A shared drift is not itself a fault. Every node follows the sender, so
+they stay with each other and the audio is fine; it is worth knowing
+because it points at the source — a soundcard, a resampler, a capture
+device — rather than at the speakers.
+
 **A failing power adapter on one node.** It presented as that node's buffer
 swinging wildly while its partner sat still, and as a lopsided trim count —
 one node working many times harder than an identical one beside it. The
