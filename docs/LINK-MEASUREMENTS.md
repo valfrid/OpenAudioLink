@@ -836,6 +836,34 @@ be done correctly, or the row thrown out. Worth recording as a wrong turn:
 the log was built to stop screenshots lying about *when*, and its first
 real finding was that it had inherited the same fault.
 
+### What run 40 needs before it starts
+
+**Hub 0.73.0 and firmware 0.41.0 on both nodes**, because two of the
+questions this run could not answer are now counters rather than
+inferences: `reprimes`, and arrival gaps bucketed by length instead of a
+lifetime maximum that saturates. Upgrade and flash *first*, then leave the
+versions alone for the duration.
+
+**Change one thing: the channel.** Not beamforming, not the buffer, and
+not `MaxCatchUpPackets` — its violated invariant is real but this run
+measured the sender's worst stall at 35 ms, so the cap (which needs a
+100 ms deficit) never fired at all. It is dormant, and moving it in the
+same run as the channel would confound both.
+
+Pick the channel with the **node's own scan**, from the Wi-Fi panel, and
+scan before starting the stream: a scan drops every packet due while the
+radio is off-channel. A phone two metres away is measuring different air.
+
+Then two hours minimum — the clock fit needs a 60-minute window before its
+ppm means anything.
+
+**And the control this series still owes itself:** every differential
+conclusion here, back to run 23, rests on the two nodes being on different
+access points, which confounds AP identity with position, path and now
+channel. One run with **both nodes beside the same mesh point** separates
+"that AP is worse" from "that spot is worse". It is a cleaner result than
+another channel guess.
+
 ## Run 38: fresh counters, and the four-second stall was never there
 
 **1 h 41 min, 1 223 176 packets each, Hub 0.67.0, firmware 0.40.0,
