@@ -270,9 +270,12 @@ and the loss shape and Wi-Fi drop counters are where that shows.
 ## The sample log: reading a run instead of photographing it
 
 From Hub 0.70.0 the Hub writes one CSV row per node every 30 seconds to
-`samples/oal-YYYY-MM-DD.csv` in its data directory, listed at
-`/api/samples` and downloadable from `/samples/<name>`. Fourteen days are
-kept; a night is about 1 400 rows per node and well under a megabyte.
+`samples/oal-YYYY-MM-DD.csv` in its data directory. **Get it from the
+admin page: the "Diagnostics log" section lists a file per day with a
+Download link**, which is the whole point — a log nobody can find is a log
+nobody sends. Fourteen days are kept; a night is about 1 400 rows per node
+and well under a megabyte. Behind it, `/api/samples` lists and
+`/samples/<name>` serves.
 
 **It asks no node for anything.** Every value comes from readings the Hub
 already had — `NodeClockService` fetches the whole `/stream` document and

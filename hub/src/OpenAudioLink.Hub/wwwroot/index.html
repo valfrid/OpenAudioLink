@@ -376,6 +376,31 @@ and swap supplies between two nodes to find out.">Clock</th>
   <p class="muted">The five newest images are kept; older ones are deleted
     from the Hub's firmware folder when a new one arrives.</p>
 
+  <section id="samples-section">
+    <h2>Diagnostics log</h2>
+    <p class="hint">
+      One row per speaker every 30 seconds — buffer, trims, pads, step-backs,
+      loss, stalls, jitter, signal, Wi-Fi drops, clock, and the Hub's own send
+      counters on the same row. Written whether or not this page is open, and
+      costing the speakers nothing: it records readings the Hub already takes.
+      <br>
+      <strong>Download the file rather than photographing the panel.</strong>
+      A screenshot is one instant, and the question that settles an argument
+      here is whether a counter moved <em>when</em> something happened. Rows
+      answer that; a picture of the current values cannot.
+    </p>
+    <table id="samples" hidden>
+      <thead>
+        <tr><th>Day</th><th>Size</th><th>Last written</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p id="samples-empty" class="empty">
+      Nothing logged yet — rows are written while a stream is playing.
+    </p>
+    <p class="muted">Fourteen days are kept; older files are deleted.</p>
+  </section>
+
   <p id="message"></p>
 
   <script>
@@ -1970,6 +1995,37 @@ and swap supplies between two nodes to find out.">Clock</th>
      * override a stale selection. See refreshFirmware below. */
     let lastNewestFirmware = null;
 
+    /*
+     * The diagnostics log, listed so somebody can actually get at it.
+     *
+     * The file was written and served from /samples before anything on
+     * screen mentioned it, which is this project's recurring fault in its
+     * purest form: the data existed, the endpoint existed, and no page
+     * showed either. A log nobody can find is a log nobody sends.
+     */
+    async function refreshSamples() {
+      let files = [];
+      try {
+        files = await (await fetch('/api/samples', { cache: 'no-store' })).json();
+      } catch {
+        return;
+      }
+      const table = document.getElementById('samples');
+      table.hidden = files.length === 0;
+      document.getElementById('samples-empty').hidden = files.length !== 0;
+      table.querySelector('tbody').innerHTML = files.map(f => {
+        // Kibibytes under a megabyte, mebibytes over: a night is a few
+        // hundred KiB and reading "0.3 MiB" tells nobody anything.
+        const size = f.size < 1024 * 1024
+          ? `${(f.size / 1024).toFixed(0)} KiB`
+          : `${(f.size / 1024 / 1024).toFixed(1)} MiB`;
+        const day = esc(f.file.replace(/^oal-|\.csv$/g, ''));
+        return `<tr><td>${day}</td><td>${size}</td>` +
+          `<td class="muted">${esc(new Date(f.modifiedAt).toLocaleString())}</td>` +
+          `<td><a href="${esc(f.url)}" download="${esc(f.file)}">Download</a></td></tr>`;
+      }).join('');
+    }
+
     async function refreshFirmware() {
       let images = [];
       try {
@@ -3015,12 +3071,16 @@ and swap supplies between two nodes to find out.">Clock</th>
     refreshHubUpdate();
     refreshDevices();
     refreshFirmware();
+    refreshSamples();
     refreshCastPoints();
     refreshTone();
     setInterval(refreshLinkResults, 2000);
     setInterval(refreshDevices, 2000);
     setInterval(refreshTone, 2000);
     setInterval(refreshFirmware, 10000);
+    // Slowly: a file that grows two rows a minute does not need
+    // watching, and the list only changes at midnight.
+    setInterval(refreshSamples, 60000);
     setInterval(refreshCastPoints, 3000);
     // Rarely: this asks GitHub, and a release does not appear twice a minute.
     setInterval(refreshHubUpdate, 15 * 60 * 1000);
