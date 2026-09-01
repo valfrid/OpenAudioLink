@@ -756,6 +756,11 @@ static size_t take_chunk(int32_t *chunk)
              * ring ran dry, and the count is the number the listener
              * heard. Logging both the same way hid exactly that.
              */
+            /* The first prime is the stream starting and moves no phase
+             * that was already established; every later one is a jump. */
+            if (s_state.underruns != 0) {
+                s_state.reprimes++;
+            }
             if (s_state.underruns == 0) {
                 ESP_LOGI(TAG, "primed at %u frames; playing (discarded %u of overshoot)",
                          (unsigned)(s_available / OAL_RTP_CHANNELS),

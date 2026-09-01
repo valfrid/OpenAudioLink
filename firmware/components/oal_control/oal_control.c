@@ -857,8 +857,16 @@ static esp_err_t volume_handler(httpd_req_t *req)
  * every field saturated. Re-measure before adding another field; this is
  * the third time a fixed buffer or format string in this file has cost a
  * debugging session.
+ *
+ * Re-measured for `reprimes` and the five arrival-gap buckets, and the
+ * instruction above earned its keep: saturated, the body now needs about
+ * 1 600 bytes against the 1 536 that was here, and the stats object it
+ * embeds went from 345 to 410. Both were inside their buffers on a fresh
+ * node and would have failed after a day of uptime -- the same slow fuse
+ * as last time, since it is the counters gaining digits that does it.
+ * 2 048 leaves room for the next few fields on a part with PSRAM.
  */
-static char s_stream_body[1536];
+static char s_stream_body[2048];
 
 static esp_err_t stream_get_handler(httpd_req_t *req)
 {
@@ -980,7 +988,11 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * 50-75, 75 and over. A minimum is one draw; this
                         * is the shape. */
                        "\"marginBuckets\":[%u,%u,%u,%u,%u],"
-                       "\"framesPlayed\":%llu,\"writeErrors\":%u,\"resyncs\":%u},"
+                       /* reprimes completes the set: phase moves by a pad,
+                        * a trim, an overflow discard or a re-prime, and
+                        * the last of those was never counted. */
+                       "\"framesPlayed\":%llu,\"writeErrors\":%u,\"resyncs\":%u,"
+                       "\"reprimes\":%u},"
                        "\"stats\":%s}",
                        c.listening ? "true" : "false", c.port,
                        c.rx_buffer_bytes,
@@ -1013,6 +1025,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned long long)audio.frames_played,
                        (unsigned)audio.write_errors,
                        (unsigned)audio.resyncs,
+                       (unsigned)audio.reprimes,
                        stats);
     }
 

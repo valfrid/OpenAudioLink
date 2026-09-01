@@ -421,6 +421,78 @@ static void test_arrival_gaps_survive_a_source_change(void)
     CHECK_EQ(s.arrival_gaps, 1);
 }
 
+/*
+ * The buckets exist because the maximum beside them saturates: run 39
+ * watched max_gap_ticks reach 419 ms and then report 419 ms for a hundred
+ * consecutive samples, unable to say whether the link was improving. So
+ * what is tested here is the property that fixes that -- each gap lands in
+ * exactly one bucket, and the totals only ever go up.
+ */
+static void test_gaps_land_in_one_bucket_each(void)
+{
+    TEST("gaps are counted by length, each in one bucket");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 10);
+
+    /* One gap of each size, walking up the edges: 30 ms, 75 ms, 150 ms and
+     * 400 ms. The sub-20 ms bucket stays empty because a gap has to beat
+     * OAL_RTP_ARRIVAL_GAP_TICKS (15 ms) to be counted at all, and 30 ms is
+     * the first size past it. */
+    static const uint32_t sizes_ms[] = { 30u, 75u, 150u, 400u };
+    static const size_t expect[] = { 1u, 2u, 3u, 4u };
+
+    uint32_t arrival = 10u * FRAMES_PER_PACKET;
+    for (size_t i = 0; i < sizeof sizes_ms / sizeof sizes_ms[0]; i++) {
+        arrival += 48u * sizes_ms[i];
+        oal_rtp_stats_on_packet(
+            &s, (uint16_t)(10 + i), (uint32_t)(10 + i) * FRAMES_PER_PACKET,
+            arrival, SSRC);
+        CHECK_EQ(s.gap_buckets[expect[i]], 1);
+    }
+
+    CHECK_EQ(s.gap_buckets[0], 0);
+    CHECK_EQ(s.arrival_gaps, 4);
+
+    /* Every counted gap is in exactly one bucket, so the buckets sum to
+     * the total. This is the invariant that lets a reader subtract two
+     * samples and trust the result. */
+    uint32_t sum = 0;
+    for (size_t i = 0; i < OAL_RTP_GAP_BUCKETS; i++) {
+        sum += s.gap_buckets[i];
+    }
+    CHECK_EQ(sum, s.arrival_gaps);
+
+    /* Like arrival_gaps, they describe the link rather than the talker. */
+    oal_rtp_stats_on_packet(&s, 0, 0, arrival + FRAMES_PER_PACKET, SSRC + 1);
+    CHECK_EQ(s.gap_buckets[4], 1);
+    CHECK_EQ(s.arrival_gaps, 4);
+}
+
+/*
+ * The buffer is declared from OAL_RTP_STATS_JSON_MAX by every caller, and
+ * a formatter that outgrows it does not truncate -- it returns -1, and the
+ * endpoint returns nothing at all. Worse, it would do so only once the
+ * counters were wide enough, so a node would serve /stream perfectly for
+ * hours and then stop. Measured here, with every field at its widest.
+ */
+static void test_the_json_fits_its_buffer(void)
+{
+    TEST("the json fits its buffer at full width");
+    oal_rtp_stats_t s;
+    memset(&s, 0xFF, sizeof s);
+
+    char generous[4 * OAL_RTP_STATS_JSON_MAX];
+    int len = oal_rtp_stats_to_json(&s, generous, sizeof generous);
+    CHECK(len > 0);
+    CHECK(len < OAL_RTP_STATS_JSON_MAX);
+
+    /* And that the real buffer size actually works, not just the arithmetic. */
+    char actual[OAL_RTP_STATS_JSON_MAX];
+    CHECK(oal_rtp_stats_to_json(&s, actual, sizeof actual) > 0);
+}
+
 int main(void)
 {
     test_clean_stream_loses_nothing();
@@ -444,6 +516,8 @@ int main(void)
     test_small_clumps_are_not_gaps();
     test_a_restart_does_not_record_a_giant_gap();
     test_arrival_gaps_survive_a_source_change();
+    test_gaps_land_in_one_bucket_each();
+    test_the_json_fits_its_buffer();
 
     if (failures > 0) {
         printf("\n%d check(s) failed\n", failures);

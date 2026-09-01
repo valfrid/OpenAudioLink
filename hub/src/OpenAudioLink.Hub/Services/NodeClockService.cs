@@ -46,7 +46,8 @@ public sealed record NodeReading(
     long PlayingTimestamp, bool PlayingKnown,
     long Received, long Expected, long Lost, long JitterTicks,
     long LossEvents, long LongestGap, long ArrivalGaps,
-    long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges);
+    long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges,
+    long Reprimes, IReadOnlyList<long> GapBuckets);
 
 /// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
@@ -287,7 +288,8 @@ public sealed class NodeClockService : BackgroundService
                     stats?.JitterTicks ?? 0, stats?.LossEvents ?? 0,
                     stats?.LongestGap ?? 0, stats?.ArrivalGaps ?? 0,
                     stats?.MaxArrivalGapTicks ?? 0, stats?.Duplicates ?? 0,
-                    stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0);
+                    stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0,
+                    playout.Reprimes, stats?.GapBuckets ?? []);
             }
 
             if (!playout.Playing)
@@ -470,6 +472,7 @@ public sealed class NodeClockService : BackgroundService
         [JsonPropertyName("trimmedFrames")] public long TrimmedFrames { get; init; }
         [JsonPropertyName("paddedFrames")] public long PaddedFrames { get; init; }
         [JsonPropertyName("resyncs")] public long Resyncs { get; init; }
+        [JsonPropertyName("reprimes")] public long Reprimes { get; init; }
         [JsonPropertyName("underruns")] public long Underruns { get; init; }
         [JsonPropertyName("droppedFrames")] public long DroppedFrames { get; init; }
         [JsonPropertyName("silenceFrames")] public long SilenceFrames { get; init; }
@@ -490,6 +493,14 @@ public sealed class NodeClockService : BackgroundService
         [JsonPropertyName("longestGap")] public long LongestGap { get; init; }
         [JsonPropertyName("arrivalGaps")] public long ArrivalGaps { get; init; }
         [JsonPropertyName("maxArrivalGapTicks")] public long MaxArrivalGapTicks { get; init; }
+
+        /// <summary>
+        /// Arrival gaps by length: under 20 ms, 20-50, 50-100, 100-200, and
+        /// over. Monotonic, so two samples subtract to the distribution for
+        /// the interval between them -- which <see cref="MaxArrivalGapTicks"/>,
+        /// being a lifetime maximum, cannot do once it has been set.
+        /// </summary>
+        [JsonPropertyName("gapBuckets")] public long[] GapBuckets { get; init; } = [];
         [JsonPropertyName("duplicates")] public long Duplicates { get; init; }
         [JsonPropertyName("reordered")] public long Reordered { get; init; }
         [JsonPropertyName("ssrcChanges")] public long SsrcChanges { get; init; }

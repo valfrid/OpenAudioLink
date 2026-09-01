@@ -117,6 +117,24 @@ typedef struct {
      */
     uint32_t primed_frames;           /* depth at the last prime */
     uint32_t prime_discarded_frames;  /* overshoot dropped at that prime */
+
+    /*
+     * How many times the ring was re-primed after running dry, which is
+     * the largest single move playback phase can make and was the only one
+     * of the four not being counted.
+     *
+     * Phase moves exactly four ways: a pad, a trim, an overflow discard
+     * and a re-prime. The first three each have a counter, so "if no
+     * counter moved, nothing moved" has been the rule for reading this
+     * project's numbers -- and the rule had a hole in it. `underruns`
+     * counts the ring going dry; whether that starve ran the full
+     * STARVED_CHUNKS and repositioned the read pointer wholesale, or
+     * recovered in one chunk with nothing but a little silence, was not
+     * recorded anywhere. Run 39 could see 78 underruns and 3.28 s of
+     * silence on one node and could not say how many of them moved the
+     * phase.
+     */
+    uint32_t reprimes;
     uint32_t steer_frames;            /* the line the fill is steered to */
     uint32_t trimmed_frames;  /* single frames dropped to walk the fill back down */
     uint32_t padded_frames;   /* single frames repeated to walk it back up */

@@ -112,7 +112,34 @@ typedef struct {
     bool     arrival_known;
     uint32_t arrival_gaps;  /* gaps longer than a packet is worth waiting for */
     uint32_t max_gap_ticks;  /* the worst one, in RTP timestamp units */
+
+    /*
+     * How long the gaps were, not just the worst one there has ever been.
+     *
+     * `max_gap_ticks` is a lifetime maximum, and run 39 caught it doing
+     * exactly what a lifetime maximum does: it reached 419 ms in the
+     * twentieth minute and then read 419 ms for the remaining hundred
+     * samples of the run. True the whole time, and it answered no question
+     * anybody had -- were the gaps getting worse, was the bad minute one
+     * event or fifty, did anything change when the channel changed.
+     *
+     * Buckets are monotonic, so subtracting one sample from the next gives
+     * the distribution for that interval and nothing saturates. The same
+     * reason `margin_buckets` in the playout is a histogram rather than a
+     * minimum. Edges are in milliseconds because a buffer is sized in
+     * milliseconds: 20 (a gap the ring absorbs without noticing), 50, 100,
+     * 200 (the point at which the playout gives up and re-primes), and
+     * above.
+     */
+    uint32_t gap_buckets[5];
 } oal_rtp_stats_t;
+
+/**
+ * Upper edges of @ref oal_rtp_stats_t::gap_buckets, in RTP ticks.
+ * The last bucket is everything above the final edge.
+ */
+#define OAL_RTP_GAP_BUCKET_EDGES { 48u * 20u, 48u * 50u, 48u * 100u, 48u * 200u }
+#define OAL_RTP_GAP_BUCKETS 5
 
 /** Clears everything; call before the first packet. */
 void oal_rtp_stats_reset(oal_rtp_stats_t *stats);
@@ -168,8 +195,18 @@ uint32_t oal_rtp_stats_max_gap(const oal_rtp_stats_t *stats);
 /** Writes a JSON object of the counters. Returns length, or -1 if it will not fit. */
 int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_size);
 
-/** Enough for oal_rtp_stats_to_json, including the terminator. */
-#define OAL_RTP_STATS_JSON_MAX 384
+/**
+ * Enough for oal_rtp_stats_to_json, including the terminator.
+ *
+ * Worst case is every counter at UINT32_MAX, which is 410 bytes today.
+ * Adding the five gap buckets pushed it past the previous 384 and would
+ * have made oal_rtp_stats_to_json start returning -1 -- taking the whole
+ * of /stream with it, and only once a node had been up long enough for the
+ * counters to get wide. `test_the_json_fits_its_buffer` measures it rather
+ * than trusting this number, so the next field to be added fails in CI
+ * instead of on a shelf.
+ */
+#define OAL_RTP_STATS_JSON_MAX 512
 
 #ifdef __cplusplus
 }

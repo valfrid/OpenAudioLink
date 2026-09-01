@@ -1388,6 +1388,22 @@ and swap supplies between two nodes to find out.">Clock</th>
                 + `taken instead of minutes at a tenth of a second from the `
                 + `other speaker.">${p.resyncs} step-back`
                 + `${p.resyncs === 1 ? '' : 's'}</span>`
+              : ''}` +
+          /*
+           * Re-primes are the largest move playback phase can make: the
+           * read pointer is repositioned wholesale rather than walked. They
+           * sit beside the step-backs because the two are the only jumps in
+           * the list, and a node showing re-primes is a node whose ring is
+           * running dry for a fifth of a second at a time -- a link fault
+           * wearing a buffer fault's clothes.
+           */
+          `${(p.reprimes ?? 0) > 0
+              ? `<br><span class="rssi poor" title="Times the ring ran dry `
+                + `long enough that the speaker gave up and started again `
+                + `from a fresh cushion. The largest phase jump there is, `
+                + `and always preceded by a gap in arrival rather than by `
+                + `anything this buffer did.">${p.reprimes} re-prime`
+                + `${p.reprimes === 1 ? '' : 's'}</span>`
               : ''}</td></tr>`;
       }).join('');
 
@@ -2713,9 +2729,26 @@ and swap supplies between two nodes to find out.">Clock</th>
       // Against the ring, because that is the decision it informs: a stall
       // longer than the target starves the speaker however big the ring is.
       const stallClass = worstMs > 250 ? 'poor' : worstMs > 100 ? 'fair' : 'good';
+      /*
+       * The distribution, because the maximum beside it is a lifetime one
+       * and stops being news. Run 39 watched maxArrivalGapTicks reach
+       * 419 ms in the twentieth minute and then read 419 ms for the next
+       * hundred samples -- true throughout, and unable to say whether the
+       * link was getting better or worse. The buckets can: they are
+       * monotonic, so the long ones are countable per interval, and it is
+       * the count over 200 ms that decides whether a speaker re-primes.
+       */
+      const b = stats.gapBuckets;
+      const shape = Array.isArray(b) && b.length === 5 && (b[2] + b[3] + b[4]) > 0
+        ? `<br><span class="muted" title="Arrival gaps by length. Under `
+          + `50 ms the ring absorbs without noticing; over 200 ms it gives `
+          + `up and re-primes.">&lt;50 ms ${(b[0] + b[1]).toLocaleString()} · `
+          + `50-100 ${b[2].toLocaleString()} · 100-200 ${b[3].toLocaleString()}`
+          + `${b[4] ? ` · <b>&gt;200 ${b[4].toLocaleString()}</b>` : ''}</span>`
+        : '';
       return `${lossLine}<br><span class="rssi ${stallClass}">` +
         `${stalls.toLocaleString()} stalls (${ppm} ppm)</span>` +
-        `<br><span class="muted">worst ${worstMs} ms</span>`;
+        `<br><span class="muted">worst ${worstMs} ms (lifetime)</span>${shape}`;
     }
 
     /*

@@ -119,8 +119,7 @@ public sealed class SampleLogService : BackgroundService
      * without joining it to another, and a reader filtering to one node
      * still sees what the sender was doing at that moment. The redundancy
      * costs bytes in a file that is already small.
-     */
-    /*
+     *
      * A row is stamped with the node reading's own time, but it also carries
      * columns from two other sources read at two other instants: the radio
      * fields from DeviceStatusService's 10-second poll, and the hub fields
@@ -148,7 +147,7 @@ public sealed class SampleLogService : BackgroundService
         // Playout: where the ring sat and what moved it.
         "playing", "bufferedMs", "targetMs", "steerMs", "primedMs",
         "fillMinMs", "fillMaxMs", "framesPlayed",
-        "trims", "pads", "resyncs", "underruns", "droppedMs", "silenceMs",
+        "trims", "pads", "resyncs", "reprimes", "underruns", "droppedMs", "silenceMs",
         "latePackets", "tightPackets", "writeErrors",
         // The playing position, so an offset between two nodes can be
         // computed afterwards rather than trusted from a live panel.
@@ -156,6 +155,10 @@ public sealed class SampleLogService : BackgroundService
         // The link.
         "received", "expected", "lost", "jitterMs", "lossEvents", "longestGap",
         "arrivalGaps", "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
+        // Gaps by length rather than the worst there has ever been:
+        // <20 ms, 20-50, 50-100, 100-200, >200. Monotonic, so consecutive
+        // rows subtract to the interval's own distribution.
+        "gapsTo20", "gapsTo50", "gapsTo100", "gapsTo200", "gapsOver200",
         // The radio, from the status poll.
         "rssi", "channel", "bssid", "disconnects", "lastReason", "roams", "uptimeS",
         // The crystal, from the fit.
@@ -239,7 +242,8 @@ public sealed class SampleLogService : BackgroundService
                 Ms(r.BufferedFrames), Ms(r.TargetFrames), Ms(r.SteerFrames),
                 Ms(r.PrimedFrames), Ms(r.FillMinFrames), Ms(r.FillMaxFrames),
                 r.FramesPlayed.ToString(CultureInfo.InvariantCulture),
-                L(r.TrimmedFrames), L(r.PaddedFrames), L(r.Resyncs), L(r.Underruns),
+                L(r.TrimmedFrames), L(r.PaddedFrames), L(r.Resyncs), L(r.Reprimes),
+                L(r.Underruns),
                 Ms(r.DroppedFrames), Ms(r.SilenceFrames),
                 L(r.LatePackets), L(r.TightPackets), L(r.WriteErrors),
                 L(r.PlayingTimestamp), r.PlayingKnown ? "1" : "0",
@@ -250,6 +254,8 @@ public sealed class SampleLogService : BackgroundService
                 L(r.LossEvents), L(r.LongestGap), L(r.ArrivalGaps),
                 N(r.MaxArrivalGapTicks / 48.0, 0),
                 L(r.Duplicates), L(r.Reordered), L(r.SsrcChanges),
+                Bucket(r.GapBuckets, 0), Bucket(r.GapBuckets, 1), Bucket(r.GapBuckets, 2),
+                Bucket(r.GapBuckets, 3), Bucket(r.GapBuckets, 4),
                 s?.Rssi?.ToString(CultureInfo.InvariantCulture) ?? "",
                 s?.Channel?.ToString(CultureInfo.InvariantCulture) ?? "",
                 Csv(s?.Bssid ?? ""),
@@ -298,6 +304,15 @@ public sealed class SampleLogService : BackgroundService
     }
 
     private static string L(long value) => value.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// One histogram bucket, empty when a node too old to report them left
+    /// the array short. Blank rather than zero, because a zero here would
+    /// claim the node saw no gaps of that length when in fact it never
+    /// said.
+    /// </summary>
+    private static string Bucket(IReadOnlyList<long> buckets, int index) =>
+        index < buckets.Count ? L(buckets[index]) : "";
 
     private static string N(double value, int decimals) =>
         Math.Round(value, decimals).ToString(CultureInfo.InvariantCulture);

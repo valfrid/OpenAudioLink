@@ -117,6 +117,8 @@ bool oal_rtp_stats_on_packet(
         uint32_t too_late = stats->too_late;
         uint32_t arrival_gaps = stats->arrival_gaps;
         uint32_t max_gap = stats->max_gap_ticks;
+        uint32_t gap_buckets[OAL_RTP_GAP_BUCKETS];
+        memcpy(gap_buckets, stats->gap_buckets, sizeof gap_buckets);
         oal_rtp_stats_reset(stats);
         /* Counters that describe the link survive: a source restarting
          * does not undo the loss already measured. */
@@ -126,6 +128,7 @@ bool oal_rtp_stats_on_packet(
         stats->too_late = too_late;
         stats->arrival_gaps = arrival_gaps;
         stats->max_gap_ticks = max_gap;
+        memcpy(stats->gap_buckets, gap_buckets, sizeof gap_buckets);
         stats->ssrc = ssrc;
         stats->ssrc_known = true;
         expect_stream(stats, seq);
@@ -154,6 +157,19 @@ bool oal_rtp_stats_on_packet(
             }
             if (gap > OAL_RTP_ARRIVAL_GAP_TICKS) {
                 stats->arrival_gaps++;
+
+                /* Which of them it was, so a later reader can subtract two
+                 * samples and see the shape of the interval rather than a
+                 * maximum that stopped moving an hour ago. */
+                static const uint32_t edges[] = OAL_RTP_GAP_BUCKET_EDGES;
+                size_t bucket = OAL_RTP_GAP_BUCKETS - 1u;
+                for (size_t i = 0; i < sizeof edges / sizeof edges[0]; i++) {
+                    if (gap <= edges[i]) {
+                        bucket = i;
+                        break;
+                    }
+                }
+                stats->gap_buckets[bucket]++;
             }
         }
     }
@@ -311,7 +327,11 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                        /* What arrived, but not when it was needed. Read
                         * beside lossPpm: a link can be flawless by that
                         * measure and unlistenable by this one. */
-                       "\"arrivalGaps\":%u,\"arrivalGapPpm\":%u,\"maxArrivalGapTicks\":%u}",
+                       "\"arrivalGaps\":%u,\"arrivalGapPpm\":%u,\"maxArrivalGapTicks\":%u,"
+                       /* Monotonic, so two samples subtract to the shape of
+                        * the interval between them. maxArrivalGapTicks
+                        * above is a lifetime maximum and stops moving. */
+                       "\"gapBuckets\":[%u,%u,%u,%u,%u]}",
                        (unsigned)stats->received, (unsigned)oal_rtp_stats_expected(stats),
                        (unsigned)oal_rtp_stats_lost(stats), (unsigned)oal_rtp_stats_loss_ppm(stats),
                        (unsigned)stats->duplicates, (unsigned)stats->reordered,
@@ -322,7 +342,10 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                        (unsigned)oal_rtp_stats_mean_gap_x100(stats),
                        (unsigned)stats->arrival_gaps,
                        (unsigned)oal_rtp_stats_gap_ppm(stats),
-                       (unsigned)oal_rtp_stats_max_gap(stats));
+                       (unsigned)oal_rtp_stats_max_gap(stats),
+                       (unsigned)stats->gap_buckets[0], (unsigned)stats->gap_buckets[1],
+                       (unsigned)stats->gap_buckets[2], (unsigned)stats->gap_buckets[3],
+                       (unsigned)stats->gap_buckets[4]);
 
     return (len > 0 && (size_t)len < out_size) ? len : -1;
 }
