@@ -179,14 +179,22 @@ app.MapGet("/play", () => Results.Redirect("/play.html"));
  * and the whole point of writing it is that the numbers travel to whoever
  * is reading them. Listed at /api/samples and fetched from /samples/<name>.
  */
-app.UseStaticFiles(new StaticFileOptions
+var sampleLogDirectory = app.Services.GetRequiredService<SampleLogService>().DirectoryPath;
+// Only if it is really there. PhysicalFileProvider throws on a missing
+// root, and that throw happens here, while the pipeline is being built --
+// so an absent directory does not disable a download, it stops the Hub
+// starting at all. Diagnostics must not be able to do that.
+if (Directory.Exists(sampleLogDirectory))
 {
-    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
-        app.Services.GetRequiredService<SampleLogService>().DirectoryPath),
-    RequestPath = "/samples",
-    ServeUnknownFileTypes = true,
-    DefaultContentType = "text/csv",
-});
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+            sampleLogDirectory),
+        RequestPath = "/samples",
+        ServeUnknownFileTypes = true,
+        DefaultContentType = "text/csv",
+    });
+}
 
 app.MapGet("/api/samples", (SampleLogService log) =>
 {

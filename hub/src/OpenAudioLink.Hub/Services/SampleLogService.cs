@@ -75,6 +75,37 @@ public sealed class SampleLogService : BackgroundService
         _streamer = streamer;
         _logger = logger;
         _directory = Path.Combine(paths.DataDirectory, "samples");
+
+        /*
+         * Here, not in ExecuteAsync, and that distinction stopped the Hub
+         * starting once.
+         *
+         * The directory is handed to a PhysicalFileProvider while the
+         * request pipeline is being built, and that constructor throws if
+         * its root does not exist. Hosted services start *after* the
+         * pipeline is configured, so creating it in ExecuteAsync was
+         * always too late: 0.71.0 shipped and the Hub would not come up.
+         * FirmwareStore has created its directory in its constructor since
+         * it was written, which is why /firmware never had this problem --
+         * the registration pattern was copied without the guarantee that
+         * made it safe.
+         *
+         * Swallowed rather than thrown, because this is diagnostics. A
+         * sample log that cannot be written is a nuisance; a sample log
+         * that stops the music is a fault. Program.cs checks the directory
+         * exists before it registers the route, so a failure here costs
+         * the log and nothing else.
+         */
+        try
+        {
+            Directory.CreateDirectory(_directory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(
+                ex, "Could not create the sample log directory {Path}; "
+                + "diagnostics logging is off for this run", _directory);
+        }
     }
 
     /// <summary>Where the files land, for whoever has to go and fetch one.</summary>
@@ -115,7 +146,6 @@ public sealed class SampleLogService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Directory.CreateDirectory(_directory);
         Prune();
 
         using var timer = new PeriodicTimer(Interval);
