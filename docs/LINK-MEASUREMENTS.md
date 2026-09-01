@@ -702,6 +702,140 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 39: the first run read as a series, and the crystals cleared again
+
+**Hub 0.72.0, internet radio, 3 h 20 min, 801 rows of `oal-2026-09-01.csv`.**
+The first run measured from the sample log rather than from screenshots.
+Nodes restarted at +71 min to start the logging clean, which splits the
+file; everything below is the **129-minute segment after the restart**,
+258 paired readings per node.
+
+| | Speakers | Stereo |
+| --- | --- | --- |
+| Received / expected | 1 544 096 / 1 544 096 | 1 544 092 / 1 544 094 |
+| Lost | **0** | 2 |
+| Arrival gaps | 26 724 — **1.73 %** | 15 257 — 0.99 % |
+| Worst arrival gap | 419 ms | 419 ms |
+| Late packets | 93 | 8 |
+| Underruns | **78** | 4 |
+| Trims / pads (frames) | **143 509 / 30 779** | 11 278 / 11 696 |
+| Step-backs | **6** | 0 |
+| Overflow discard / silence | 1 123 ms / 3 281 ms | 0 ms / 147 ms |
+| Write errors | 0 | 0 |
+| RSSI | −51…−48 | −55…−46 |
+| Disconnects / roams | 0 / 0 | 0 / 0 |
+| Access point | `…7a:0b:d0`, ch 3 | `…7a:13:b1`, ch 3 |
+| **Clock** | **+14 ppm** (σ 11) | **+3 ppm** (σ 11) |
+| RTT median / p99 | 83 / 1 032 ms | 73 / 1 030 ms |
+
+### The offset, and why the half-second spike is not real
+
+Two estimates, from the same rows:
+
+| | from `playingTimestamp` | from ring fill |
+| --- | --- | --- |
+| Median | 10.0 ms | 7.0 ms |
+| p90 | 39.4 ms | 30.0 ms |
+| p95 | 58.3 ms | 48.0 ms |
+| Under 20 ms | 75.2 % | 82.2 % |
+| Over 40 ms | 10.1 % | 5.8 % |
+| Worst | **543 ms** | 183 ms |
+
+They agree in the middle and disagree only where each has a known failure
+mode, which is what makes the pair worth keeping.
+
+**The 543 ms is an artifact and must not be quoted.** The Hub stamps a
+`/stream` reading at the round-trip midpoint, so the timestamp estimate
+carries an error of up to half the round trip whenever the two legs are
+asymmetric. That reading's round trips were 683 and 557 ms; the second
+worst, 467 ms, sat on a 1 032 ms round trip. The ring fill at both moments
+says the nodes were **4 ms and 7 ms apart** — in step. Sorted by round
+trip the whole distribution moves: median 8.6 ms under 100 ms RTT, 18.9 ms
+above 200. `corr(rtt, |offset|) = 0.33`, about the same as
+`corr(|fill difference|, |offset|) = 0.28`, which is another way of saying
+a third of what that estimator reports is the measurement, not the audio.
+
+Read the fill column instead: **median 7 ms, p90 30 ms, 82 % under 20 ms.**
+
+### The sender is exonerated by its own counters, for once by measurement
+
+Every row carries the Hub's per-window counters, so this needs no argument:
+
+- `hubRecentStallMs` — median **0**, p90 15, **max 35**
+- `hubRecentSendMs` — median 1, p99 2, max 17
+- `hubRecentGcPauseMs` — median 0, max **6**
+- `hubUnderrunSamples` — **0 over the whole segment**
+- `hubBufferedMs` — 5 040 median against a 5 000 ms charge, never below
+
+None of the 35 intervals in which Speakers underran lines up with a hub
+stall worth the name; the largest hub stall anywhere in the run is 35 ms
+against a 200 ms cushion. This is the first entry in this file able to say
+that from the record rather than from a panel that was showing *now* while
+the fault was thirty seconds ago.
+
+### What is actually wrong with Speakers, and it is not its crystal
+
+The trim ledger and the clock fit disagree, and the disagreement is the
+finding:
+
+| | Speakers | Stereo |
+| --- | --- | --- |
+| `framesPlayed` against the wall clock | **+21 ppm** | +16 ppm |
+| Trim-minus-pad ledger | **−303 ppm** | +1 ppm |
+
+Stereo's two numbers agree, so its buffer is doing 1 ppm of work to correct
+a 16 ppm crystal — nothing. Speakers plays at 48 001 Hz, a perfectly
+ordinary crystal, and yet its buffer threw away **3.47 seconds** of audio
+in 129 minutes: 2.99 s of trims, 1.12 s of overflow discard, against
+0.64 s of pads. A 21 ppm rate error can only account for 0.16 s of that.
+
+**The churn is jitter, not rate.** Packets reach Speakers in bursts — 1.73 %
+arrive after a gap against Stereo's 0.99 %, with gaps up to 419 ms. Each
+gap drains the ring toward empty (78 underruns, 3.28 s of inserted
+silence), each burst refills it past `trim_above` (2.99 s trimmed, 1.12 s
+discarded at the rim, six step-backs). Net rate error zero; net damage
+3.47 seconds. `underruns` and `latePackets` move together one-for-one in
+**244 of 258 intervals**, which names the mechanism exactly: nothing is
+lost, it arrives too late to play.
+
+The crystals are cleared for the second time (run 36 was the first), and by
+a different method. Anything that reads like a clock fault in the pads and
+trims of a jittery node is the jitter.
+
+### The differential points at one access point
+
+Same sender, same minutes, same 5 ms packets, zero disconnects and zero
+roams on either node, both sitting at about −49 dBm. What differs is which
+radio they are attached to: **Speakers on `…0b:d0`, Stereo on `…13:b1`,
+both on channel 3.** The node on the burstier AP is the node with 12.7× the
+trims, 19× the underruns and all six step-backs.
+
+**Next: move the 2.4 GHz band off channel 3.** Only 1, 6 and 11 do not
+overlap; channel 3 overlaps both 1 and 6, so every neighbouring network on
+either of them lands partly on top of this one. Two mesh points sharing
+one overlapping channel is the condition run 23 already found matters
+more than signal strength — and RSSI here is excellent on both nodes,
+which is precisely why it cannot be the explanation.
+
+### The log's own bug, found by using it
+
+The first pass at this file compared each node's `received` against
+`hubPacketsSent` and found both nodes missing 3 880 packets — 0.25 % of the
+stream — while their own loss counters read zero and `expected` matched
+`received` exactly.
+
+There was no loss. A row is stamped with the node reading's time, but its
+hub columns are read as the row is written, and the node reading can be up
+to a poll interval old. The staleness happened to differ by 19 seconds
+between the first and last row of the segment, and 19 seconds at 200
+packets per second is 3 880 packets. The same seam opened a phantom
+20-second hole in the frame accounting on both nodes.
+
+`readingAgeS` and `statusAgeS` now sit on every row so that subtraction can
+be done correctly, or the row thrown out. Worth recording as a wrong turn:
+the log was built to stop screenshots lying about *when*, and its first
+real finding was that it had inherited the same fault.
+
 ## Run 38: fresh counters, and the four-second stall was never there
 
 **1 h 41 min, 1 223 176 packets each, Hub 0.67.0, firmware 0.40.0,

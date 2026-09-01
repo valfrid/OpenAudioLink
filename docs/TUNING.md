@@ -402,6 +402,14 @@ rather than Auto, so a nightly channel scan cannot move it — and check
 the two access points are not on the same one, which has quietly turned a
 channel comparison into a topology comparison here twice.
 
+**This one is now measured, not advised.** Run 39 read the channel off the
+nodes themselves: both mesh points on **channel 3**, which overlaps 1 and
+6 and is therefore the worst of the three settings this paragraph warns
+about. The node on the busier of the two took 12.7× the trims, 19× the
+underruns and every step-back in the run, at −49 dBm with no disconnects —
+so signal strength cannot explain it and the air can. Set the band to 1, 6
+or 11 before changing anything in the buffer.
+
 The router's own view is under *System Log → Wireless Log* (clients and
 their RSSI) and *System Log → General Log* (association events). Read it
 against the node's count: the node knows why it left, the router knows

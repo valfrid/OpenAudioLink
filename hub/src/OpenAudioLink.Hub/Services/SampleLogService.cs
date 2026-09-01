@@ -120,9 +120,31 @@ public sealed class SampleLogService : BackgroundService
      * still sees what the sender was doing at that moment. The redundancy
      * costs bytes in a file that is already small.
      */
+    /*
+     * A row is stamped with the node reading's own time, but it also carries
+     * columns from two other sources read at two other instants: the radio
+     * fields from DeviceStatusService's 10-second poll, and the hub fields
+     * read live as the row is written. The ages below say how far apart
+     * those instants were, and they are not decoration.
+     *
+     * The first analysis run off this log compared the node's `received`
+     * against `hubPacketsSent` and concluded the nodes were missing 0.25% of
+     * the stream -- 3 880 packets over two hours, on both nodes, with the
+     * nodes' own loss counters reading zero. That was arithmetic across a
+     * seam: the node reading at the end of the run happened to be 19 seconds
+     * staler than the one at the start, and 19 seconds at 200 packets per
+     * second is exactly 3 880 packets. The audio was fine; the subtraction
+     * was not.
+     *
+     * With an age on the row that check becomes possible to get right --
+     * subtract the ages before comparing rates, or throw out rows where they
+     * differ. Without it the seam is invisible and the reader invents a
+     * fault. This is the same failure as a saturated lifetime counter: the
+     * number is true and means something other than what it looks like.
+     */
     private static readonly string[] Columns =
     [
-        "timeUtc", "node", "nodeId", "rttMs",
+        "timeUtc", "node", "nodeId", "rttMs", "readingAgeS", "statusAgeS",
         // Playout: where the ring sat and what moved it.
         "playing", "bufferedMs", "targetMs", "steerMs", "primedMs",
         "fillMinMs", "fillMaxMs", "framesPlayed",
@@ -211,6 +233,8 @@ public sealed class SampleLogService : BackgroundService
             {
                 r.At.ToString("o", CultureInfo.InvariantCulture),
                 Csv(device?.Name ?? id), id, N(r.RttMs, 1),
+                N((now - r.At).TotalSeconds, 1),
+                s is null ? "" : N((now - s.ObservedAt).TotalSeconds, 1),
                 r.Playing ? "1" : "0",
                 Ms(r.BufferedFrames), Ms(r.TargetFrames), Ms(r.SteerFrames),
                 Ms(r.PrimedFrames), Ms(r.FillMinFrames), Ms(r.FillMaxFrames),
