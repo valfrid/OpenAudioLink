@@ -702,6 +702,73 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 37: Roaming assistant off — one setting, and the dropouts stop
+
+**55 min, 665 508 packets, Hub 0.69.0, firmware 0.40.0, internet radio.**
+Identical to run 36 in every respect but one: *Wireless → Professional →
+2.4 GHz → Roaming assistant*, which shipped **Enable, "Disconnect clients
+with RSSI lower than −70 dBm"**, set to Disable. Nothing else touched, on
+either the router or the nodes.
+
+| | roaming assist ON (run 36) | OFF (this run) |
+| --- | --- | --- |
+| **Stereo lost** | 1 088 — 0.022 % | **0** |
+| Stereo worst burst | 1 085 packets — **5.4 s** | none |
+| Stereo step-backs | **326** | **0** |
+| Stereo worst stall | 5 466 ms | **119 ms** |
+| Stereo stalls | 5.4 % | 1.7 % |
+| Stereo jitter | 7.25 ms | 2.25 ms |
+| Speakers step-backs | 82 | **6** |
+| Speakers stalls | 2.1 % | 2.2 % |
+| Speakers worst stall | 4 045 ms | 4 450 ms |
+| Speakers lost | 0 | 84 — 0.013 %, 41 bursts of ~2 |
+
+### What it establishes
+
+**The multi-second dropouts were the router, doing it on purpose.** Every
+one of Stereo's symptoms went to zero on one dropdown: the 5.4-second
+hole, the 1 088 lost packets, all 326 step-backs, and two thirds of its
+stall rate. Its jitter fell by a factor of three. This is as clean a
+single-variable result as this series has produced, and it needed no
+change to the Hub or the firmware at all.
+
+Roaming assist exists to push a client toward a better access point. A
+speaker is fixed to a wall, so it has nowhere better to go and frequently
+rejoins the access point it was just thrown off — the disconnection is
+pure cost. A node hovering near the −70 threshold gets picked off
+repeatedly while one at −55 is never touched, which is exactly what "one
+speaker lost 1 088 packets and the other lost none from the same sender"
+looked like.
+
+**The step-back was doing its job, and this measures what that cost.**
+The offset barely moved — 15 ms apart typically 19 in run 36, 24 apart
+typically 16 here — because the step-back was already holding it. What
+changed is the price: **326 audible discontinuities a night on Stereo,
+now none.** Read the sync figure and the step-back count together, or a
+speaker that is being corrected constantly reads as healthy.
+
+**The crystals agree to 1 ppm.** +39 and +40 against +28 and +24 in run
+36. Both moved up together by about 13, which is common mode and belongs
+to the sender or to the room's temperature, not to either board; what
+matters for two speakers is the *difference*, and it is now one part per
+million.
+
+### What is left, and it changed hands
+
+Speakers is now the odd one out: 84 packets lost in **41 bursts averaging
+two packets**, and a 4 450 ms worst stall against Stereo's 119. Those are
+different faults from the one just fixed. Two-packet bursts are ordinary
+marginal-link loss that concealment covers and no buffer notices —
+0.013 % is nothing. The 4.45-second arrival gap with almost no loss is
+not: packets were held somewhere and delivered late rather than dropped,
+and Stereo saw nothing like it in the same minutes, so it is not the
+sender.
+
+**Next: read Speakers' RSSI.** If it sits near −70 it was also being
+picked off before and is simply the weaker of the two placements; with
+the roaming kick gone, a marginal link now shows as scattered loss instead
+of as dropouts. That is a placement or antenna question, not a router one.
+
 ## Run 36: the first long run without the connection bug
 
 **Hub 0.67.0, firmware 0.40.0, internet radio, 6 h 41 min unattended.**
