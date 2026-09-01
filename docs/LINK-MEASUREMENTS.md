@@ -702,6 +702,77 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 38: fresh counters, and the four-second stall was never there
+
+**1 h 41 min, 1 223 176 packets each, Hub 0.67.0, firmware 0.40.0,
+internet radio.** Nodes restarted, counters reset, stream started clean —
+so every figure below describes this run and nothing earlier. Roaming
+assistant still off.
+
+| | Speakers | Stereo |
+| --- | --- | --- |
+| Received / expected | 1 223 176 / 1 223 176 | 1 223 176 / 1 223 176 |
+| **Lost** | **0** | **0** |
+| Loss bursts | none | none |
+| Late | 16 — 13 ppm | 3 — 2 ppm |
+| Full cushion | 99.6 % | 99.9 % |
+| Arrival stalls | 10 250 — **0.84 %** | 5 472 — **0.45 %** |
+| Worst stall | **268 ms** | **141 ms** |
+| Jitter | **1.46 ms** | **0.98 ms** |
+| Clock | −9 ppm | −13 ppm |
+| Step-backs | **0** | **0** |
+| Offset | 74 ms at the instant · **typically 10 ms**, worst 83 | |
+
+### The four-second stall was a stale high-water mark
+
+Predicted before the run and confirmed by it. `maxArrivalGapTicks`
+survives stream restarts by design, so Speakers' 4 450 ms in run 37 could
+have been set at any earlier point — very plausibly during the
+socket-exhaustion period. On counters that describe only this run it reads
+**268 ms**.
+
+| | Speakers | Stereo |
+| --- | --- | --- |
+| run 36, roaming on | 4 045 ms | 5 466 ms |
+| run 37, roaming off | 4 450 ms | 119 ms |
+| run 38, fresh counters | **268 ms** | **141 ms** |
+
+The lesson is not about this number. It is that **a lifetime maximum
+cannot be attributed to a period**, and this series has now been misled by
+that shape three times — `WorstStallMs`, `framesPlayed` over uptime, and
+this. Reset the counters before a run that is meant to prove something.
+
+### The best link this project has measured
+
+Zero loss on both nodes across 1.22 million packets each. Stall rates of
+0.84 % and 0.45 % against 27 % and 35 % before the connection-pool fix.
+Jitter under 1.5 ms on both, the lowest in the series, beating run 22.
+Neither speaker needed a single step-back in an hour and three quarters.
+
+### What is left is small, one-sided, and has a mechanism
+
+Speakers is about twice the node Stereo is, in every link figure — 1.9×
+the stalls, 1.9× the worst gap, 1.5× the jitter — and **15× the trims**
+(44 410 against 2 867). The chain is visible: more arrival gaps means more
+catch-up bursts, a burst lifts the fill, and a fill riding high is trimmed
+continuously. The panel caught it mid-recovery at +69 ms above the
+setpoint, which is why the instant read 74 ms apart while the minute
+typically read 10.
+
+Zero step-backs says the excursions never reached 120 ms out, so the
+proportional creep alone is holding it — the design working as intended
+rather than a fault. The two nodes are on different access points, which
+remains the only structural difference between them.
+
+### An observation for the sample log to answer
+
+Both crystals read −9 and −13 ppm here against +39 and +40 in run 37 —
+about 50 ppm of common movement, with the nodes restarted and the Hub not.
+Common mode does not affect two speakers staying together, and 4 ppm apart
+is as good as this gets. But 50 ppm is the size of a few degrees of
+ambient change on a cheap crystal, and whether it tracks the time of day
+is exactly the question a series answers and a screenshot cannot.
+
 ## Run 37: Roaming assistant off — one setting, and the dropouts stop
 
 **55 min, 665 508 packets, Hub 0.69.0, firmware 0.40.0, internet radio.**
