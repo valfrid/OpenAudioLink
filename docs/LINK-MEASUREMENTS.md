@@ -702,78 +702,88 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
-## Run 36: the first long run without the connection bug (planned)
+## Run 36: the first long run without the connection bug
 
-**Not yet performed.** Written down before it is run so the result is
-read against a stated expectation rather than against whatever we hoped
-for afterwards.
+**Hub 0.67.0, firmware 0.40.0, internet radio, 6 h 41 min unattended.**
+`ringMs` 400, `delayMs` 100, both consumers, switchboard closed. The first
+long run this series has ever made on a Hub that was not starving its own
+nodes of sockets, and the first with the step-back in the playout loop.
 
-### Why it is needed
+| | Speakers | Stereo |
+| --- | --- | --- |
+| Received / expected | 4 815 876 / 4 815 876 | 4 814 783 / 4 815 871 |
+| Lost | **0** | 1 088 — 0.022 % |
+| Loss shape | none | 2 bursts, longest **1 085 (5.4 s)** |
+| Late | 1 776 — 323 ppm | 1 478 — 269 ppm |
+| Full cushion | 97.1 % | 96.0 % |
+| Arrival stalls | 102 026 — **2.1 %** | 259 467 — **5.4 %** |
+| Worst stall | 4 045 ms | 5 466 ms |
+| Jitter | **2.21 ms** | 7.25 ms |
+| Duplicates / reorder | 0 / 0 | 0 / 0 |
+| **Clock** | **+28 ppm** | **+24 ppm** |
+| Step-backs | 82 | 326 |
+| Offset | 15 ms apart, typically 19, worst 58 | |
 
-Every long run in this series was made by a Hub whose `DeviceCommandClient`
-had no connection limit — unbounded pooling per node, held open a minute
-idle, on a device with seven sockets in total. Hub 0.65.0 fixed that, and
-the short run immediately after showed **stalls falling from 27 % to 2.6 %
-on one node and 35 % to 6.3 % on the other**, with a 1 484-packet dropout
-disappearing entirely.
+### The crystals, measured at last
 
-Which means the series has no valid baseline. Every buffer conclusion,
-every tuning constant and every "the sender is stalling" diagnosis was
-measured against a Hub that was quietly starving its own nodes of sockets.
-Some of those conclusions will survive and some will not, and there is no
-way to know which without a long run on a Hub that does not have the bug.
+**+28 and +24 ppm, four parts per million apart.** Both well inside the
+±50 a healthy crystal sits in, and near enough to each other that neither
+board can be blamed for anything.
 
-### Setup
+This is the first figure in the project that is actually a clock. Every
+earlier attempt measured pads and trims, which are corrections and are
+dominated by disturbance rather than by rate; the −4 000 ppm readings that
+started the hunt were a firmware counting bug, and the ±100 swings after
+that were the fit showing its own noise. Nothing here needs fixing, and
+the two-hour argument about crystals, power supplies and load capacitance
+is now closed by measurement: **the crystals were never the problem.**
 
-Hub 0.65.0, firmware 0.39.0 on both consumers. Internet radio, the source
-with the 5 s cushion, so a station hiccup cannot be confused with a
-sender stall. `ringMs` 400, `delayMs` 100 on both nodes — unchanged, so
-this is comparable with run 34. **Switchboard closed for the duration**:
-an open page asks each node for `/stream` about once a second and the
-point is to measure the system, not the observer.
+### The step-back earns its place, and names the fault at the same time
 
-Several hours at least. Overnight is better.
+The offset held at 15 ms apart, typically 19, worst 58 — against the
+persistent 100-137 ms that opened this whole investigation. The mechanism
+that closed it is visible in the counters: 82 step-backs on one speaker
+and **326 on the other**, one every 1.2 minutes on Stereo.
 
-### What to record at the end
+Read that as a measurement rather than as a cost. Before 0.40.0 each of
+those excursions took **85 to 126 seconds** of creep to close, and at one
+every seventy-four seconds Stereo would never once have been in step all
+night. The clicks are the price of the offset staying under 20 ms instead
+of sitting at 100.
 
-| | |
-| --- | --- |
-| Duration, packets sent | |
-| Received / expected, per node | |
-| Lost, and its shape | |
-| Arrival stalls: count, ppm, worst | |
-| Late packets, per node | |
-| Jitter | |
-| Clock ppm and its ±, per node | |
-| Wi-Fi drops and last reason, per node | |
-| Source underrun samples | |
-| Late wakes, worst stall, worst send, GC pause | |
-| Speaker offset: typical and worst | |
+### Everything that is left is one node's radio
 
-### What each outcome would mean
+The differential rule holds again, and this time with six hours behind it.
+Against the same sender, in the same minutes:
 
-**Stalls stay near 2-6 % and the offset stays under 20 ms.** The system is
-where it should be, the connection bug was the dominant fault all along,
-and the catch-up cap's broken invariant — a 100 ms burst against 75 ms of
-headroom — is real but no longer reached often enough to matter. Nothing
-further to fix; tag it.
+- Speakers lost **nothing** in 4.8 million packets. Stereo lost 1 088.
+- Stereo's stall rate is **2.5×** Speakers'. Its jitter is **3.3×**.
+- Stereo took **four times** as many step-backs.
+- Stereo, and only Stereo, went silent for **5.4 seconds in one go**.
 
-**Stalls stay low but the offset still spikes past 40 ms.** The cap
-invariant is the live fault after all, and fixing it is the next change:
-either the cap comes down to the headroom or the steering setpoint moves
-below the midpoint to make room.
+A sender fault reaches both. This reaches one, so it is that node's link —
+and the two consumers are on different access points, which this series
+has already established matters more than signal strength does (run 23).
 
-**Stalls climb back toward 25 %.** Something outside the Hub's control
-plane is doing it, and the per-window figures — `recentStallMs` against
-`recentSendMs` against `recentGcPauseMs` — say which. Send time larger is
-the network stack; stall larger with the collection tracking it is
-allocation in the source pipeline; stall larger with the collection flat
-is the machine or its power management.
+**The next thing to read is Stereo's Wi-Fi drop count and reason code**,
+on its device row. Reason 8 is the access point steering it away and is
+fixed on the router; 200 is a beacon timeout and is antenna, position or
+wiring. Nothing else in this table is worth touching until that is known.
 
-**One node's figures diverge from the other's.** That node's link, not the
-sender. The differential rule has held every time in this series: what
-both nodes see together comes from the sending end, what one sees alone is
-its own radio.
+### What it settles about the series
+
+Every long run before this one was made through a Hub whose command client
+pooled connections without limit against a device with seven sockets.
+Comparing this against run 34 and earlier, the buffer conclusions survive
+— 400 ms of ring with 100 ms of delay still holds, the fill still rests
+where the arithmetic says — but **the "sender is stalling" diagnoses do
+not**. Stalls fell from 27 % and 35 % to 2.1 % and 5.4 % on the
+connection fix alone, with no change to the sender at all.
+
+The catch-up cap's broken invariant — a 100 ms burst against 75 ms of
+headroom — is still real and still unfixed. It is no longer worth fixing:
+at these stall rates the step-back closes what the burst opens, and the
+measured offset stays inside 20 ms.
 
 ## Run 35: the turntable, and what a second air hop costs
 
