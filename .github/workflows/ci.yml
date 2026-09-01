@@ -38,32 +38,58 @@ jobs:
       # the pipeline. Start it against a fresh empty data directory --
       # first-run conditions, where anything not created early enough is
       # missing -- and require it to answer.
+      #
+      # The address comes out of the Hub's own log rather than being
+      # assumed. appsettings.json pins Urls, which beat ASPNETCORE_URLS
+      # here and left the first version of this step curling a port
+      # nothing was listening on -- reporting a failure against a Hub that
+      # had started perfectly well.
       - name: Starts and answers (Linux)
         if: runner.os == 'Linux'
         working-directory: hub
         run: |
-          set -euo pipefail
+          set -uo pipefail
           data="$(mktemp -d)"
-          Hub__DataDirectory="$data" ASPNETCORE_URLS=http://127.0.0.1:5199 \
+          Hub__DataDirectory="$data" \
             dotnet run --project src/OpenAudioLink.Hub --configuration Release \
             --no-build > hub.log 2>&1 &
           pid=$!
-          for i in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:5199/api/devices > /dev/null 2>&1; then
-              ok=1; break
-            fi
-            if ! kill -0 "$pid" 2>/dev/null; then break; fi
+
+          url=""
+          for _ in $(seq 1 60); do
+            url="$(sed -n 's/.*Now listening on: \(http[^ ]*\).*/\1/p' hub.log | head -1)"
+            [ -n "$url" ] && break
+            kill -0 "$pid" 2>/dev/null || break
             sleep 1
           done
+          # Kestrel prints the wildcard binding as [::]; ask it on loopback.
+          url="$(printf '%s' "$url" | sed -e 's#\[::\]#127.0.0.1#' -e 's#//\*#//127.0.0.1#')"
+          echo "Listening on: ${url:-<never announced>}"
+
+          ok=0
+          if [ -n "$url" ]; then
+            for _ in $(seq 1 20); do
+              if curl -fsS "$url/api/devices" > /dev/null 2>&1; then ok=1; break; fi
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 1
+            done
+          fi
+
           # The log either way: a failure here is a startup exception and
           # the stack trace is the whole answer.
           cat hub.log
           kill "$pid" 2>/dev/null || true
-          if [ "${ok:-0}" != "1" ]; then
+          if [ "$ok" != "1" ]; then
             echo "::error::Hub did not start and answer on a fresh data directory"
             exit 1
           fi
-          echo "Hub started and answered."
+          # And the feature that broke startup actually produced its
+          # directory, rather than the route merely being skipped.
+          if [ ! -d "$data/samples" ]; then
+            echo "::error::Hub started but never created $data/samples"
+            exit 1
+          fi
+          echo "Hub started, answered, and created its samples directory."
 
   hub-package:
     name: Hub win-x64 package
