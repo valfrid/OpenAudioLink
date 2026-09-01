@@ -267,6 +267,43 @@ the target, so at 650 ms of delay it takes whichever is larger.
 node collecting them is a node whose link keeps knocking it out of step,
 and the loss shape and Wi-Fi drop counters are where that shows.
 
+## The sample log: reading a run instead of photographing it
+
+From Hub 0.70.0 the Hub writes one CSV row per node every 30 seconds to
+`samples/oal-YYYY-MM-DD.csv` in its data directory, listed at
+`/api/samples` and downloadable from `/samples/<name>`. Fourteen days are
+kept; a night is about 1 400 rows per node and well under a megabyte.
+
+**It asks no node for anything.** Every value comes from readings the Hub
+already had — `NodeClockService` fetches the whole `/stream` document and
+used to discard most of it, and `DeviceStatusService` polls `/status`.
+Adding a second poller to a device with seven sockets is what produced the
+HTTP 502s, and a log file is not worth repeating it for.
+
+**Why it matters more than convenience.** Every diagnostic mistake
+recorded on this page was a *saturated lifetime counter*: `WorstStallMs`
+reading 145 for ever after one bad moment, `maxArrivalGapTicks` carrying
+4 445 ms across stream restarts so a clean night still showed a
+four-second gap, `framesPlayed` divided by an uptime that included hours
+of idling. Each was fixed by adding a per-window twin, and each time the
+next lifetime counter caught somebody out.
+
+A series makes every one of them per-interval **by subtraction**, so the
+class of bug stops existing rather than being fixed one counter at a time.
+
+It also makes this page's own rule — *did a counter move?* — answerable
+across time. From a screenshot it is not: the offset jumped thirty seconds
+ago and the panel shows now. With rows you can line a step-back up against
+a Wi-Fi drop, a garbage collection and a send stall, and say which came
+first.
+
+Each row is self-contained, carrying the Hub's own counters alongside the
+node's, so filtering to one speaker still shows what the sender was doing
+at that moment. `playingTimestamp` and `rttMs` are both logged, so the
+offset between two speakers can be computed afterwards — with the same
+round-trip correction the live panel makes — rather than taken on trust
+from a number that has already scrolled away.
+
 ## Reading a node's Wi-Fi drops, and what to do on the router
 
 **Where the number is.** The **Devices** table, the **Wi-Fi** column, on

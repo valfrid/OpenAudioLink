@@ -24,6 +24,31 @@ public sealed record ClockFit(
     double Ppm, double SigmaPpm, long SpanSeconds, int Samples, bool Suspect);
 
 /// <summary>
+/// The last <c>/stream</c> reading taken from one node, with the timing
+/// needed to line two of them up against each other.
+/// </summary>
+/// <param name="At">
+/// When the node sampled itself, estimated at the round trip's midpoint —
+/// the reply came back one network leg after the counters were read, and
+/// stamping the arrival makes a slow reply look like a node that is behind.
+/// </param>
+/// <param name="RttMs">
+/// How long that round trip took. Kept rather than discarded so a reading
+/// carried on a slow reply can be recognised as such later.
+/// </param>
+public sealed record NodeReading(
+    DateTimeOffset At, double RttMs, bool Playing, long BufferedFrames,
+    long TargetFrames, long SteerFrames, long PrimedFrames,
+    long FillMinFrames, long FillMaxFrames, long FramesPlayed,
+    long TrimmedFrames, long PaddedFrames, long Resyncs, long Underruns,
+    long DroppedFrames, long SilenceFrames, long LatePackets,
+    long TightPackets, long WriteErrors,
+    long PlayingTimestamp, bool PlayingKnown,
+    long Received, long Expected, long Lost, long JitterTicks,
+    long LossEvents, long LongestGap, long ArrivalGaps,
+    long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges);
+
+/// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
 /// </summary>
 /// <remarks>
@@ -157,6 +182,7 @@ public sealed class NodeClockService : BackgroundService
     private readonly object _gate = new();
     private readonly Dictionary<string, List<Sample>> _history = [];
     private readonly Dictionary<string, ClockFit> _fits = [];
+    private readonly Dictionary<string, NodeReading> _readings = [];
 
     public NodeClockService(
         DeviceRegistry registry, IHttpClientFactory clients, HubConfig config,
@@ -174,6 +200,23 @@ public sealed class NodeClockService : BackgroundService
         lock (_gate)
         {
             return new Dictionary<string, ClockFit>(_fits);
+        }
+    }
+
+    /// <summary>
+    /// The last reading taken from each node, by device id.
+    /// </summary>
+    /// <remarks>
+    /// Published so the sample log can write rows without asking any node
+    /// anything: this service already has the document, and a second poller
+    /// would be a second request per node on hardware that runs out of
+    /// sockets.
+    /// </remarks>
+    public IReadOnlyDictionary<string, NodeReading> Readings()
+    {
+        lock (_gate)
+        {
+            return new Dictionary<string, NodeReading>(_readings);
         }
     }
 
@@ -210,14 +253,50 @@ public sealed class NodeClockService : BackgroundService
         {
             var client = _clients.CreateClient(nameof(DeviceStatusService));
             var uri = $"http://{device.Address}:{device.ControlPort}/stream";
+            var sent = _clock.Elapsed.TotalMilliseconds;
             var stream = await client.GetFromJsonAsync<StreamResponse>(uri, stoppingToken);
+            var back = _clock.Elapsed.TotalMilliseconds;
             var playout = stream?.Playout;
-            if (playout is null || !playout.Playing)
+            if (playout is null)
+            {
+                return;
+            }
+
+            /*
+             * Halfway through the round trip, not the moment the reply
+             * arrived. The node read its counters one network leg before
+             * this, and stamping the arrival makes a reply delayed by a
+             * Wi-Fi retry read as a node that is that far behind -- which
+             * is the same correction the sync panel makes for the same
+             * reason.
+             */
+            var at = sent + (back - sent) / 2;
+            var stats = stream?.Stats;
+            lock (_gate)
+            {
+                _readings[device.Id] = new NodeReading(
+                    DateTimeOffset.UtcNow.AddMilliseconds(at - back), back - sent,
+                    playout.Playing, playout.BufferedFrames, playout.TargetFrames,
+                    playout.SteerFrames, playout.PrimedFrames, playout.FillMinFrames,
+                    playout.FillMaxFrames, playout.FramesPlayed, playout.TrimmedFrames,
+                    playout.PaddedFrames, playout.Resyncs, playout.Underruns,
+                    playout.DroppedFrames, playout.SilenceFrames, playout.LatePackets,
+                    playout.TightPackets, playout.WriteErrors,
+                    playout.PlayingTimestamp, playout.PlayingKnown,
+                    stats?.Received ?? 0, stats?.Expected ?? 0, stats?.Lost ?? 0,
+                    stats?.JitterTicks ?? 0, stats?.LossEvents ?? 0,
+                    stats?.LongestGap ?? 0, stats?.ArrivalGaps ?? 0,
+                    stats?.MaxArrivalGapTicks ?? 0, stats?.Duplicates ?? 0,
+                    stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0);
+            }
+
+            if (!playout.Playing)
             {
                 // Not playing means framesPlayed is standing still, and a
                 // flat stretch in the middle of the window would read as a
                 // slow crystal. Drop what we have and start again when it
-                // resumes.
+                // resumes. The reading above is still published -- a node
+                // that has stopped is a fact worth logging.
                 lock (_gate)
                 {
                     _history.Remove(device.Id);
@@ -226,11 +305,6 @@ public sealed class NodeClockService : BackgroundService
                 return;
             }
 
-            // Stamped after the reply, one network leg late. The lateness is
-            // noise on a single sample and the fit averages it; what would
-            // bias the slope is a lateness that grows, and a round trip does
-            // not.
-            var at = _clock.Elapsed.TotalMilliseconds;
             Record(device.Id, at, playout.FramesPlayed);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
@@ -290,6 +364,10 @@ public sealed class NodeClockService : BackgroundService
             foreach (var id in _fits.Keys.Where(k => !keep.Contains(k)).ToList())
             {
                 _fits.Remove(id);
+            }
+            foreach (var id in _readings.Keys.Where(k => !keep.Contains(k)).ToList())
+            {
+                _readings.Remove(id);
             }
         }
     }
@@ -365,14 +443,55 @@ public sealed class NodeClockService : BackgroundService
     {
         [JsonPropertyName("playout")]
         public PlayoutResponse? Playout { get; init; }
+
+        [JsonPropertyName("stats")]
+        public StatsResponse? Stats { get; init; }
     }
 
+    /*
+     * More than the fit needs, because the document is already on the wire.
+     *
+     * This service is the only thing that reads a node's /stream on a
+     * schedule, and a second poller would be a second request per node on
+     * hardware with seven sockets -- the mistake this file's poll interval
+     * exists to correct. So it keeps the whole reading and publishes it,
+     * and the sample log writes rows from that rather than asking again.
+     */
     private sealed record PlayoutResponse
     {
-        [JsonPropertyName("playing")]
-        public bool Playing { get; init; }
+        [JsonPropertyName("playing")] public bool Playing { get; init; }
+        [JsonPropertyName("framesPlayed")] public long FramesPlayed { get; init; }
+        [JsonPropertyName("bufferedFrames")] public long BufferedFrames { get; init; }
+        [JsonPropertyName("targetFrames")] public long TargetFrames { get; init; }
+        [JsonPropertyName("steerFrames")] public long SteerFrames { get; init; }
+        [JsonPropertyName("primedFrames")] public long PrimedFrames { get; init; }
+        [JsonPropertyName("fillMinFrames")] public long FillMinFrames { get; init; }
+        [JsonPropertyName("fillMaxFrames")] public long FillMaxFrames { get; init; }
+        [JsonPropertyName("trimmedFrames")] public long TrimmedFrames { get; init; }
+        [JsonPropertyName("paddedFrames")] public long PaddedFrames { get; init; }
+        [JsonPropertyName("resyncs")] public long Resyncs { get; init; }
+        [JsonPropertyName("underruns")] public long Underruns { get; init; }
+        [JsonPropertyName("droppedFrames")] public long DroppedFrames { get; init; }
+        [JsonPropertyName("silenceFrames")] public long SilenceFrames { get; init; }
+        [JsonPropertyName("latePackets")] public long LatePackets { get; init; }
+        [JsonPropertyName("tightPackets")] public long TightPackets { get; init; }
+        [JsonPropertyName("writeErrors")] public long WriteErrors { get; init; }
+        [JsonPropertyName("playingTimestamp")] public long PlayingTimestamp { get; init; }
+        [JsonPropertyName("playingKnown")] public bool PlayingKnown { get; init; }
+    }
 
-        [JsonPropertyName("framesPlayed")]
-        public long FramesPlayed { get; init; }
+    private sealed record StatsResponse
+    {
+        [JsonPropertyName("received")] public long Received { get; init; }
+        [JsonPropertyName("expected")] public long Expected { get; init; }
+        [JsonPropertyName("lost")] public long Lost { get; init; }
+        [JsonPropertyName("jitter")] public long JitterTicks { get; init; }
+        [JsonPropertyName("lossEvents")] public long LossEvents { get; init; }
+        [JsonPropertyName("longestGap")] public long LongestGap { get; init; }
+        [JsonPropertyName("arrivalGaps")] public long ArrivalGaps { get; init; }
+        [JsonPropertyName("maxArrivalGapTicks")] public long MaxArrivalGapTicks { get; init; }
+        [JsonPropertyName("duplicates")] public long Duplicates { get; init; }
+        [JsonPropertyName("reordered")] public long Reordered { get; init; }
+        [JsonPropertyName("ssrcChanges")] public long SsrcChanges { get; init; }
     }
 }

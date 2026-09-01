@@ -101,6 +101,11 @@ builder.Services.AddHostedService<DeviceStatusService>();
 // builds, and two instances would each measure half as often.
 builder.Services.AddSingleton<NodeClockService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeClockService>());
+// Writes the readings the clock service already took to a CSV per day, so
+// a run can be read as a series instead of photographed one instant at a
+// time. Asks no node for anything of its own.
+builder.Services.AddSingleton<SampleLogService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SampleLogService>());
 // Puts a node-to-node stream back after a roam takes it away. Only node
 // producers: what the Hub sends itself is already supervised by whatever
 // is driving it.
@@ -166,6 +171,41 @@ app.UseStaticFiles(new StaticFileOptions
 // because the page must stay a static file that something other than this
 // Hub can serve; browsers carry the fragment across the redirect themselves.
 app.MapGet("/play", () => Results.Redirect("/play.html"));
+
+/*
+ * The sample log, downloadable rather than only on disk.
+ *
+ * A file somebody has to find in a data directory is a file nobody sends,
+ * and the whole point of writing it is that the numbers travel to whoever
+ * is reading them. Listed at /api/samples and fetched from /samples/<name>.
+ */
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+        app.Services.GetRequiredService<SampleLogService>().DirectoryPath),
+    RequestPath = "/samples",
+    ServeUnknownFileTypes = true,
+    DefaultContentType = "text/csv",
+});
+
+app.MapGet("/api/samples", (SampleLogService log) =>
+{
+    var dir = new DirectoryInfo(log.DirectoryPath);
+    if (!dir.Exists)
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+    return Results.Ok(dir.EnumerateFiles("oal-*.csv")
+        .OrderByDescending(f => f.Name)
+        .Select(f => new
+        {
+            file = f.Name,
+            size = f.Length,
+            modifiedAt = f.LastWriteTimeUtc,
+            url = $"/samples/{f.Name}",
+        })
+        .ToList());
+});
 
 // Firmware images served to devices for OTA pulls (protocol/OTA.md).
 app.UseStaticFiles(new StaticFileOptions
