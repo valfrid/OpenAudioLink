@@ -404,18 +404,40 @@ and swap supplies between two nodes to find out.">Clock</th>
      * different about what to do next. Anything else shows as its number
      * rather than as a guess.
      */
+    /*
+     * Why the node's association ended, as the node itself recorded it.
+     *
+     * The split at 200 is structural and is the thing to read first.
+     * Below it are 802.11 reason codes, which arrive in a frame *from the
+     * access point* -- so the router ended the association and can be
+     * asked why. From 200 up are Espressif's own additions, which the
+     * node's stack raises on its own when it stops hearing the access
+     * point at all.
+     *
+     * The router ending it and the node giving up are opposite faults
+     * with opposite fixes, and the number says which without any
+     * guessing. An Asus "Roaming assistant" set to disconnect clients
+     * below -70 dBm produces the first kind, deliberately, several
+     * seconds at a time.
+     */
     const WIFI_REASON = {
-      1: 'unspecified', 2: 'auth expired', 3: 'left', 4: 'idle too long',
-      // The access point asking the node to go. In a house with two access
-      // points sharing an SSID this is steering, and it is fixed on the
-      // router, not on the node.
-      8: 'access point asked it to leave',
-      15: 'handshake timeout (wrong password?)',
-      // The node losing sight of the access point. Distance, an antenna, a
-      // position, or a wire -- never the router's doing.
-      200: 'beacon timeout', 201: 'no access point found',
-      202: 'authentication failed', 203: 'association failed',
+      1: 'unspecified', 2: 'auth expired',
+      3: 'the access point deauthenticated it',
+      4: 'idle too long', 5: 'the access point was out of room',
+      7: 'sent from an unassociated station', 8: 'the access point disassociated it',
+      15: 'four-way handshake timeout (wrong password?)',
+      // Espressif's own, raised by the node rather than received from
+      // anyone: nothing was said to it, it simply stopped hearing.
+      200: 'beacon timeout — it stopped hearing the access point',
+      201: 'no access point found', 202: 'authentication failed',
+      203: 'association failed', 204: 'handshake timeout',
     };
+
+    /* Below 200 the access point ended it; at 200 and above the node did.
+     * Everything about where to look follows from that one bit. */
+    function endedByRouter(reason) {
+      return reason > 0 && reason < 200;
+    }
 
     function wifiCell(status) {
       if (!status) return '—';
@@ -2589,8 +2611,22 @@ and swap supplies between two nodes to find out.">Clock</th>
               const reason = wifi.lastReason
                 ? (WIFI_REASON[wifi.lastReason] ?? `reason ${wifi.lastReason}`)
                 : 'no reason given';
+              /*
+               * Name the side, not just the code. A reader who has to look
+               * up whether 8 means the router or the radio will not, and
+               * the two need opposite fixes.
+               */
+              const side = !wifi.lastReason ? ''
+                : endedByRouter(wifi.lastReason)
+                  ? ' The router ended it, so the fix is there — on an Asus, '
+                    + 'Roaming assistant disconnects clients below an RSSI '
+                    + 'threshold on purpose.'
+                  : ' The node stopped hearing the access point, which no '
+                    + 'router setting does to it — check signal, position '
+                    + 'and whether it is behind a wireless mesh hop.';
               why = `This node reports ${wifi.disconnects} Wi-Fi drop`
-                  + `${wifi.disconnects === 1 ? '' : 's'}, last one: ${reason}.`;
+                  + `${wifi.disconnects === 1 ? '' : 's'}, last one: ${reason}.`
+                  + side;
             } else {
               /*
                * The interesting one. A multi-second gap with the

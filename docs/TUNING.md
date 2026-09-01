@@ -282,33 +282,53 @@ so the gap is in the path to it: the air, or a mesh backhaul it never
 sees. That points somewhere different from a disconnect and the panel now
 says so rather than repeating the advice.
 
-**The code is the node's own account and is not guessed.** These are the
-ones worth knowing; anything else prints as its number.
+**The code is the node's own account and is not guessed. Read the split
+at 200 before reading the code itself.**
 
-| code | means | where the fault is |
+| range | who ended it | where to look |
 | --- | --- | --- |
-| 8 | the access point asked it to leave | **the router** — steering |
-| 15 | handshake timeout | the credentials |
-| 200 | beacon timeout — the node lost sight of the AP | distance, antenna, position, backhaul |
-| 201 | no access point found | the AP was gone or out of range |
+| **1–99** | the **access point** sent a frame ending it | the router |
+| **200+** | the **node** stopped hearing the access point | signal, position, backhaul |
 
-Reason 8 and reason 200 are opposite faults and it matters which one you
-have. Do not act on a guess: read it.
+Below 200 these are 802.11 reason codes, which arrive *in a frame from the
+access point* — something decided to end the association and told the node
+so. From 200 up they are Espressif's own, raised by the node's own stack
+when nothing was said to it and it simply stopped hearing. Those are
+opposite faults with opposite fixes, and the range says which without
+any guessing.
+
+| code | means |
+| --- | --- |
+| 3 | the access point deauthenticated it |
+| 4 | idle too long |
+| 8 | the access point disassociated it |
+| 15 | four-way handshake timeout — wrong password |
+| 200 | beacon timeout — it stopped hearing the access point |
+| 201 | no access point found |
 
 ### On an Asus ZenWiFi AX (AiMesh)
 
-Two settings cause reason 8, and both are on by default:
+**Roaming assistant is the one to look at, and it ships enabled.**
+*Advanced Settings → Wireless → Professional → Band: 2.4 GHz →
+Roaming assistant*, where it reads **"Disconnect clients with RSSI lower
+than −70 dBm"**. That does exactly what it says: the router deliberately
+ends the association, and the node is off the air for as long as it takes
+to find and rejoin an access point — seconds, not milliseconds.
 
-- **Roaming assist.** *Advanced Settings → Wireless → Professional →
-  Roaming assist.* It disconnects a client whose RSSI falls below a
-  threshold, to push it onto a nearer node. That is a deliberate
-  disassociation, and it is what a speaker sitting at the edge of two
-  coverage areas gets all evening. Turn it off, or lower the threshold
-  well below where the node sits.
-- **Smart Connect.** One SSID across 2.4 and 5 GHz with band steering.
-  An ESP32-S3 is 2.4 GHz only, so it can gain nothing from steering and
-  can only be disturbed by it. Give 2.4 GHz its own SSID and provision
-  the nodes onto it.
+It also buys a speaker nothing. Roaming assist exists to move a client
+toward a better access point; a speaker is screwed to a wall, and on
+reconnect it frequently lands on the very access point it was just thrown
+off. **Set it to Disable**, or if a house genuinely needs it, put the
+threshold somewhere no working node ever reaches — −85 or lower.
+
+Check the node's RSSI in the **Signal** column first. A node sitting near
+−70 is one this setting will pick off repeatedly; a node at −55 is
+untouched by it, and that asymmetry is why one speaker can drop all night
+while the other loses nothing.
+
+**Smart Connect** — one SSID across both bands with steering — causes the
+same class of fault, since an ESP32-S3 is 2.4 GHz only and can gain
+nothing from being steered. Separate SSIDs per band avoid it entirely.
 
 For reason 200, the node stopped hearing beacons, which the router is not
 doing to it. Check its RSSI and its BSSID against the other node's — if
