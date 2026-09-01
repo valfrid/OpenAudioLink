@@ -338,6 +338,25 @@ twice. This series has measured what that costs (runs 23 and 35), and it
 is the first thing to change: wire the satellite, or move the node onto
 the root.
 
+**One change per night, and it is not pedantry.** A measurement here costs
+a night, so two changes at once buys a result that cannot be attributed to
+either. Photograph the Professional page before touching it.
+
+**What not to change, and why the usual advice misses.** Disabling both
+beamforming settings is commonly suggested and neither can produce a
+multi-second dropout: beamforming shapes signal quality, so it shows as
+retries, marginal RSSI and throughput — never as a deauthentication.
+They are also not equivalent to each other:
+
+- **Explicit Beamforming** is 802.11n/ac sounding, and the client must
+  send channel feedback for it to work. An ESP32 does not, so it never
+  engages for these nodes. Turning it off changes nothing here and costs
+  the phones and laptops throughput.
+- **Universal Beamforming** is Asus's name for *implicit* beamforming,
+  inferred from received frames with no client participation. This one
+  does reach the nodes, so it is the one worth a night — but only after
+  Roaming assistant, and only if that did not settle it.
+
 Then, regardless of the code: fix the 2.4 GHz channel to 1, 6 or 11
 rather than Auto, so a nightly channel scan cannot move it — and check
 the two access points are not on the same one, which has quietly turned a
