@@ -2539,8 +2539,20 @@ and swap supplies between two nodes to find out.">Clock</th>
      *
      * So both are shown, and neither is allowed to speak for the other.
      */
-    function shapeCell(stats) {
+    function shapeCell(stats, deviceId) {
       if (!stats) return '<span class="muted">—</span>';
+
+      /*
+       * The node's own account of why it went away, put beside the
+       * evidence that it did.
+       *
+       * "Check this node's Wi-Fi drops" was advice that named no place to
+       * check: the count and the reason live in the Wi-Fi column of the
+       * device table, which is a different table, and a reader looking at
+       * a loss burst has no reason to go there. The Hub already holds both
+       * -- so the answer belongs next to the question.
+       */
+      const wifi = (lastDevices ?? []).find(d => d.id === deviceId)?.status;
 
       const lossLine = !stats.lossEvents
         ? '<span class="muted">no loss bursts</span>'
@@ -2563,10 +2575,36 @@ and swap supplies between two nodes to find out.">Clock</th>
             const longest = stats.longestGap ?? 0;
             const label = allSingle ? 'all isolated' : `longest ${longest}`;
             const gapMs = longest * 5;
+            /*
+             * Three cases, and they are not the same fault. The node
+             * counted a disconnect and said why; it counted none, which
+             * puts the gap somewhere other than the association; or the
+             * firmware is too old to have counted at all.
+             */
+            let why;
+            if (!wifi || wifi.disconnects === undefined || wifi.disconnects === null) {
+              why = 'This node does not report Wi-Fi drops — firmware older '
+                  + 'than 0.36.0. Update it and the reason will appear here.';
+            } else if (wifi.disconnects > 0) {
+              const reason = wifi.lastReason
+                ? (WIFI_REASON[wifi.lastReason] ?? `reason ${wifi.lastReason}`)
+                : 'no reason given';
+              why = `This node reports ${wifi.disconnects} Wi-Fi drop`
+                  + `${wifi.disconnects === 1 ? '' : 's'}, last one: ${reason}.`;
+            } else {
+              /*
+               * The interesting one. A multi-second gap with the
+               * association intact throughout is not the node leaving the
+               * network -- so it is the air or the path, and on a mesh the
+               * path includes a backhaul this node never sees.
+               */
+              why = 'But this node never lost its association — so it did '
+                  + 'not leave the network. The gap is in the path to it: '
+                  + 'the air, or a mesh backhaul.';
+            }
             const asTime = gapMs >= 1000
               ? `<br><span class="rssi poor">${(gapMs / 1000).toFixed(1)} s of `
-                + `audio missing in one go — that is a link that went away, `
-                + `not a busy one. Check this node's Wi-Fi drops.</span>`
+                + `audio missing in one go. ${why}</span>`
               : '';
             return `${stats.lossEvents} loss bursts · ${label}` +
               `<br><span class="muted">${mean} packets per burst</span>` + asTime;
@@ -2733,7 +2771,7 @@ and swap supplies between two nodes to find out.">Clock</th>
       }));
 
       const rows = [];
-      for (const { name, stream, error } of readings) {
+      for (const { id, name, stream, error } of readings) {
         // A node the Hub cannot read gets a row saying so. Dropping it
         // silently leaves a table that looks complete and is not: a run
         // measured 47% loss with no producer row at all, and the missing
@@ -2786,7 +2824,7 @@ and swap supplies between two nodes to find out.">Clock</th>
               : `<span class="rssi ${lossClass}">${(st.lost ?? 0).toLocaleString()}` +
                 ` (${lossPct}%)</span>`}</td>` +
             `<td>${timingCell(stream)}</td>` +
-            `<td>${shapeCell(st)}</td>` +
+            `<td>${shapeCell(st, id)}</td>` +
             `<td>${jitterMs} ms</td>` +
             `<td>${esc(st.duplicates ?? 0)} / ${esc(st.reordered ?? 0)}</td>` +
             `<td>${esc(stream.payloadErrors ?? 0)}</td></tr>`);

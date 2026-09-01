@@ -267,6 +267,67 @@ the target, so at 650 ms of delay it takes whichever is larger.
 node collecting them is a node whose link keeps knocking it out of step,
 and the loss shape and Wi-Fi drop counters are where that shows.
 
+## Reading a node's Wi-Fi drops, and what to do on the router
+
+**Where the number is.** The **Devices** table, the **Wi-Fi** column, on
+that node's row. It shows the SSID and channel, the BSSID underneath, and
+then — only when the count is non-zero — a line like
+`3 drops (access point asked it to leave) · 2 roams`. From 0.68.0 the
+same reading is repeated beside a long loss burst in the link table, since
+that is where somebody is looking when the question occurs to them.
+
+**A count of zero is a result, not a blank.** A node that went silent for
+seconds while its association held throughout did not leave the network,
+so the gap is in the path to it: the air, or a mesh backhaul it never
+sees. That points somewhere different from a disconnect and the panel now
+says so rather than repeating the advice.
+
+**The code is the node's own account and is not guessed.** These are the
+ones worth knowing; anything else prints as its number.
+
+| code | means | where the fault is |
+| --- | --- | --- |
+| 8 | the access point asked it to leave | **the router** — steering |
+| 15 | handshake timeout | the credentials |
+| 200 | beacon timeout — the node lost sight of the AP | distance, antenna, position, backhaul |
+| 201 | no access point found | the AP was gone or out of range |
+
+Reason 8 and reason 200 are opposite faults and it matters which one you
+have. Do not act on a guess: read it.
+
+### On an Asus ZenWiFi AX (AiMesh)
+
+Two settings cause reason 8, and both are on by default:
+
+- **Roaming assist.** *Advanced Settings → Wireless → Professional →
+  Roaming assist.* It disconnects a client whose RSSI falls below a
+  threshold, to push it onto a nearer node. That is a deliberate
+  disassociation, and it is what a speaker sitting at the edge of two
+  coverage areas gets all evening. Turn it off, or lower the threshold
+  well below where the node sits.
+- **Smart Connect.** One SSID across 2.4 and 5 GHz with band steering.
+  An ESP32-S3 is 2.4 GHz only, so it can gain nothing from steering and
+  can only be disturbed by it. Give 2.4 GHz its own SSID and provision
+  the nodes onto it.
+
+For reason 200, the node stopped hearing beacons, which the router is not
+doing to it. Check its RSSI and its BSSID against the other node's — if
+they are on different access points, and one of those is an AiMesh
+satellite on a **wireless** backhaul, that node's audio crosses the air
+twice. This series has measured what that costs (runs 23 and 35), and it
+is the first thing to change: wire the satellite, or move the node onto
+the root.
+
+Then, regardless of the code: fix the 2.4 GHz channel to 1, 6 or 11
+rather than Auto, so a nightly channel scan cannot move it — and check
+the two access points are not on the same one, which has quietly turned a
+channel comparison into a topology comparison here twice.
+
+The router's own view is under *System Log → Wireless Log* (clients and
+their RSSI) and *System Log → General Log* (association events). Read it
+against the node's count: the node knows why it left, the router knows
+whether it asked.
+
 ## Before tuning anything, rule out the hardware and the air
 
 Two faults have masqueraded as buffer problems, and both wasted more time
