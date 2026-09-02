@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "oal_channel.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,26 @@ typedef struct {
      * one. Ignored, and best left unwired, when the module clocks itself.
      */
     int mclk_gpio;
+
+    /**
+     * Fold one slot of the captured frame across both, or
+     * <code>OAL_CHANNEL_STEREO</code> to leave the frame alone.
+     *
+     * A MEMS microphone is one pressure reading. The ICS-43434 puts it in
+     * whichever half of the frame its SEL pin selects and leaves the other
+     * half at digital silence, so a Producer that streams the frame
+     * untouched sends audio in the left channel and nothing in the right.
+     * Every consumer then has to be told to compensate -- and `channel` on
+     * a consumer describes *that speaker*, not the source it happens to be
+     * listening to, so setting it for this reason is the wrong knob and
+     * wrong for every other stream that node receives.
+     *
+     * Folding here instead means a microphone Producer emits an ordinary
+     * centred stream that needs no special handling anywhere downstream.
+     * <code>OAL_CHANNEL_LEFT</code> for SEL tied low, which is how
+     * `docs/HARDWARE.md` wires it.
+     */
+    oal_channel_t fold;
 
     /**
      * True when the ADC generates BCK and LRCK and this end follows.

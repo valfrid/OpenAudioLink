@@ -276,6 +276,13 @@ void app_main(void)
              * generates the two it does want. */
             capture.mclk_gpio = -1;
             capture.slave     = false;
+            /* One microphone is one pressure reading, and the part leaves
+             * the other half of the frame silent. Folded at capture so
+             * what leaves this node is an ordinary centred stream, rather
+             * than every consumer needing its `channel` set to compensate
+             * for a source rather than for itself. LEFT because SEL is
+             * tied low (docs/HARDWARE.md). */
+            capture.fold      = OAL_CHANNEL_LEFT;
         }
         ESP_LOGI(TAG, "capturing from %s (%s)", oal_input_name(stage),
                  capture.slave ? "following the module's clock"

@@ -636,6 +636,16 @@ floor.
 Mono, either way. One microphone is one pressure reading, which is correct
 for measurement — a stereo image is not what a sweep is asking about.
 
+**And the node folds it for you, as of firmware 0.43.0.** The part puts its
+sample in whichever half of the frame SEL selects and leaves the other at
+digital silence, so an unfolded microphone Producer streams audio in the
+left channel and nothing in the right. `oal_capture` now applies the
+playout's own `oal_channel_apply` with `LEFT` on the way out, so what
+leaves the node is an ordinary centred stream. Nothing downstream needs
+configuring — and in particular a consumer's `channel` setting stays a
+description of *that speaker* rather than of whatever it happens to be
+listening to.
+
 ### What the firmware still needs
 
 `oal_capture` brings up **standard I²S RX only**. Firmware 0.31.0 added the

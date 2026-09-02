@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "oal_channel.h"
 #include "oal_pcm.h"
 #include "oal_rtp.h"
 
@@ -82,6 +83,7 @@ static uint64_t s_meter_at_us;
  * one that is losing all of its audio.
  */
 static bool s_ever_read;
+static oal_channel_t s_fold = OAL_CHANNEL_STEREO;
 
 bool oal_capture_running(void)
 {
@@ -154,6 +156,24 @@ size_t oal_capture_read(uint8_t *payload, size_t frames)
         s_state.underruns++;
     }
 
+    /*
+     * One microphone is one pressure reading, and the part leaves the other
+     * half of the frame at digital silence. Folded here so that what leaves
+     * this node is an ordinary centred stream: the alternative is telling
+     * every consumer to compensate with its `channel` setting, which
+     * describes that speaker rather than whatever it is listening to, and
+     * would be wrong for every other stream it receives.
+     *
+     * After the silence padding rather than before, so a short read folds
+     * the whole payload and not just the part that had audio in it --
+     * silence folded is still silence, and one call is easier to reason
+     * about than one that covers part of a buffer. Reuses the playout's
+     * routine, which is host-tested.
+     */
+    if (s_fold != OAL_CHANNEL_STEREO) {
+        oal_channel_apply(payload, samples / OAL_RTP_CHANNELS, s_fold);
+    }
+
     xSemaphoreGive(s_lock);
     return copied / OAL_RTP_CHANNELS;
 }
@@ -177,6 +197,7 @@ static void trace(void)
     fill_min = s_fill_min > CAPACITY_SAMPLES ? s_available : s_fill_min;
     fill_max = s_fill_max;
     fill_now = s_available;
+
     s_fill_min = CAPACITY_SAMPLES + 1;
     s_fill_max = 0;
     xSemaphoreGive(s_lock);
@@ -383,6 +404,9 @@ esp_err_t oal_capture_start(const oal_capture_config_t *config)
         s_rx = NULL;
         return err;
     }
+
+    /* Before the first read can happen. */
+    s_fold = config->fold;
 
     err = i2s_channel_enable(s_rx);
     if (err != ESP_OK) {
