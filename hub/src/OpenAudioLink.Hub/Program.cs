@@ -39,6 +39,7 @@ builder.Services.AddSingleton<DeviceRegistry>();
 builder.Services.AddSingleton(sp => new FirmwareStore(
     dataDirectory, sp.GetRequiredService<ILoggerFactory>().CreateLogger<FirmwareStore>()));
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
+builder.Services.AddSingleton(new NodeAudioStore(dataDirectory));
 builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 /*
@@ -109,6 +110,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<SampleLogService>(
 // Puts a node-to-node stream back after a roam takes it away. Only node
 // producers: what the Hub sends itself is already supervised by whatever
 // is driving it.
+builder.Services.AddHostedService<LatencyProfileReconciler>();
 builder.Services.AddHostedService<StreamSupervisor>();
 // Registered twice on purpose: the host runs it, and the API reads what it
 // knows. Two registrations of the type would be two instances.
@@ -504,7 +506,8 @@ app.MapPost("/api/devices/{id}/roles",
  */
 app.MapPost("/api/devices/{id}/delay",
     async (string id, DelayRequest request, DeviceRegistry registry,
-           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+           DeviceCommandClient commands, NodeAudioStore audio,
+           CancellationToken cancellationToken) =>
 {
     if (!registry.TryGet(id, out var device))
     {
@@ -535,7 +538,17 @@ app.MapPost("/api/devices/{id}/delay",
         });
     }
 
+    /*
+     * Setting this by hand is taking manual control, so the node stops
+     * being held to a profile. Without this the reconciler would put the
+     * profile's delay back within twenty seconds, and from outside that is
+     * indistinguishable from the Hub ignoring the request.
+     */
     var ok = await commands.SetDelayAsync(device, delay, cancellationToken);
+    if (ok)
+    {
+        audio.ClearProfile(id);
+    }
     return ok
         ? Results.Ok(new { status = "stored", delayMs = delay })
         : Results.StatusCode(502);
@@ -559,7 +572,8 @@ app.MapPost("/api/devices/{id}/delay",
  */
 app.MapPost("/api/devices/{id}/ring",
     async (string id, RingRequest request, DeviceRegistry registry,
-           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+           DeviceCommandClient commands, NodeAudioStore audio,
+           CancellationToken cancellationToken) =>
 {
     if (!registry.TryGet(id, out var device))
     {
@@ -579,10 +593,189 @@ app.MapPost("/api/devices/{id}/ring",
         });
     }
 
+    // As with the delay above: by hand means by hand.
     var ok = await commands.SetRingAsync(device, ring, cancellationToken);
+    if (ok)
+    {
+        audio.ClearProfile(id);
+    }
     return ok
         ? Results.Ok(new { status = "stored", ringMs = ring, appliesAt = "reboot" })
         : Results.StatusCode(502);
+});
+
+/*
+ * The two settings above, as a decision rather than as arithmetic.
+ *
+ * Ring and delay are the right primitives and a poor interface: they fail
+ * differently, only one needs a reboot, and choosing a pair that works
+ * together means knowing three firmware constants and which of two
+ * ceilings binds. Run 40 ended by observing that the buffer was a decision
+ * nobody had made -- 225 ms of cushion on a network measured leaving
+ * 200 ms holes, against Snapcast's 1000 and AirPlay's 2000 -- so here it
+ * is, made three times and named.
+ */
+app.MapGet("/api/profiles", (DeviceRegistry registry, NodeAudioStore store) =>
+{
+    var wanted = store.Snapshot();
+    return Results.Ok(new
+    {
+        profiles = LatencyProfile.All.Select(p => new
+        {
+            p.Id, p.Name, p.Use, p.RingMs, p.TargetMs, p.DelayMs,
+            p.PadBelowMs, p.TrimAboveMs, p.SteerToMs, p.SurvivesGapMs,
+            ringKilobytes = p.RingBytes / 1024,
+            airToEarMs = p.AirToEarMs(false),
+            airToEarUsbMs = p.AirToEarMs(true),
+        }),
+        /*
+         * What each node is actually running, matched on the settings it
+         * reports rather than on anything stored here -- so a node set by
+         * hand, or by an older Hub, or before profiles existed, still
+         * answers honestly. A node with its ring changed but not yet
+         * rebooted matches nothing, which is correct: it is running
+         * neither the old profile nor the new one.
+         */
+        devices = registry.Snapshot()
+            .Where(d => d.Status is not null)
+            .Select(d =>
+            {
+                var intent = wanted.GetValueOrDefault(d.Id, new NodeAudio(null, 0));
+                var target = d.Status!.DelayMs is { } ms
+                    ? LatencyProfile.BaseTargetMs + ms - intent.AlignMs
+                    : (int?)null;
+                var running = LatencyProfile.Match(d.Status.RingMs, target);
+                return new
+                {
+                    id = d.Id,
+                    name = d.Name,
+                    ringMs = d.Status.RingMs,
+                    delayMs = d.Status.DelayMs,
+                    targetMs = target,
+                    alignMs = intent.AlignMs,
+                    // What it is doing now, and what it was asked to do.
+                    // They differ while a node is waiting for the reboot
+                    // that gives it its new ring, and saying so is the
+                    // difference between "not yet" and "did not work".
+                    profile = running?.Id,
+                    wanted = intent.Profile,
+                    pending = intent.Profile is not null && running?.Id != intent.Profile,
+                };
+            }),
+    });
+});
+
+/*
+ * Applying a profile to one node: the ring, and the delay that the profile
+ * and this node's alignment offset add up to.
+ *
+ * The offset is the reason this endpoint exists rather than the GUI
+ * calling the two above in turn. `delayMs` does two jobs -- it sets the
+ * depth of the buffer, and it holds an early node back so a USB dongle and
+ * an I2S DAC line up -- so writing it from a profile alone silently
+ * discards whatever alignment was there. That failure is the quiet kind:
+ * each speaker fine on its own, the pair smeared, and no counter anywhere
+ * that can say why, because alignment is not something a node can measure
+ * about itself.
+ */
+app.MapPost("/api/devices/{id}/profile",
+    async (string id, ProfileRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, NodeAudioStore store,
+           CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var profile = LatencyProfile.ById(request.Profile);
+    if (profile is null)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"unknown profile '{request.Profile}'",
+            profiles = LatencyProfile.All.Select(p => p.Id),
+        });
+    }
+
+    var align = request.AlignMs ?? store.Get(id).AlignMs;
+    if (align < 0 || align > NodeAudioStore.MaxAlignMs)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"alignMs must be 0 to {NodeAudioStore.MaxAlignMs}; it is how far "
+                  + "*early* this node plays, and delay is only ever added",
+        });
+    }
+
+    /*
+     * Checked against the profile's own ring, not the node's current one.
+     *
+     * The ring is being changed in this same call, so the ceiling that
+     * matters is the one the node will have after it reboots -- and the
+     * node cannot tell us that yet. A profile whose target does not fit
+     * its ring is not refused by the firmware; it is quietly clamped, and
+     * the operator ends up running a buffer nobody chose with nothing to
+     * indicate it happened. `Fits` is that check, made here where it can
+     * still be reported.
+     */
+    if (!profile.Fits)
+    {
+        return Results.StatusCode(500);
+    }
+
+    var delay = profile.DelayMs + align;
+    if (delay > profile.RingMs * 3 / 4 - LatencyProfile.BaseTargetMs)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"an alignment of {align} ms does not fit the {profile.Name} profile; "
+                  + "raise the profile or reduce the offset",
+        });
+    }
+
+    /*
+     * Recorded, then converged on -- not pushed here.
+     *
+     * The two settings cannot both be applied now. The ring takes effect at
+     * the next boot, and until the node is running it the node *refuses*
+     * any delay the old ring cannot hold: Standard to Long asks for 450 ms
+     * against a 400 ms ring's ceiling of 200, and gets a 400 back. So the
+     * intent is written down and LatencyProfileReconciler walks the node
+     * there across the reboot, which also covers a node that was offline
+     * when the profile was picked.
+     */
+    store.SetProfile(id, profile.Id, align);
+
+    var ringAlready = device.Status?.RingMs == profile.RingMs;
+    if (ringAlready && !await commands.SetDelayAsync(device, delay, cancellationToken))
+    {
+        // Left stored deliberately: the reconciler will keep trying, and a
+        // node that was briefly busy should not lose the setting.
+        return Results.StatusCode(502);
+    }
+    if (!ringAlready && !await commands.SetRingAsync(device, profile.RingMs, cancellationToken))
+    {
+        return Results.StatusCode(502);
+    }
+
+    return Results.Ok(new
+    {
+        status = "stored",
+        profile = profile.Id,
+        ringMs = profile.RingMs,
+        targetMs = profile.TargetMs,
+        delayMs = delay,
+        alignMs = align,
+        restingMs = profile.SteerToMs,
+        // The ring is an allocation, so the depth a profile promises is not
+        // what is playing until the node has come back with it.
+        appliesAt = ringAlready ? "now" : "reboot",
+        note = ringAlready
+            ? null
+            : $"reboot {device.Name} to give it the {profile.RingMs} ms ring; "
+            + "the delay follows on its own once it has.",
+    });
 });
 
 /*
@@ -1750,6 +1943,13 @@ internal sealed record ChannelRequest(string? Channel);
 internal sealed record DelayRequest(int? DelayMs);
 
 internal sealed record RingRequest(int? RingMs);
+
+/// <summary>
+/// A named buffer setting, plus how far early this node plays. Omitting
+/// <c>AlignMs</c> keeps whatever offset the node already had, which is what
+/// changing only the profile should do.
+/// </summary>
+internal sealed record ProfileRequest(string? Profile, int? AlignMs);
 
 /// <summary>
 /// "line" or "mic" — which capture stage a Producer uses. Named Input to

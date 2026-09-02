@@ -9,19 +9,43 @@ what it does.
 
 ## The short version
 
-| setting | default | in use | what it buys |
+**Use the Buffer… button on a device row and pick a profile.** Everything
+below is what the profiles are made of, and is worth reading only if one of
+them needs changing.
+
+| profile | ring | target | rests at | behind the room | survives a gap of |
+| --- | --- | --- | --- | --- | --- |
+| Short | 200 | 100 | 112 ms | ~132 ms | 112 ms |
+| **Standard** | **400** | **200** | **225 ms** | **~245 ms** | **225 ms** |
+| Long | 1000 | 550 | 618 ms | ~638 ms | 618 ms |
+
+Standard is what every measurement in `LINK-MEASUREMENTS.md` from run 34
+onward describes. **Long** is for music, and is sized so its cushion
+exceeds the worst arrival gap this project has ever recorded (419 ms, run
+39) — run 40 measured an audible interruption every six minutes on
+Standard, and almost all of the gaps causing them were under 200 ms.
+**Short** is the firmware's floor and is realistic only on a wired
+backhaul; it is for video, where lip-sync beats robustness.
+
+Set every speaker in one room to the same profile. Any per-node alignment
+offset is kept and added on top, which is the reason to use the profile
+button rather than the two knobs underneath it.
+
+**A profile change usually needs a reboot**, because the ring is an
+allocation. The Hub stores the choice, sets the ring, and applies the
+matching delay by itself once the node comes back with it — the button
+reads `Buffer Standard → Long…` while that is outstanding.
+
+### The two knobs underneath
+
+| setting | default | Standard | what it buys |
 | --- | --- | --- | --- |
 | `ringMs` | 200 | **400** | room to absorb a burst |
 | `delayMs` | 0 | **100** | depth, and per-node alignment |
 
-At those values a node runs about **300 ms of buffer**, roughly **320 ms
-from air to ear**, and measured 10 ppm of late audio with zero loss over two
-hours.
-
-Set both from the Hub: the **Ring…** and **Delay…** buttons on a device row,
-each showing its current value. `ringMs` applies at the node's next reboot
-because it is an allocation; `delayMs` applies immediately and slides in
-over about half a minute.
+Still settable individually from the **Ring…** and **Delay…** buttons, which
+is how the profiles above were arrived at. Setting either by hand takes the
+node off its profile, so the Hub stops correcting it.
 
 ## The two knobs are not the same knob
 
@@ -49,18 +73,36 @@ for overflow. Both were measured.
 
 ## What actual latency you get
 
-**Not the target.** The fill sits at `1.5 × target`, not at the target.
+**Not the target.** The fill rests at `1.125 × target`.
 
-Nothing pulls the buffer back down toward its aim point: padding pushes up
-from below, trimming caps it from above at 1.5 × target, and bursts only
-ever push upward. So the ring rides its ceiling. The target behaves as a
-floor, and 1.5 × target is what decides latency.
+> **This section said `1.5 ×` for several releases, and was wrong.** That
+> was true before firmware 0.38.0: nothing pulled the buffer back down, so
+> it rode the trim line at 1.5 × target. Steering replaced that with a
+> servo that parks the fill at the middle of the quiet band, and this page
+> was never revisited — so every latency figure here was **a third too
+> high**, and the project believed it was running 320 ms when it was
+> running 245. Corrected against run 40, where a 200 ms target reported
+> `steerMs` 225 and both nodes measured a median fill of 225 ms.
+
+Padding pushes up from below at `0.75 × target`, trimming caps it from
+above at `1.5 × target`, and the steering loop holds it at the midpoint of
+the two — which belongs to neither a fast crystal nor a slow one, and is
+the same depth on any two nodes sharing a ring and a delay.
 
 ```
 target       = 100 ms + delayMs
-actual depth ≈ 1.5 × target
+pad_below    = 0.75  × target
+trim_above   = 1.5   × target      (capped at 7/8 of the ring)
+actual depth ≈ 1.125 × target      ← the midpoint, and what decides latency
 air to ear   ≈ actual depth + the output stage
 ```
+
+The depth is also **how long a silent gap the node can ride out** before
+the ring runs dry, which is the single number a buffer profile is chosen
+on. Run 40 measured 1 329 and 1 583 arrival gaps in the 100–200 ms band
+over five hours; a 225 ms cushion sits right on top of that population,
+which is why Standard produced an audible interruption every six minutes
+and why Long exists.
 
 **The output stage is not the same on both**, and the difference is larger
 than it looks:
@@ -74,15 +116,24 @@ That gap is what `delayMs` is correcting when two speakers with different
 output stages play in one room — and it is why the trim goes on the *I²S*
 node, which is the early one.
 
-To set a latency deliberately, **make the target two thirds of what you
-want**, then subtract the 100 ms default:
+To set a latency deliberately, **make the target eight ninths of the depth
+you want**, then subtract the 100 ms default. Or pick a profile, which is
+this table with the arithmetic already done:
 
-| wanted | target | `delayMs` |
-| --- | --- | --- |
-| 150 ms | 100 | 0 |
-| 225 ms | 150 | 50 |
-| **300 ms** | **200** | **100** |
-| 450 ms | 300 | 200 |
+| depth wanted | target | `delayMs` | needs a ring of |
+| --- | --- | --- | --- |
+| **112 ms** (Short) | **100** | **0** | **200** |
+| 168 ms | 150 | 50 | 300 |
+| **225 ms** (Standard) | **200** | **100** | **400** |
+| 337 ms | 300 | 200 | 600 |
+| **618 ms** (Long) | **550** | **450** | **1000** |
+
+The ring column is not advisory. The trim line is `1.5 × target` and may
+not exceed `7/8` of capacity, so **the ring must be at least 1.72 × the
+target** — a stricter rule than the three-quarters one below, and the one
+that actually binds. A target that breaks it is not refused; it is silently
+clamped, and you run a buffer you did not choose with nothing to say so.
+The profiles are checked against this before they are offered.
 
 The delay ceiling depends on the ring — the target may use three quarters of
 capacity — so a node publishes its own limit as `maxDelayMs` in `/status`
@@ -109,9 +160,21 @@ Getting this wrong is quiet — the audio is fine on each node alone and
 smeared when they play together. If you change the base, change it on every
 node, or the offsets between them move too.
 
-*(These being one setting is a wart. Splitting them into a shared `targetMs`
-and a per-node `alignMs` would let a group's depth be raised without
-disturbing anyone's alignment. Not done.)*
+**Split, as of the latency profiles — but only in the Hub.** The node still
+has one `delayMs` and knows nothing about the two jobs. The Hub keeps the
+per-node offset in `node-audio.json` and sends `profile.delayMs + alignMs`,
+so raising a room's depth no longer disturbs anyone's alignment.
+
+Latency profiles are what forced it. A profile writes `delayMs`, so without
+somewhere to keep the offset, choosing one would silently discard it — and
+that failure is exactly the quiet kind described above, with no counter
+anywhere able to report it, because alignment is not something a node can
+measure about itself.
+
+The consequence worth knowing: **set the offset through the profile
+button** (or `POST /api/devices/{id}/profile` with `alignMs`). Setting
+`delayMs` by hand still works and still means what it always did, but it
+takes the node off its profile, and the Hub then leaves it alone.
 
 ## Two speakers that will not stay together
 

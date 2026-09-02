@@ -1547,6 +1547,37 @@ and swap supplies between two nodes to find out.">Clock</th>
         `<span class="muted"> · ${(st.arrivalGaps ?? 0).toLocaleString()}</span></div>`;
     }
 
+    /*
+     * The three latency profiles and which one each node is on.
+     *
+     * Fetched rather than hardcoded, so the definitions live in one place:
+     * the Hub derives the resting depth and the survivable gap from the
+     * firmware's own constants, and a page that restated them would be the
+     * next thing to drift out of step with the buffer it describes.
+     *
+     * Empty until the first fetch lands. The button falls back to
+     * "custom", which is also the honest answer for a node whose ring and
+     * delay match no profile.
+     */
+    let latencyProfiles = [];
+    let nodeProfiles = {};
+
+    function profileName(id) {
+      return latencyProfiles.find(p => p.id === id)?.name ?? id ?? '—';
+    }
+
+    async function refreshProfiles() {
+      try {
+        const data = await (await fetch('/api/profiles', { cache: 'no-store' })).json();
+        latencyProfiles = data.profiles ?? [];
+        nodeProfiles = Object.fromEntries((data.devices ?? []).map(d => [d.id, d]));
+      } catch {
+        // Leave the last known answer up. A page that blanked the buffer
+        // column on one failed poll would read as a node losing its
+        // setting.
+      }
+    }
+
     async function refreshDevices() {
       let devices = [];
       try {
@@ -1554,6 +1585,7 @@ and swap supplies between two nodes to find out.">Clock</th>
       } catch {
         return;
       }
+      await refreshProfiles();
       lastDevices = devices;
       const table = document.getElementById('devices');
       table.hidden = devices.length === 0;
@@ -1611,6 +1643,30 @@ and swap supplies between two nodes to find out.">Clock</th>
           // holding back, and by how much" is a question the row should
           // answer without being opened. Nothing else on this page has a
           // state this invisible.
+          /*
+           * The buffer as a decision, ahead of the two knobs that
+           * implement it. Ring and delay are the right primitives and a
+           * poor interface -- they fail differently, only one needs a
+           * reboot, and picking a pair that works together means knowing
+           * three firmware constants. The named profile is what somebody
+           * actually chooses; the two buttons after it stay for the
+           * experiments the profiles came out of.
+           *
+           * "Standard →" rather than "Standard" while a node is waiting
+           * for the reboot that gives it its new ring. That state is
+           * otherwise invisible and looks exactly like a setting that did
+           * not take.
+           */
+          (() => {
+            const p = nodeProfiles[d.id];
+            const now = p?.profile ? profileName(p.profile) : null;
+            const label = p?.pending
+              ? `Buffer ${now ?? '—'} → ${profileName(p.wanted)}…`
+              : `Buffer ${now ?? 'custom'}…`;
+            return `<button data-cmd="profile" data-id="${esc(d.id)}" ` +
+              `data-profile="${esc(p?.wanted ?? p?.profile ?? '')}" ` +
+              `data-align="${esc(p?.alignMs ?? 0)}"${disabled}>${esc(label)}</button> `;
+          })() +
           `<button data-cmd="delay" data-id="${esc(d.id)}" ` +
           `data-delay="${esc(d.status?.delayMs ?? '')}" ` +
           // Carried on the button so the dialog can offer this node's real
@@ -2273,6 +2329,48 @@ and swap supplies between two nodes to find out.">Clock</th>
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the delay: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'profile') {
+        /*
+         * One question instead of two numbers, and the arithmetic behind
+         * each answer already done -- the resting depth is 1.125x the
+         * target, not the 1.5x TUNING.md claimed for several releases, and
+         * nobody should have to know either number to choose a buffer.
+         *
+         * Applying it may need a reboot, and the reply says so rather than
+         * leaving the operator to notice that nothing changed: the ring is
+         * an allocation, and until the node is running the new one it
+         * refuses any delay the old one cannot hold.
+         */
+        const list = latencyProfiles
+          .map(p => `  ${p.id}${' '.repeat(Math.max(1, 10 - p.id.length))}`
+            + `${String(p.steerToMs).padStart(4)} ms buffer, `
+            + `about ${p.airToEarMs} ms behind the room`)
+          .join('\n');
+        const answer = prompt(
+          'Buffer for this node.\n\n' + list + '\n\n'
+          + 'Longer survives more: the buffer is how long a silent gap the\n'
+          + 'node can ride out, and this network has been measured leaving\n'
+          + 'gaps past 400 ms. Shorter is only realistic on a wired\n'
+          + 'backhaul, and is for video, where lip-sync beats robustness.\n\n'
+          + 'Set every speaker in a room to the same one. Any alignment\n'
+          + 'offset this node has is kept and added on top.',
+          button.dataset.profile || 'standard');
+        if (answer === null) return;
+        const profile = answer.trim().toLowerCase();
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/profile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile }),
+        });
+        if (response.ok) {
+          const r = await response.json().catch(() => ({}));
+          say(r.note
+            ? `${r.note}`
+            : `Buffer now ${profileName(r.profile)} — about ${r.restingMs} ms.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the buffer: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'ring') {
         /*
