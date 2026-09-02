@@ -537,19 +537,53 @@ If the board carries an `LRCL` pad, this is the one. It is the part
 `docs/ROOM-CALIBRATION.md` named as its reference, and the better
 instrument of the two: 65 dB SNR, a flatter response, 24 bits.
 
-#### As a stand-alone node
+#### As a stand-alone node — built this way
 
-| Breakout | XIAO ESP32S3 | |
-| --- | --- | --- |
-| 3V / VIN | 3V3 | **3.3 V** — the silkscreen says so too |
-| GND | GND | |
-| BCLK | D0 (GPIO1) | bit clock, **an output from the ESP** |
-| LRCL / WS | D5 (GPIO6) | word select, **an output from the ESP** |
-| DOUT | D1 (GPIO2) | audio into the ESP |
-| SEL | leave open, or GND | open or low = left; tie to 3V3 for right |
+On a board that will never carry the I²S DAC, the tidiest pins are the
+three the DAC would otherwise have used:
 
-No MCLK. The part needs only the bit and word clocks, which is why five
-wires is enough.
+| Breakout | XIAO ESP32S3 | Kconfig | |
+| --- | --- | --- | --- |
+| 3V / VIN | 3V3 | | **3.3 V** — the silkscreen says so too |
+| GND | GND | | |
+| BCLK | D8 (GPIO7) | `OAL_MIC_BCLK_GPIO=7` | bit clock, **an output from the ESP** |
+| DOUT | D9 (GPIO8) | `OAL_MIC_DIN_GPIO=8` | audio into the ESP |
+| LRCL / WS | D10 (GPIO9) | `OAL_MIC_WS_GPIO=9` | word select, **an output from the ESP** |
+| SEL | leave open, or GND | | open or low = left; tie to 3V3 for right |
+
+Contiguous, and clear of every pin that is spoken for elsewhere: D6/D7 are
+the UART console, D2–D4 the PCM1808, D5 the ADC's master clock. The
+ESP32-S3 routes I²S through its GPIO matrix, so the choice is free as long
+as nothing else drives the pin — and on a UAC node or an ADC node, nothing
+drives D8–D10.
+
+**Only for a board with no I²S DAC.** Those three GPIOs are
+`OAL_I2S_BCLK_GPIO`, `OAL_I2S_DOUT_GPIO` and `OAL_I2S_WS_GPIO` — 7, 8 and
+9 by default. A node that drives a PCM5102A cannot also read a microphone
+here; capture and playout create separate I²S channels, so they cannot
+share a clock pin.
+
+**Enable `OAL_ADC_ENABLED` even for a microphone-only node.** All three
+`OAL_MIC_*_GPIO` symbols depend on it, so without it they do not exist and
+the pins stay wherever the ADC path left them. `input` = `mic` in NVS then
+chooses which converter captures.
+
+#### The pins the Kconfig defaults to, which are not these
+
+`OAL_MIC_BCLK_GPIO` 1, `OAL_MIC_WS_GPIO` 2, `OAL_MIC_DIN_GPIO` 3 — D0, D1,
+D2 — and two things about that are worth knowing rather than discovering.
+
+**It disagrees with the combined-box plan below**, which puts the word
+select on D5 and the data on D1. Both cannot be right; the Kconfig is what
+the firmware does.
+
+**Its data pin is D2, which this document tells you not to use.** D2 is the
+PCM1808's `DATA`, an output the module drives whenever it has power. In a
+stand-alone microphone node nothing else is on the pin and the default is
+harmless. In the combined box it is two outputs on one wire.
+
+No MCLK in any of these. The part needs only the bit and word clocks,
+which is why five wires is enough.
 
 #### Combined with the turntable ADC, in one box
 
