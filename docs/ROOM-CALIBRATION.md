@@ -245,20 +245,24 @@ measurement node for the length of a sweep. A permanently installed
 microphone node is still worth building later, for the uses that are about
 listening rather than calibrating; it would use the same pins.
 
-**The microphone in hand is a PDM part, not the ICS-43434 this proposal
-names below.** It arrived as a `3V GND SEL CLK DAT` breakout — two signal
-pins, a 1–3 MHz pulse stream, decoded by the S3's I²S peripheral in PDM RX
-mode rather than as ordinary I²S. `docs/HARDWARE.md` carries the wiring for
-both the stand-alone node and the combined box, and the note that
-`oal_capture` has no PDM path yet.
+**The ICS-43434 this proposal names is now the part in hand.** An earlier
+delivery supplied a PDM board instead — `3V GND SEL CLK DAT`, a 1–3 MHz
+pulse stream needing PDM RX mode — and that entry stood here for a while.
+The board now on the bench has six pads with an `LRCL`, which is ordinary
+I²S, and `oal_capture` already brings up exactly that: Philips slots, 32
+bits, the ESP as clock master. No new capture path is needed.
 
-What that changes for the results: it is a **voice-grade** microphone with
-no calibration file, so Phase 1 should be read as *relative* — this speaker
-against that one, this position against another — rather than as absolute
-truth about the room. Room modes, a boomy corner, the broad shape of a
-curve and an arrival time all survive that caveat, and those are what Phase
-1 is asking for. The ICS-43434 remains the better instrument if the first
-results justify buying one, and nothing but the part changes if they do.
+`docs/HARDWARE.md` carries the wiring for the stand-alone node and for the
+combined box, and one trap worth reading before soldering: the word select
+wants D5, which is also where `OAL_ADC_MCLK_GPIO` points by default.
+
+It is still **not a calibrated measurement microphone**, so Phase 1 should
+be read as *relative* — this speaker against that one, this position
+against another — rather than as absolute truth about the room. Room
+modes, a boomy corner, the broad shape of a curve and an arrival time all
+survive that caveat, and those are what Phase 1 is asking for. The 43434
+simply starts from a better floor than the PDM part would have: 65 dB SNR,
+flatter, 24 bits.
 
 ## One chip generates the sweep and captures it
 

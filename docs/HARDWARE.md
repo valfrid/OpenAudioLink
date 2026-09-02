@@ -425,10 +425,18 @@ speaker that nothing downstream will absorb.
 
 ### The measurement microphone
 
-Status: a board is in hand, and **which board is not yet settled** — the
-listing it was bought from says ICS-43434 (I²S), the silkscreen on the
-board photographed says "PDM Mic". Both are wired below, because they are
-different interfaces and only one of them is right.
+Status: **settled — the I²S part is in hand.** The board photographed
+carries six pads, `SEL LRCL DOUT BCLK GND 3V`, with an Adafruit logo and
+`VIN/Logic: 3.3V` on the face. The `LRCL` is the tell, by the pad test
+below: this is an ICS-43434, not the PDM board an earlier delivery
+supplied.
+
+That is the fortunate half of the two. `oal_capture` brings up
+**standard I²S RX** — Philips slots, 32 bits, ESP as master — and has no
+PDM path at all, so the part now in hand is the one the existing capture
+code already speaks. The PDM wiring is kept below because a PDM board is
+also in the drawer and the two must never be confused, not because
+either is still a candidate.
 
 #### Read the pads before soldering
 
