@@ -277,9 +277,17 @@ and swap supplies between two nodes to find out.">Clock</th>
     differ. That catches corruption a sequence-number check cannot see.
     <strong>Tone</strong> is a sine — worth listening to once a DAC exists,
     useless for verification, so payload errors are expected with it.
-    <strong>Line in</strong> sends what the producer’s ADC is hearing: the
-    real analog path, and the only one of the three that involves a
-    turntable. Payload errors are meaningless with it too.
+    The third option sends <strong>what the producer is actually
+    capturing</strong> — its ADC on a turntable node, its MEMS capsule on a
+    microphone node, whichever its <code>input</code> setting selects. The
+    option names whichever one the chosen producer has. It is the real
+    analog path and the only one of the three that leaves the board;
+    payload errors are meaningless with it too.
+    <br>
+    <strong>Microphone into a speaker in the same room is a feedback
+    loop.</strong> At this buffer it returns as a slap-back rather than a
+    squeal, which makes it easy to mistake for working — start with the
+    volume low or the two in different rooms.
     <br>
     Payload errors accumulate until <em>Stop &amp; reset counters</em>, so a
     Pattern run started after a Tone run inherits the tone’s. Reset first
@@ -2654,6 +2662,25 @@ and swap supplies between two nodes to find out.">Clock</th>
         || '<option value="">no producer node</option>';
       if ([...producerSelect.options].some(o => o.value === chosenProducer)) {
         producerSelect.value = chosenProducer;
+      }
+
+      /*
+       * The capture option is named after whichever converter the chosen
+       * producer is actually set to, because "Line in (the ADC)" is a lie
+       * on a microphone node -- the source sends what that node captures,
+       * and which converter that is depends on its `input` setting, not on
+       * this dropdown. Reading a label that names the other converter is
+       * how somebody concludes the microphone cannot be streamed at all.
+       */
+      const captureOption = [...document.getElementById('link-source').options]
+        .find(o => o.value === 'capture');
+      if (captureOption) {
+        const stage = producers.find(
+          d => d.id === producerSelect.value)?.status?.inputStage;
+        captureOption.textContent =
+          stage === 'mic' ? 'Microphone (the MEMS capsule)'
+          : stage === 'line' ? 'Line in (the ADC)'
+          : 'Capture (this node\'s input stage)';
       }
 
       const consumerSelect = document.getElementById('link-consumers');
