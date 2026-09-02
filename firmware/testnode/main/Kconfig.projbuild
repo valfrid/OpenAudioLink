@@ -166,13 +166,29 @@ menu "OpenAudioLink Test Node"
     config OAL_MIC_WS_GPIO
         int "Microphone word select (WS) GPIO"
         depends on OAL_ADC_ENABLED
-        default 2
+        default 6
+        help
+            D5. Shares a number with OAL_ADC_MCLK_GPIO and does not collide
+            with it: the self-clocked ADC module makes this end the slave,
+            and oal_capture leaves MCLK unassigned there. A bare PCM1808
+            needs that clock for real, and is the one part that cannot
+            share a board with the microphone.
 
     config OAL_MIC_DIN_GPIO
         int "Microphone data (SD) GPIO"
         depends on OAL_ADC_ENABLED
-        default 3
+        default 2
         help
+            D1. It was 3 -- D2 -- which is the PCM1808's DATA pin, an output
+            the module drives whenever it has power. docs/HARDWARE.md says
+            in bold not to put the microphone's data there, and the default
+            was pointed at exactly that.
+
+            D0, D1 and D5 are what remain once the DAC has D8-D10, the ADC
+            has D2-D4 and the console has D6-D7: nine free pads against nine
+            needed, so this assignment is forced rather than chosen. It is
+            what lets a node be a speaker that also listens.
+
             The microphone puts its samples in one half of the frame and its
             SEL pin decides which. Mono by nature; the channel profile
             (decision 10) is what makes a stereo stream of it.
