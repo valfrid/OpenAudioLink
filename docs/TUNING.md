@@ -473,13 +473,29 @@ underruns and every step-back in the run, at −49 dBm with no disconnects —
 so signal strength cannot explain it and the air can.
 
 Run 40 moved the band to **channel 6** and the speaker-to-speaker offset
-went from a median of 7 ms to **4 ms**, p90 29 → 15, and the 18× underrun
-gap between the two nodes closed to nothing. Do this before touching the
-buffer. Two cautions carried from that run: both nodes also ended up on
-one access point in the same change, so the credit is not yet split
-between the two; and a node at **−65 dBm** turned in the better half of
-the pair against one at −45, so do not go looking for signal strength to
-explain what the air is doing.
+went from a median of 7 ms to **4 ms**, p90 29 → 15. Do this before
+touching the buffer.
+
+**But run 41 found that one channel does not fit a whole house.** Measured
+per node, per access point:
+
+| node | ch 3 | ch 6 |
+| --- | --- | --- |
+| Speakers, on `…0b:d0` | 28.3 underruns/h | **1.3/h** |
+| Stereo, on `…13:b1` | **1.6/h** | 7.2–25.4/h |
+
+Each channel is excellent for one mesh point and bad for the other, and
+both times the house was tuned to one number one speaker paid for it. If
+the backhaul is wired, the mesh points do not need to share a channel —
+give them different ones. Otherwise the setting is a compromise, and it is
+worth knowing which speaker is buying it.
+
+Two things that survive from those runs regardless of channel. **Signal
+strength predicts nothing**: Speakers' best hours were at −59 dBm and its
+worst at −49, nine decibels worse for twenty-two times better audio.
+And **a matched pair synchronises better than a good node and a poor
+one** — sync is a differential quantity, so the most balanced pair beat
+the one containing the single best node.
 
 The router's own view is under *System Log → Wireless Log* (clients and
 their RSSI) and *System Log → General Log* (association events). Read it

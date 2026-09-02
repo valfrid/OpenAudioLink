@@ -702,6 +702,104 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 41: the two mesh points want different channels
+
+**Hub 0.73.0, firmware 0.41.0, internet radio, 13.6 h across a night and a
+morning.** Speakers moved back to its own mesh point at +5.3 h — the
+control run 40 confounded — leaving 7.9 h on two access points against the
+5.3 h on one before it, same channel, same firmware, same Hub.
+
+It answered the question it was set, and then produced a bigger one.
+
+### Every configuration this project has measured
+
+One node per row, sorted as it happened. Nothing here is derived; each row
+is a segment of constant channel and access point with no counter reset
+inside it.
+
+| node | ch | access point | RSSI | hours | underruns/h | silence/h | step-backs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Speakers | 3 | `…0b:d0` | −49 | 3.2 | **28.3** | 1 180 ms | 7 |
+| Speakers | 6 | `…13:b1` | −65 | 5.3 | 6.8 | 293 ms | 1 |
+| Speakers | 6 | `…0b:d0` | −59 | 7.9 | **1.3** | 76 ms | 1 |
+| Stereo | 3 | `…13:b1` | −51 | 3.2 | **1.6** | 110 ms | 0 |
+| Stereo | 6 | `…13:b1` | −46 | 5.7 | 7.2 | 428 ms | 5 |
+| Stereo | 6 | `…13:b1` | −46 | 7.9 | **25.4** | 1 228 ms | 24 |
+
+**Speakers improved 22-fold. Stereo, which never moved, got 16 times
+worse.** The only thing they have in common is the channel change, and it
+went opposite ways for the two of them.
+
+### Which kills the last surviving explanation
+
+Speakers' best hours are at **−59 dBm** and its worst at **−49**. Nine
+decibels *worse* signal, twenty-two times *better* audio. Run 23 suspected
+it, run 40 said it, and this settles it: **RSSI predicts nothing here.**
+Anyone reaching for signal strength to explain a node's behaviour in this
+project is reaching for the wrong instrument.
+
+It is not time of day either, which was the obvious confound and is ruled
+out by the hours themselves. Speakers' 100–200 ms gap rate steps from
+218–311 per hour to 46, 29, 32, 27, 22, 21 the moment it changes access
+point, and holds there through the whole morning — the same morning in
+which Stereo degrades. A daytime effect would have taken both.
+
+And Stereo's worst comparison is against itself at a *busier* hour:
+1.6 underruns/h on channel 3 in the early evening, 7.2/h on channel 6
+overnight. Four and a half times worse in quieter air, having changed
+nothing but the channel.
+
+### So the channel is not a single setting
+
+The two mesh points stand about fifteen metres apart in different rooms,
+and they are not in the same radio environment:
+
+- **Channel 3 suited `…13:b1`** (Stereo, 1.6/h) and was terrible for
+  `…0b:d0` (Speakers, 28.3/h).
+- **Channel 6 suits `…0b:d0`** (Speakers, 1.3/h) and is bad for `…13:b1`
+  (Stereo, 7.2/h at night, 25.4/h by day).
+
+Both times the house has been tuned to one number, and both times one
+speaker has paid for it. The gap shapes say the same thing from the other
+side — over 7.9 hours on channel 6, Stereo took **14×** Speakers' count of
+gaps past 100 ms and 14× past 200, on a *better* RSSI. That is a busy
+medium, not a weak one.
+
+### What it cost the offset, and why that is the interesting part
+
+| | ch 3, two APs | ch 6, one AP | ch 6, two APs |
+| --- | --- | --- | --- |
+| Median | 7.0 ms | **4.0 ms** | 10.0 ms |
+| p90 | 29 ms | **14 ms** | 29 ms |
+| Under 20 ms | 82.9 % | **93.2 %** | 81.4 % |
+| Over 40 ms | 5.2 % | **1.5 %** | 6.3 % |
+
+Splitting the nodes made sync *worse*, and run 40's guess at why was
+wrong. It is not that one access point is better. It is that **sync is a
+differential quantity and this configuration is the least balanced one
+yet**: one node at 1.3 underruns an hour beside one at 25.4. On a single
+access point both nodes were mediocre *together* — around 7/h each — and
+being equally mediocre synchronised better than one being excellent.
+
+Worth stating as a design rule, because it is not obvious and it will
+outlive this router: **a matched pair synchronises better than a good node
+and a poor one.** Chasing the best possible link for one speaker can cost
+more than it buys if its partner cannot follow.
+
+### Next
+
+**Try channel 1 or 11.** Channel 3 and channel 6 have each now been
+measured as good for one mesh point and bad for the other; neither is a
+compromise worth keeping, and 1 and 11 are the two non-overlapping options
+never tried. Scan from **Stereo's** node first — it is the one paying, and
+its radio is the only instrument that sees its own air.
+
+Better, if AiMesh permits it: **give the two mesh points different
+channels.** The backhaul is wired, so they do not need to share one, and
+this run is the evidence that sharing one cannot suit both. That would be
+the first configuration in this series where each node gets the air that
+suits it rather than an average of two rooms.
+
 ## Run 40: channel 6, and the differential disappears
 
 **Hub 0.73.0, firmware 0.41.0, internet radio, overnight.** Two files, and
