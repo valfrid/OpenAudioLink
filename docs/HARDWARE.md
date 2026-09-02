@@ -646,6 +646,15 @@ configuring — and in particular a consumer's `channel` setting stays a
 description of *that speaker* rather than of whatever it happens to be
 listening to.
 
+**The level meter still reads one-sided, and that is correct.** It is
+measured in the capture task from what the converter delivers, before the
+ring — the fold is applied on the way out, in `oal_capture_read`. So a
+healthy folded microphone still traces `level L -56 R -120 dBFS`, and that
+asymmetry is the meter answering a different question: which slot the part
+is actually driving, which is how you confirm SEL is on the side you think
+it is. To see the fold, listen to the stream — it should be centred, not
+hard left.
+
 ### What the firmware still needs
 
 `oal_capture` brings up **standard I²S RX only**. Firmware 0.31.0 added the
