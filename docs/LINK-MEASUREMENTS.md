@@ -702,6 +702,141 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 40: channel 6, and the differential disappears
+
+**Hub 0.73.0, firmware 0.41.0, internet radio, overnight.** Two files, and
+in the middle of them a 3 h 20 min upgrade window where the nodes were
+being flashed — so the run reads as a **before** (3.14 h on channel 3, the
+two nodes on different mesh points, Hub 0.72.0) and an **after**
+(4.95 h on channel 6, and this is the part that matters).
+
+**Read this entry knowing the experiment is confounded.** The plan was to
+change the channel and nothing else. Two things changed: the channel went
+3 → 6, *and* Speakers came back from its reboot associated with the far
+mesh point, so both nodes spent the whole after-segment on **one access
+point**. That is the control this series has wanted since run 23, and it
+arrived by accident on top of the change being tested. The improvement
+below is real; which of the two produced it is not yet established.
+
+| | before: ch 3, two APs | after: ch 6, one AP |
+| --- | --- | --- |
+| | Speakers / Stereo | Speakers / Stereo |
+| Duration | 3.14 h | 4.95 h |
+| Lost | 0 / 2 | **0 / 0** |
+| Underruns | **89** / 5 | **35 / 39** |
+| Step-backs | 7 / 0 | 1 / 5 |
+| Re-primes | not counted | **0 / 1** |
+| Net trim | +229 / +2 ppm | +56 / +95 ppm |
+| Silence | 3 691 / 349 ms | 1 350 / 2 019 ms |
+| Discarded | 1 123 / 0 ms | 0 / 994 ms |
+| Arrival gaps | 1.75 % / 0.99 % | 2.76 % / 3.38 % |
+| RSSI (median) | −50 / −49 | **−65 / −45** |
+| Access point | `…0b:d0` / `…13:b1` | `…13:b1` / `…13:b1` |
+
+### The offset, which is what the whole series is for
+
+Ring-fill estimator, the one run 39 established as the honest one:
+
+| | before | after |
+| --- | --- | --- |
+| Median | 7.0 ms | **4.0 ms** |
+| p90 | 29 ms | **15 ms** |
+| p95 | 40 ms | 24 ms |
+| p99 | 84 ms | 54 ms |
+| Worst | 183 ms | **91 ms** |
+| Under 20 ms | 82.9 % | **92.9 %** |
+| Over 40 ms | 5.2 % | **1.5 %** |
+
+And it does not drift. Hour by hour across the five hours: median 4, 5, 4,
+5, 3 ms; p90 15, 13, 14, 17, 18 ms; between 91 % and 94 % under 20 ms
+every hour. The timestamp estimator agrees where it is trustworthy —
+restricted to readings under 100 ms round trip, median 5.5 ms and p90
+16.8 ms — and still throws one 761 ms artifact, which is the estimator and
+not the audio, exactly as run 39 found.
+
+**Against the 100–137 ms that opened this investigation, this is a
+hundredfold.**
+
+### The differential is gone, and RSSI is dead as an explanation
+
+Speakers ran 89 underruns to Stereo's 5 before, an 18× gap that ran
+through runs 36 to 39 and drove every "which node is broken" argument.
+After: **35 and 39.** The two nodes are now the same node, statistically.
+
+And they got there while **20 dB apart**: Speakers sat at a median −65 dBm
+all night against Stereo's −45, and turned in the *better* half of the
+pair — fewer step-backs, no discarded audio, less silence. Run 23 said
+which access point mattered more than signal strength. This is that
+finding at its strongest: a node two rooms from its radio, at a level this
+project has previously called marginal, performing indistinguishably from
+one sitting next to its own.
+
+### What is left is common-mode, and that is a different fault
+
+The arrival-gap *count* went up, roughly doubling on both nodes. On the
+old counter that would have read as a regression and it is not one — the
+buckets shipped in 0.41.0 for exactly this, and they earn their place on
+their first run:
+
+| Gap length | Speakers | Stereo |
+| --- | --- | --- |
+| under 20 ms | 39 429 | 49 295 |
+| 20–50 ms | 47 876 | 59 940 |
+| 50–100 ms | 9 768 | 9 773 |
+| 100–200 ms | 1 329 | 1 583 |
+| **over 200 ms** | **14** | **27** |
+
+More gaps, and almost all of them short enough that a 200 ms cushion never
+notices. Fourteen and twenty-seven excursions past 200 ms in five hours,
+against a lifetime maximum that in run 39 read 419 ms for a hundred
+consecutive samples and could not have told anybody this.
+
+`reprimes` answers the other question run 39 had to leave open: **0 and 1.**
+So of 74 underruns between them, essentially none ran the full 200 ms to a
+re-prime. They are short starves that recovered, not phase jumps.
+
+Now the part that matters. Lining the two nodes' intervals up against each
+other:
+
+- **98 %** of the 100–200 ms gaps happen to *both nodes in the same
+  30-second interval* (518 shared of 527 and 548).
+- **86 %** of the gaps over 200 ms are shared (12 of 14 and 27).
+- 74 % of the underruns are shared.
+
+By this project's own rule, what both nodes see is not either node's
+radio. The Hub is ruled out by its own counters on those same rows —
+`hubUnderrunSamples` 0 across the segment, worst stall 30 ms, worst GC
+29 ms. What is left is the path they now have in common: **the single
+access point both nodes were moved onto**, carrying two unicast streams at
+400 packets a second between them plus whatever else the house was doing.
+
+This is a trade, not a cure. **A differential stall costs sync; a common
+stall costs audio.** Putting both nodes behind one radio removed the
+differential — which is why the offset halved — and concentrated what
+remains into a shared bottleneck. It cost 273 ms/h of silence on Speakers
+and 408 ms/h on Stereo, which is audible and is now the leading defect.
+
+### Next, and it is a clean one for once
+
+**Put Speakers back on its near mesh point, still on channel 6.** One
+change, and it separates the two things this run confounded:
+
+- If the offset holds near 4 ms, **the channel was the fix** — and
+  Speakers gets its 20 dB back for free.
+- If the offset degrades toward the old figures, **the one-AP topology was
+  the fix**, and that is an architectural finding worth designing around
+  rather than a router setting.
+
+Either answer is worth more than another overnight run of the current
+configuration.
+
+One thing to know while doing it: Speakers picked the far radio when it
+rebooted and stayed there all night, `roams` 0. That is the Roaming
+assistant being off working as intended — but the cost of it is that a bad
+initial association is permanent until something reboots. Worth checking
+which radio a node landed on after every restart, from the node's own
+Wi-Fi scan panel.
+
 ## Run 39: the first run read as a series, and the crystals cleared again
 
 **Hub 0.72.0, internet radio, 3 h 20 min, 801 rows of `oal-2026-09-01.csv`.**

@@ -407,8 +407,16 @@ nodes themselves: both mesh points on **channel 3**, which overlaps 1 and
 6 and is therefore the worst of the three settings this paragraph warns
 about. The node on the busier of the two took 12.7× the trims, 19× the
 underruns and every step-back in the run, at −49 dBm with no disconnects —
-so signal strength cannot explain it and the air can. Set the band to 1, 6
-or 11 before changing anything in the buffer.
+so signal strength cannot explain it and the air can.
+
+Run 40 moved the band to **channel 6** and the speaker-to-speaker offset
+went from a median of 7 ms to **4 ms**, p90 29 → 15, and the 18× underrun
+gap between the two nodes closed to nothing. Do this before touching the
+buffer. Two cautions carried from that run: both nodes also ended up on
+one access point in the same change, so the credit is not yet split
+between the two; and a node at **−65 dBm** turned in the better half of
+the pair against one at −45, so do not go looking for signal strength to
+explain what the air is doing.
 
 The router's own view is under *System Log → Wireless Log* (clients and
 their RSSI) and *System Log → General Log* (association events). Read it
