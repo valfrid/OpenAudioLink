@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "oal_channel.h"
+#include "oal_eq.h"
 #include "oal_output.h"
 
 #ifdef __cplusplus
@@ -288,6 +289,27 @@ void oal_playout_set_volume(uint8_t percent);
 
 /** The level last set, 0-100. */
 uint8_t oal_playout_volume(void);
+
+/**
+ * Hands the playout a room correction (docs/ROOM-CALIBRATION.md).
+ *
+ * One vector per output, because a correction belongs to a loudspeaker and
+ * a stereo node drives two of them standing in different corners. The
+ * preamp is one value for both, in tenths of a decibel and negative: it is
+ * a broadband gain, so different values left and right would move the
+ * stereo image sideways.
+ *
+ * Staged rather than applied. The filters belong to the playout task -- a
+ * biquad's state is the last two samples it saw, and swapping coefficients
+ * underneath a half-filtered chunk rings for as long as the filter decays
+ * -- so this leaves a request and the task adopts it between chunks.
+ *
+ * @param enabled whether to run it. The vectors are kept either way, so
+ *                corrected and uncorrected can be compared by ear without
+ *                losing the profile to get back to.
+ */
+void oal_playout_set_eq(const oal_eq_curve_t *left, const oal_eq_curve_t *right,
+                        bool enabled, int16_t preamp_tenths);
 
 /**
  * The largest target this node's ring will honour, in milliseconds, or 0

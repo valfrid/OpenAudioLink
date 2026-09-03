@@ -6,6 +6,8 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "oal_eq.h"
+#include "oal_playout.h"
 #include "oal_pcm.h"
 
 static const char *TAG = "oal_config";
@@ -23,6 +25,10 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_OUTPUT "output"
 #define NVS_KEY_INPUT  "input"
 #define NVS_KEY_MIC_GAIN "mic_gain"
+#define NVS_KEY_EQ_LEFT "eq_l"
+#define NVS_KEY_EQ_RIGHT "eq_r"
+#define NVS_KEY_EQ_ON "eq_on"
+#define NVS_KEY_EQ_PREAMP "eq_pre"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -601,4 +607,178 @@ esp_err_t oal_config_set_mic_gain_db(uint8_t db)
     }
     nvs_close(nvs);
     return err;
+}
+
+/*
+ * Room correction (docs/ROOM-CALIBRATION.md).
+ *
+ * Four settings, and the shape of them is the feature:
+ *
+ *   eq_l, eq_r   one vector per OUTPUT channel, as readable text. A
+ *                correction belongs to a loudspeaker, and a stereo node
+ *                drives two of them standing in two different corners.
+ *   eq_on        whether to run it, keeping the coefficients either way.
+ *                Without this, comparing corrected against uncorrected
+ *                means deleting a profile and measuring again to get it
+ *                back -- so nobody would ever check, which is the one
+ *                thing worth checking.
+ *   eq_pre       headroom for the boosts, in tenths of a decibel, as a
+ *                NEGATIVE number.
+ *
+ * The preamp is one value for the node rather than one per channel, and
+ * that is deliberate: it is a broadband gain, so different values on left
+ * and right would move the stereo image sideways. The Hub works out both
+ * channels' needs and sends the deeper of the two.
+ */
+static esp_err_t get_eq_text(const char *key, char *out, size_t size)
+{
+    if (out == NULL || size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out[0] = '\0';
+
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return ESP_OK;   /* nothing stored is an empty vector, not a fault */
+    }
+    size_t length = size;
+    esp_err_t err = nvs_get_str(nvs, key, out, &length);
+    nvs_close(nvs);
+
+    if (err != ESP_OK) {
+        out[0] = '\0';
+    }
+    return ESP_OK;
+}
+
+static esp_err_t set_eq_text(const char *key, const char *text)
+{
+    /*
+     * Parsed before it is stored, so a vector that cannot be read back is
+     * refused at the point somebody can still be told about it rather than
+     * discovered at the next boot as a speaker that lost its correction.
+     */
+    oal_eq_curve_t curve;
+    if (!oal_eq_parse(text == NULL ? "" : text, &curve)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char normalised[OAL_EQ_TEXT_MAX];
+    if (oal_eq_format(&curve, normalised, sizeof(normalised)) < 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(nvs, key, normalised);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+esp_err_t oal_config_get_eq(oal_channel_side_t side, char *out, size_t size)
+{
+    return get_eq_text(side == OAL_SIDE_RIGHT ? NVS_KEY_EQ_RIGHT : NVS_KEY_EQ_LEFT, out, size);
+}
+
+esp_err_t oal_config_set_eq(oal_channel_side_t side, const char *text)
+{
+    return set_eq_text(side == OAL_SIDE_RIGHT ? NVS_KEY_EQ_RIGHT : NVS_KEY_EQ_LEFT, text);
+}
+
+bool oal_config_get_eq_enabled(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return false;
+    }
+    uint8_t stored = 0;
+    esp_err_t err = nvs_get_u8(nvs, NVS_KEY_EQ_ON, &stored);
+    nvs_close(nvs);
+
+    /* Off unless it was turned on. A node updated into a firmware that has
+     * this must sound exactly as it did before. */
+    return err == ESP_OK && stored != 0;
+}
+
+esp_err_t oal_config_set_eq_enabled(bool on)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(nvs, NVS_KEY_EQ_ON, on ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+int16_t oal_config_get_eq_preamp_tenths(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return 0;
+    }
+    int16_t stored = 0;
+    esp_err_t err = nvs_get_i16(nvs, NVS_KEY_EQ_PREAMP, &stored);
+    nvs_close(nvs);
+
+    if (err != ESP_OK || stored > 0 || stored < OAL_EQ_PREAMP_MIN_TENTHS) {
+        return 0;
+    }
+    return stored;
+}
+
+esp_err_t oal_config_set_eq_preamp_tenths(int16_t tenths)
+{
+    /* Attenuation only. A preamp that boosts is not headroom, it is a
+     * volume control that can clip, and there is one of those already. */
+    if (tenths > 0 || tenths < OAL_EQ_PREAMP_MIN_TENTHS) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_i16(nvs, NVS_KEY_EQ_PREAMP, tenths);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+/**
+ * Reads the stored correction and hands it to the playout.
+ *
+ * Here rather than in either of them: the playout takes values and knows
+ * nothing about storage, and the audio component cannot depend on this one
+ * because this one already depends on it. So the join lives on the side
+ * that can see both.
+ */
+void oal_config_apply_eq(void)
+{
+    char text[OAL_EQ_TEXT_MAX];
+    oal_eq_curve_t left = { 0 };
+    oal_eq_curve_t right = { 0 };
+
+    if (oal_config_get_eq(OAL_SIDE_LEFT, text, sizeof(text)) == ESP_OK) {
+        (void)oal_eq_parse(text, &left);
+    }
+    if (oal_config_get_eq(OAL_SIDE_RIGHT, text, sizeof(text)) == ESP_OK) {
+        (void)oal_eq_parse(text, &right);
+    }
+
+    oal_playout_set_eq(&left, &right,
+                       oal_config_get_eq_enabled(),
+                       oal_config_get_eq_preamp_tenths());
 }

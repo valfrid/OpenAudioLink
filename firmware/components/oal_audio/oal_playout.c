@@ -10,6 +10,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include <math.h>
+
+#include "oal_eq.h"
 #include "oal_fade.h"
 #include "oal_pcm.h"
 #include "oal_rtp.h"
@@ -199,6 +202,32 @@ static size_t s_target_samples;
  * trade than a chunk of latency nobody can hear.
  */
 static volatile int32_t s_gain_q16 = OAL_GAIN_UNITY;
+
+/*
+ * Room correction, one chain per output (docs/ROOM-CALIBRATION.md).
+ *
+ * Owned by the playout task and touched by nobody else. A biquad's state is
+ * the last two samples it saw, so a chain rebuilt from another task
+ * mid-chunk would leave the filter running on half of one correction and
+ * half of another -- audible, and impossible to explain afterwards. Instead
+ * a change is left here as a request and picked up between chunks.
+ */
+static oal_eq_chain_t s_eq[OAL_RTP_CHANNELS];
+static bool s_eq_enabled;
+static int32_t s_eq_preamp_q16 = OAL_GAIN_UNITY;
+
+/*
+ * What has been asked for but not yet picked up.
+ *
+ * The playout reads no configuration of its own -- it is given values, the
+ * way the volume is -- because oal_config already depends on this component
+ * and the dependency cannot run both ways. So a correction arrives here as
+ * a request from whoever read NVS, and the task adopts it between chunks.
+ */
+static oal_eq_curve_t s_eq_staged[OAL_RTP_CHANNELS];
+static volatile bool s_eq_staged_enabled;
+static volatile int16_t s_eq_staged_preamp_tenths;
+static volatile bool s_eq_pending;
 static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
 
 /*
@@ -521,6 +550,72 @@ esp_err_t oal_playout_set_target_ms(uint32_t target_ms)
     ESP_LOGI(TAG, "playout target now %" PRIu32 " ms (%u frames)",
              target_ms, (unsigned)frames);
     return ESP_OK;
+}
+
+/*
+ * Volume and the correction's headroom, as one multiply.
+ *
+ * Both are Q16 gains, so composing them is a multiply and a shift. Doing it
+ * here rather than as two passes over the chunk keeps the arithmetic in one
+ * place and the audio in one pass.
+ */
+static int32_t effective_gain(void)
+{
+    if (s_eq_preamp_q16 >= OAL_GAIN_UNITY) {
+        return s_gain_q16;
+    }
+    return (int32_t)(((int64_t)s_gain_q16 * s_eq_preamp_q16) >> 16);
+}
+
+/**
+ * Adopts a staged correction between chunks.
+ *
+ * Only ever called from the playout task, which is what makes the chains
+ * safe to rebuild: a filter's state is the last two samples it saw, and
+ * replacing coefficients underneath a half-filtered chunk is a
+ * discontinuity that rings for as long as the filter decays.
+ */
+static void adopt_eq(void)
+{
+    s_eq_pending = false;
+
+    for (unsigned ch = 0; ch < OAL_RTP_CHANNELS; ch++) {
+        oal_eq_chain_build(&s_eq[ch], &s_eq_staged[ch], OAL_RTP_SAMPLE_RATE);
+    }
+
+    int16_t tenths = s_eq_staged_preamp_tenths;
+    s_eq_preamp_q16 = tenths >= 0
+        ? OAL_GAIN_UNITY
+        : (int32_t)((float)OAL_GAIN_UNITY * powf(10.0f, (float)tenths / 200.0f));
+
+    /* Enabled only if there is something to run. A switch turned on over an
+     * empty vector would cost a branch per chunk and change nothing. */
+    s_eq_enabled = s_eq_staged_enabled
+        && (oal_eq_chain_active(&s_eq[0]) || oal_eq_chain_active(&s_eq[1]));
+
+    ESP_LOGI(TAG, "room correction %s: %u + %u bands, preamp %d.%u dB",
+             s_eq_enabled ? "on" : "off",
+             (unsigned)s_eq[0].count, (unsigned)s_eq[1].count,
+             tenths / 10, (unsigned)(tenths < 0 ? -(tenths % 10) : tenths % 10));
+}
+
+void oal_playout_set_eq(const oal_eq_curve_t *left, const oal_eq_curve_t *right,
+                        bool enabled, int16_t preamp_tenths)
+{
+    /*
+     * Staged, not applied. The chains belong to the playout task and this
+     * runs on whichever one handled the request; the flag is set last, so
+     * the task never sees half a correction.
+     */
+    if (left != NULL) {
+        s_eq_staged[0] = *left;
+    }
+    if (right != NULL) {
+        s_eq_staged[1] = *right;
+    }
+    s_eq_staged_enabled = enabled;
+    s_eq_staged_preamp_tenths = preamp_tenths;
+    s_eq_pending = true;
 }
 
 uint8_t oal_playout_volume(void)
@@ -1210,7 +1305,28 @@ static void playout_task(void *arg)
          * were quantised at whatever the level happened to be, so a volume
          * control cannot slowly grind the resolution away.
          */
-        oal_pcm_apply_gain(chunk, CHUNK_SAMPLES, s_gain_q16);
+        /*
+         * Room correction ahead of the volume, and the order matters. The
+         * correction's preamp is headroom against its own boosts, so it has
+         * to be applied to full-scale audio before anything else scales it;
+         * putting the filters after the volume would mean their headroom
+         * depended on how loud somebody had the speaker.
+         *
+         * The preamp is folded into the volume gain rather than applied
+         * separately -- one multiply either way, and the ring keeps holding
+         * full-scale audio so turning down and back up still returns the
+         * original samples.
+         */
+        if (s_eq_pending) {
+            adopt_eq();
+        }
+        if (s_eq_enabled) {
+            for (unsigned ch = 0; ch < OAL_RTP_CHANNELS; ch++) {
+                oal_eq_chain_run(&s_eq[ch], chunk + ch, CHUNK_FRAMES, OAL_RTP_CHANNELS);
+            }
+        }
+
+        oal_pcm_apply_gain(chunk, CHUNK_SAMPLES, effective_gain());
 
         /*
          * Write the whole chunk, not as much of it as the driver felt

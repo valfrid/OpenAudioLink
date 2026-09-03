@@ -354,6 +354,12 @@ void app_main(void)
         esp_err_t audio = oal_playout_start(&playout);
         if (audio == ESP_OK) {
             oal_stream_consumer_set_sink(oal_playout_submit);
+            /* The stored room correction, for the same reason the volume
+             * is set before the task exists: coming up uncorrected and
+             * switching a moment later is an audible step every time a
+             * node reboots, in a house where a node reboots for an
+             * update. */
+            oal_config_apply_eq();
         } else {
             ESP_LOGW(TAG, "no audio output: %s (still receiving and counting)",
                      esp_err_to_name(audio));

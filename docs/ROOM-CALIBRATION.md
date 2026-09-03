@@ -940,8 +940,89 @@ be and what it is expected to achieve, so it can be looked at — and refused
 — before anything is applied. The predicted curve is drawn beside the
 measurement it was fitted to.
 
+## Applying it on the node
+
+Four settings in NVS, and the shape of them is the feature.
+
+| Key | Holds |
+|---|---|
+| `eq_l`, `eq_r` | one vector per **output** channel, as readable text |
+| `eq_on` | whether to run it — the coefficients are kept either way |
+| `eq_pre` | headroom for the boosts, tenths of a dB, negative |
+
+**The stored parameter is the design, not the coefficients.**
+
+```
+104.0/3.78/-9.0 151.2/5.01/-4.8 220.2/7.02/-3.5
+ ^     ^    ^
+ Hz    Q    dB
+```
+
+Storing `b0..a2` would be smaller and faster to load and would make the
+setting unreadable. Nobody can look at `0.9976, -1.9952, 0.9976, -1.9952,
+0.9952` and say what it does, let alone nudge it. Being able to read what a
+loudspeaker is doing and change it by hand is the whole point of the
+format, so the node derives the coefficients at boot instead. Eight bands
+are allowed where the Hub's fitter stops at six, leaving two for a person
+adding one.
+
+**One vector per output channel**, because a correction belongs to a
+loudspeaker rather than to a stream: a stereo node drives two speakers
+standing in two different corners and they do not measure the same. Nothing
+requires the two to match.
+
+**The switch is not a convenience.** Without it, comparing corrected
+against uncorrected means deleting a profile and measuring again to get it
+back — so nobody would ever check, and whether a correction actually helped
+is the one thing worth checking. It applies at once rather than at the next
+boot, because a correction that needed a reboot to audition would never be
+auditioned.
+
+**The preamp is one value for the node**, not one per channel. It is a
+broadband gain, so different values left and right would move the stereo
+image sideways; the Hub works out what each channel needs and sends the
+deeper of the two. It is folded into the existing volume gain — one
+multiply either way — and applied *before* the filters, so their headroom
+does not depend on how loud somebody has the speaker.
+
+The fence around a band (10–20 kHz, Q 0.1–20, ±15 dB) is deliberately wider
+than anything the fitter will produce. Hand tuning is a supported use, and
+the limits exist to stop a typing slip destroying a tweeter rather than to
+enforce the fitting policy — that lives on the Hub where it can be
+explained. So a wild value is clamped, while something that is not three
+numbers is refused outright: a half-understood vector applied to a
+loudspeaker is worse than none.
+
+### Single precision, measured rather than assumed
+
+The correction band is 30–300 Hz, which at 48 kHz puts a biquad's poles
+within a thousandth of the unit circle — where single precision runs out
+and a filter quietly stops being the filter that was designed. The
+ESP32-S3's floating-point unit is single precision only, so `double` is
+software emulation and far too slow for eight sections at two hundred
+thousand samples a second. The question was not which is nicer but whether
+the fast one is good enough.
+
+Transposed direct form II, checked by running sines through it and
+comparing against a `double` reference: **within 0.15 dB everywhere from
+30 Hz to 300**, including at the skirts where a misplaced pole shows most.
+A biquad that has run out of precision does not fail — it just stops
+matching what the Hub predicted — so this is measured in `test_eq.c` rather
+than argued about.
+
+The chains belong to the playout task. A change arrives as a staged request
+and is adopted between chunks, because a filter's state is the last two
+samples it saw and swapping coefficients underneath a half-filtered chunk
+rings for as long as the filter decays.
+
+```
+POST /config {"eqLeft":"104.0/3.78/-9.0", "eqRight":"...",
+              "eqEnabled":true, "eqPreampDb":-2.0}
+```
+
 ## What is still missing
 
-Applying it. The coefficients exist and are checked; carrying them to a
-node, storing them in NVS and running the biquads in `playout_task` ahead
-of the volume stage is the remaining work, and it is what closes the loop.
+The Hub sending it: a button that takes a fitted profile, works out the
+shared preamp, and writes both vectors to the node — and the switch in the
+speaker's own controls, so a correction can be turned off while the music
+plays.

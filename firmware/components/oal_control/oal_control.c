@@ -7,7 +7,10 @@
 
 #include "cJSON.h"
 #include "oal_capture.h"
+#include <math.h>
+
 #include "oal_config.h"
+#include "oal_eq.h"
 #include "oal_discovery.h"
 #include "oal_join.h"
 #include "oal_playout.h"
@@ -290,7 +293,14 @@ static char s_ota[176];
  * Same lesson as s_stream_body below, found in the same hour: measure the
  * format, do not estimate it.
  */
-static char s_body[1536];
+/*
+ * Room correction pushed this past 1536: two vectors of up to eight bands
+ * each are about 420 bytes on their own. Raised rather than trimmed,
+ * because a /status that does not fit is a 500, and from outside a node
+ * that answers 500 looks exactly like one that has stopped answering --
+ * which this project has now shipped twice.
+ */
+static char s_body[2048];
 
 /* ---------- GET / ---------- */
 
@@ -376,6 +386,23 @@ static esp_err_t status_handler(httpd_req_t *req)
      */
     const char *arrived = oal_playout_output_arrived_as();
 
+    /*
+     * The correction, read out before the response is built. Static like
+     * everything else here: two 192-byte vectors on the httpd task's stack
+     * is exactly the kind of growth that made these buffers static in the
+     * first place.
+     */
+    static char eq_left[OAL_EQ_TEXT_MAX];
+    static char eq_right[OAL_EQ_TEXT_MAX];
+    static char eq_preamp[16];
+    (void)oal_config_get_eq(OAL_SIDE_LEFT, eq_left, sizeof(eq_left));
+    (void)oal_config_get_eq(OAL_SIDE_RIGHT, eq_right, sizeof(eq_right));
+    /* Formatted as one number rather than assembled from a quotient and a
+     * remainder: -0.5 dB is -5 tenths, and -5/10 is 0 in C, so building it
+     * from the parts loses the sign on every value between 0 and -1. */
+    snprintf(eq_preamp, sizeof(eq_preamp), "%.1f",
+             (double)oal_config_get_eq_preamp_tenths() / 10.0);
+
     char *body = s_body;
     int len = snprintf(body, sizeof(s_body),
                        "{\"oal\":\"" PROTOCOL_VERSION "\",\"id\":\"%s\",\"name\":\"%s\","
@@ -404,6 +431,12 @@ static esp_err_t status_handler(httpd_req_t *req)
                         * the Hub, the switchboard and every node's own
                         * page; a passphrase does not belong in it. */
                        "\"partyReady\":%s,\"delayMs\":%u,\"micGainDb\":%u,"
+                       /* Room correction. The vectors are published as
+                        * stored -- readable triples, not coefficients --
+                        * so the Hub shows a person what their speaker is
+                        * doing and can offer it back for editing. */
+                       "\"eqEnabled\":%s,\"eqPreampDb\":%s,"
+                       "\"eqLeft\":\"%s\",\"eqRight\":\"%s\","
                        /* The ring as allocated and the two limits that
                         * follow from it. Published rather than assumed
                         * because assuming is how the Hub came to offer
@@ -432,6 +465,8 @@ static esp_err_t status_handler(httpd_req_t *req)
                        oal_wifi_has_party() ? "true" : "false",
                        (unsigned)oal_config_get_delay_ms(),
                        (unsigned)oal_config_get_mic_gain_db(),
+                       oal_config_get_eq_enabled() ? "true" : "false",
+                       eq_preamp, eq_left, eq_right,
                        (unsigned)reported_ring_ms(),
                        (unsigned)oal_playout_max_target_ms(),
                        (unsigned)delay_ceiling(), ota,
@@ -474,7 +509,12 @@ static esp_err_t status_handler(httpd_req_t *req)
  */
 static esp_err_t config_handler(httpd_req_t *req)
 {
-    char body[384];
+    /*
+     * Big enough for two eq vectors, which are 192 bytes each before JSON
+     * escaping. At 384 a correction for both channels arrived truncated
+     * and was refused as unparseable, with nothing to say why.
+     */
+    char body[1024];
     int len = httpd_req_recv(req, body, sizeof(body) - 1);
     if (len <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
@@ -501,6 +541,14 @@ static esp_err_t config_handler(httpd_req_t *req)
     const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ringMs");
     const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
     const cJSON *mic_gain = cJSON_GetObjectItemCaseSensitive(root, "micGainDb");
+    /* Room correction: two vectors, a switch and the headroom for it
+     * (docs/ROOM-CALIBRATION.md). Each settable alone -- flipping the
+     * switch to hear the difference must not require resending the
+     * coefficients, which is the entire reason the switch exists. */
+    const cJSON *eq_left = cJSON_GetObjectItemCaseSensitive(root, "eqLeft");
+    const cJSON *eq_right = cJSON_GetObjectItemCaseSensitive(root, "eqRight");
+    const cJSON *eq_on = cJSON_GetObjectItemCaseSensitive(root, "eqEnabled");
+    const cJSON *eq_pre = cJSON_GetObjectItemCaseSensitive(root, "eqPreampDb");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
@@ -510,18 +558,44 @@ static esp_err_t config_handler(httpd_req_t *req)
     const bool has_ring = cJSON_IsNumber(ring);
     const bool has_name = cJSON_IsString(name);
     const bool has_mic_gain = cJSON_IsNumber(mic_gain);
+    const bool has_eq_left = cJSON_IsString(eq_left);
+    const bool has_eq_right = cJSON_IsString(eq_right);
+    const bool has_eq_on = cJSON_IsBool(eq_on);
+    const bool has_eq_pre = cJSON_IsNumber(eq_pre);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
     const uint32_t ring_ms = has_ring ? (uint32_t)ring->valueint : 0;
+    /*
+     * Copied out, not read later.
+     *
+     * The tree is freed part way through this handler and everything after
+     * that point has to already have its value. micGainDb did not: it was
+     * read twice from a node that had been freed a hundred lines earlier,
+     * which is precisely the bug the comment above warns about and worked
+     * only because nothing had reused the block yet.
+     */
+    const int mic_gain_db = has_mic_gain ? mic_gain->valueint : 0;
+    const bool eq_on_wanted = has_eq_on && cJSON_IsTrue(eq_on);
+    const int16_t eq_preamp_tenths =
+        has_eq_pre ? (int16_t)lround(eq_pre->valuedouble * 10.0) : 0;
+    char eq_left_text[OAL_EQ_TEXT_MAX] = { 0 };
+    char eq_right_text[OAL_EQ_TEXT_MAX] = { 0 };
+    if (has_eq_left) {
+        snprintf(eq_left_text, sizeof(eq_left_text), "%s", eq_left->valuestring);
+    }
+    if (has_eq_right) {
+        snprintf(eq_right_text, sizeof(eq_right_text), "%s", eq_right->valuestring);
+    }
 
     /* Either may be set alone: changing a speaker from stereo to mono has
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
     if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
-            && !has_ring && !has_input && !has_name && !has_mic_gain) {
+            && !has_ring && !has_input && !has_name && !has_mic_gain
+            && !has_eq_left && !has_eq_right && !has_eq_on && !has_eq_pre) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
                             "expected roles, channel, output, input, name, micGainDb, delayMs, "
-                            "ringMs or party");
+                            "ringMs, eqLeft, eqRight, eqEnabled, eqPreampDb or party");
         return ESP_FAIL;
     }
 
@@ -597,12 +671,32 @@ static esp_err_t config_handler(httpd_req_t *req)
     /* Whole decibels, and bounded: the table behind the boost has
      * OAL_BOOST_DB_MAX entries and reading off the end of it is not the
      * error anybody wants to debug. */
-    if (has_mic_gain
-            && (mic_gain->valueint < 0 || mic_gain->valueint > OAL_BOOST_DB_MAX)) {
+    if (has_mic_gain && (mic_gain_db < 0 || mic_gain_db > OAL_BOOST_DB_MAX)) {
         cJSON_Delete(root);
         ESP_LOGW(TAG, "refused micGainDb %d; the range is 0 to %d",
-                 mic_gain->valueint, OAL_BOOST_DB_MAX);
+                 mic_gain_db, OAL_BOOST_DB_MAX);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "micGainDb out of range");
+        return ESP_FAIL;
+    }
+    /*
+     * The vectors are parsed here, before anything is stored, so a typing
+     * slip is a 400 with the text in front of the person who typed it
+     * rather than a speaker that silently kept its old correction.
+     */
+    oal_eq_curve_t eq_curve;
+    if ((has_eq_left && !oal_eq_parse(eq_left->valuestring, &eq_curve))
+            || (has_eq_right && !oal_eq_parse(eq_right->valuestring, &eq_curve))) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "an eq vector is not \"hz/q/db\" triples");
+        return ESP_FAIL;
+    }
+    /* Attenuation only. A preamp that boosts is not headroom, it is a
+     * second volume control that can clip. */
+    if (has_eq_pre && (eq_pre->valuedouble > 0.0
+                       || eq_pre->valuedouble < OAL_EQ_PREAMP_MIN_TENTHS / 10.0)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eqPreampDb out of range");
         return ESP_FAIL;
     }
     if (has_ring
@@ -746,12 +840,35 @@ static esp_err_t config_handler(httpd_req_t *req)
      * a microphone's level is not something anybody rides during a take.
      */
     if (has_mic_gain) {
-        if (oal_config_set_mic_gain_db((uint8_t)mic_gain->valueint) != ESP_OK) {
+        if (oal_config_set_mic_gain_db((uint8_t)mic_gain_db) != ESP_OK) {
             httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "mic gain not stored");
             return ESP_FAIL;
         }
-        ESP_LOGI(TAG, "microphone gain %d dB, at the next reboot",
-                 mic_gain->valueint);
+        ESP_LOGI(TAG, "microphone gain %d dB, at the next reboot", mic_gain_db);
+    }
+    /*
+     * Applied at once, not at the next boot. The whole point of the switch
+     * is hearing the difference while the music plays, and a correction
+     * that needed a reboot to audition would never be auditioned.
+     */
+    if (has_eq_left && oal_config_set_eq(OAL_SIDE_LEFT, eq_left_text) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "left eq not stored");
+        return ESP_FAIL;
+    }
+    if (has_eq_right && oal_config_set_eq(OAL_SIDE_RIGHT, eq_right_text) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "right eq not stored");
+        return ESP_FAIL;
+    }
+    if (has_eq_pre && oal_config_set_eq_preamp_tenths(eq_preamp_tenths) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eq preamp not stored");
+        return ESP_FAIL;
+    }
+    if (has_eq_on && oal_config_set_eq_enabled(eq_on_wanted) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eq switch not stored");
+        return ESP_FAIL;
+    }
+    if (has_eq_left || has_eq_right || has_eq_pre || has_eq_on) {
+        oal_config_apply_eq();
     }
     if (has_delay) {
         if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {

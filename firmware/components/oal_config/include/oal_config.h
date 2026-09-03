@@ -171,6 +171,73 @@ uint8_t oal_config_get_mic_gain_db(void);
 esp_err_t oal_config_set_mic_gain_db(uint8_t db);
 
 /*
+ * Room correction (docs/ROOM-CALIBRATION.md), stored as four settings.
+ *
+ * The vector is text -- "104.0/3.78/-9.0 151.2/5.01/-4.8" -- because a
+ * person has to be able to read what their loudspeaker is doing and change
+ * it by hand. Coefficients would be smaller and unreadable.
+ */
+
+/** Which output a vector belongs to. A correction is a loudspeaker's. */
+typedef enum {
+    OAL_SIDE_LEFT = 0,
+    OAL_SIDE_RIGHT,
+} oal_channel_side_t;
+
+/**
+ * The deepest preamp attenuation, in tenths of a decibel. Twenty decibels
+ * is far past anything a conservative correction asks for; it is a fence
+ * against a typing slip, not a policy.
+ */
+#define OAL_EQ_PREAMP_MIN_TENTHS (-200)
+
+/**
+ * Reads one channel's vector. An empty string when there is none, which is
+ * also how a correction is cleared.
+ */
+esp_err_t oal_config_get_eq(oal_channel_side_t side, char *out, size_t size);
+
+/**
+ * Stores one channel's vector, after parsing it. A vector that cannot be
+ * read back is refused here, where somebody can still be told, rather than
+ * discovered at the next boot as a speaker that lost its correction.
+ */
+esp_err_t oal_config_set_eq(oal_channel_side_t side, const char *text);
+
+/**
+ * Whether the correction runs. The coefficients are kept either way.
+ *
+ * The switch is the point: without it, comparing corrected against
+ * uncorrected means deleting a profile and measuring again to get it back,
+ * so nobody would ever check -- and whether a correction actually helped is
+ * the one thing worth checking.
+ *
+ * Off unless turned on, so a node updated into a firmware that has this
+ * sounds exactly as it did before.
+ */
+bool oal_config_get_eq_enabled(void);
+
+esp_err_t oal_config_set_eq_enabled(bool on);
+
+/**
+ * Headroom for the correction's boosts, in tenths of a decibel, negative.
+ *
+ * One value for the node rather than one per channel, deliberately: it is a
+ * broadband gain, so different values left and right would move the stereo
+ * image sideways. The Hub works out what each channel needs and sends the
+ * deeper of the two.
+ */
+int16_t oal_config_get_eq_preamp_tenths(void);
+
+esp_err_t oal_config_set_eq_preamp_tenths(int16_t tenths);
+
+/**
+ * Reads the stored correction and hands it to the playout. Called at boot
+ * and whenever any of the four settings changes.
+ */
+void oal_config_apply_eq(void);
+
+/*
  * Which output stage this board has (docs/USB-AUDIO.md).
  *
  * Beside the channel profile and the volume because it answers the same
