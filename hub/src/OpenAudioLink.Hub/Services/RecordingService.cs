@@ -117,8 +117,16 @@ public sealed class RecordingService : IAsyncDisposable
     /// records it.
     /// </summary>
     /// <returns>An error for the operator, or null on success.</returns>
+    /// <param name="alsoTo">
+    /// Speakers the stream should reach as well as the Hub. Not a
+    /// convenience: a latency or alignment measurement needs the speaker
+    /// playing, because what is being timed is the gap between a sound and
+    /// its reproduction. Recording to the Hub alone captures the sound and
+    /// nothing to compare it against.
+    /// </param>
     public async Task<string?> StartAsync(
-        string producerId, string source, int toneHz, CancellationToken cancellationToken)
+        string producerId, string source, int toneHz,
+        IReadOnlyList<string> alsoTo, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -161,8 +169,16 @@ public sealed class RecordingService : IAsyncDisposable
             _note = null;
             _startedAt = DateTimeOffset.UtcNow;
 
+            /*
+             * The Hub last, so the speakers are named first and a node that
+             * truncates the list keeps the audible destinations. The Hub is
+             * always present; the speakers are whatever the caller chose.
+             */
+            var destinations = alsoTo.Where(d => !string.IsNullOrWhiteSpace(d))
+                                     .Append($"{local}:{Port}")
+                                     .ToArray();
             var ok = await _commands.StartStreamAsync(
-                producer, [$"{local}:{Port}"], Port, source, toneHz, cancellationToken);
+                producer, destinations, Port, source, toneHz, cancellationToken);
             if (!ok)
             {
                 await StopInternalAsync("the node refused to start streaming");

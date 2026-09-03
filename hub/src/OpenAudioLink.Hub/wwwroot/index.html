@@ -311,14 +311,15 @@ and swap supplies between two nodes to find out.">Clock</th>
     <button id="link-start">Start link</button>
     <button id="link-stop">Stop &amp; reset counters</button>
     <!--
-      Recording sends the same stream to the Hub instead of to a speaker,
-      and writes it to a file. It is the difference between hearing a
-      measurement and being able to look at one twice: a clap, a click or
-      a sweep is gone the moment it has finished playing.
+      Recording adds the Hub to the destinations and writes what arrives to
+      a file. It is the difference between hearing a measurement and being
+      able to look at one twice: a clap, a click or a sweep is gone the
+      moment it has finished playing.
 
-      Beside the link test because it is the same controls -- a producer
-      and a source -- pointed somewhere else. The consumer list is ignored;
-      the Hub is the destination.
+      The To list still applies, and for a timing measurement it has to:
+      what is being timed is the gap between a sound and its reproduction,
+      so a speaker has to be playing. Recording to the Hub alone captures
+      the sound with nothing to compare it against.
     -->
     <button id="rec-start">● Record to a file</button>
     <button id="rec-stop" hidden>■ Stop recording</button>
@@ -3362,10 +3363,19 @@ and swap supplies between two nodes to find out.">Clock</th>
           producer,
           source: document.getElementById('link-source').value,
           toneHz: Number(document.getElementById('link-tone').value) || 1000,
+          // The speakers from the To list, as well as the Hub. A timing
+          // measurement needs one playing: what is being timed is the gap
+          // between a sound and its reproduction, and recording to the Hub
+          // alone captures the sound with nothing to compare it against.
+          to: selectedLinkDestinations(),
         }),
       });
       if (response.ok) {
-        say('Recording. The stream goes to the Hub, not to a speaker.');
+        const n = selectedLinkDestinations().length;
+        say(n
+          ? `Recording to a file, and to ${n} speaker${n === 1 ? '' : 's'}.`
+          : 'Recording to a file only — pick a speaker in To as well if you '
+            + 'are timing something, since nothing will reproduce the sound.');
       } else {
         const error = await response.json().catch(() => ({}));
         say(`Could not start recording: ${error.error ?? response.status}`);

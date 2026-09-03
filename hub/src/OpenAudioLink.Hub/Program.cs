@@ -640,7 +640,8 @@ app.MapPost("/api/recording/start",
 {
     var source = string.IsNullOrWhiteSpace(request.Source) ? "capture" : request.Source.Trim();
     var error = await recorder.StartAsync(
-        request.Producer ?? "", source, request.ToneHz ?? 1000, cancellationToken);
+        request.Producer ?? "", source, request.ToneHz ?? 1000,
+        request.To ?? [], cancellationToken);
     return error is null
         ? Results.Ok(recorder.State())
         : Results.BadRequest(new { error });
@@ -2036,7 +2037,15 @@ internal sealed record RingRequest(int? RingMs);
 internal sealed record MicGainRequest(int? MicGainDb);
 
 /// <summary>Which producer to record, and what it should send.</summary>
-internal sealed record RecordRequest(string? Producer, string? Source, int? ToneHz);
+/// <summary>
+/// Which producer to record, what it should send, and which speakers
+/// should also hear it. The Hub is always a destination; <c>To</c> adds
+/// the speakers, which a timing measurement needs — the thing being timed
+/// is the gap between a sound and its reproduction, so something has to
+/// reproduce it.
+/// </summary>
+internal sealed record RecordRequest(
+    string? Producer, string? Source, int? ToneHz, string[]? To);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting
