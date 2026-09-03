@@ -702,6 +702,93 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 42: channel 11, and the problem is solved
+
+**4.84 h, channel 11, both nodes on their own mesh point.** Speakers on
+`…0b:d0`, Stereo on `…13:b1` — run 41's topology exactly, so the channel
+is the single variable. No restarts, 62-column log.
+
+**This is the best result this project has recorded, and it is not close.**
+
+| offset (ring fill) | ch 3, two APs | ch 6, one AP | ch 6, two APs | **ch 11, two APs** |
+| --- | --- | --- | --- | --- |
+| Median | 7.0 ms | 4.0 ms | 10.0 ms | **2.0 ms** |
+| p90 | 29 ms | 14 ms | 29 ms | **6 ms** |
+| p99 | 84 ms | 51 ms | 85 ms | **20 ms** |
+| Under 20 ms | 82.9 % | 93.2 % | 81.4 % | **98.8 %** |
+| Over 40 ms | 5.2 % | 1.5 % | 6.3 % | **0.7 %** |
+
+And it does not wander. Hour by hour: median 3, 2, 3, 2, 2 ms; p90 7, 6, 8,
+6, 5; between 97.5 % and 99.2 % under 20 ms in every one.
+
+### Both nodes at once, which no previous channel managed
+
+| underruns/h | ch 3 | ch 6, one AP | ch 6, two APs | **ch 11** |
+| --- | --- | --- | --- | --- |
+| Speakers | 28.3 | 6.8 | 1.3 | **0.6** |
+| Stereo | 1.6 | 7.2 | **25.4** | **1.2** |
+
+Run 41 found each channel good for one mesh point and bad for the other.
+Channel 11 is good for both — **Stereo improved 21-fold** without moving,
+and Speakers halved again from what was already its best.
+
+The medium itself is quieter, which is the mechanism:
+
+| | ch 6, two APs | ch 11 |
+| --- | --- | --- |
+| Arrival gaps, Speakers | 2.92 % | **0.48 %** |
+| Arrival gaps, Stereo | 3.57 % | **0.42 %** |
+| Stereo's 100–200 ms gaps | 430 / h | **24 / h** |
+| Gaps over 200 ms | 6 and 84 | **3 and 6** |
+| Shared gaps (common-mode) | 97 % | **42 %** |
+
+Roughly seven times fewer gaps on both nodes, an eighteen-fold cut in
+Stereo's dangerous middle band, and the common-mode bottleneck run 40
+identified has gone with it — 97 % shared down to 42 %, which is what a
+medium looks like when it stops being the constraint.
+
+### RSSI, one last time
+
+Speakers ran at **−46 dBm** and Stereo at **−56**, and Stereo turned in
+1.2 underruns an hour. On channel 6 Stereo sat at **−46** and turned in
+25.4. Ten decibels better signal, twenty times worse audio. The variable
+was never the level.
+
+### The run 39 diagnosis, confirmed by its own arithmetic
+
+Run 39 found Speakers' trim ledger claiming −303 ppm while its clock fit
+said +14, and concluded the ledger was measuring *jitter churn* rather
+than rate — bursts refilling a ring that gaps had drained, netting to
+nothing but costing three and a half seconds of trimming.
+
+On a quiet channel that churn should disappear and the ledger should
+collapse onto the real clock error. It does: **net −16 ppm against a
+clock fit of +21.2**, agreeing within five parts per million where they
+once disagreed by three hundred. The explanation was right, and this is
+the measurement that closes it.
+
+### What is left
+
+Stereo lost **112 packets** in two brief scatters — 28 in twelve events at
++1.21 h and 84 in thirty-two at +4.16 h, longest run six packets, each
+costing one underrun and one step-back. That is 0.003 % of 3.5 million,
+and it is the only blemish in the run.
+
+Audibly: three interruptions on Speakers and six on Stereo across nearly
+five hours, 1.2 seconds of inserted silence between them. Against run 40's
+**one interruption every six minutes**, this is about one every half hour.
+
+### What this changes about the buffer
+
+The case for the **Long** profile is now much weaker, and that is the
+right outcome. It was sized against a gap population — 1 329 and 1 583
+gaps in the 100–200 ms band over five hours — that channel 11 has largely
+removed. Standard's 225 ms cushion now sits comfortably above what the
+link actually does.
+
+Fix the air first, then decide the buffer. Long remains the answer for a
+link that cannot be fixed; it is no longer the answer for this one.
+
 ## Run 41: the two mesh points want different channels
 
 **Hub 0.73.0, firmware 0.41.0, internet radio, 13.6 h across a night and a

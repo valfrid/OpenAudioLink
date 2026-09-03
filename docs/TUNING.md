@@ -20,10 +20,14 @@ them needs changing.
 | Long | 1000 | 550 | 618 ms | ~638 ms | 618 ms |
 
 Standard is what every measurement in `LINK-MEASUREMENTS.md` from run 34
-onward describes. **Long** is for music, and is sized so its cushion
-exceeds the worst arrival gap this project has ever recorded (419 ms, run
-39) — run 40 measured an audible interruption every six minutes on
-Standard, and almost all of the gaps causing them were under 200 ms.
+onward describes, and on a clean channel it is enough. **Long** is for a
+link that cannot be fixed: it is sized so its cushion exceeds the worst
+arrival gap this project has recorded (419 ms, run 39), and run 40
+measured an audible interruption every six minutes on Standard with almost
+all of the gaps causing them under 200 ms. Run 42 then removed most of
+that population by changing channel, and Standard now runs at about one
+interruption every half hour — so **fix the air before reaching for
+Long**.
 **Short** is the firmware's floor and is realistic only on a wired
 backhaul; it is for video, where lip-sync beats robustness.
 
@@ -476,26 +480,34 @@ Run 40 moved the band to **channel 6** and the speaker-to-speaker offset
 went from a median of 7 ms to **4 ms**, p90 29 → 15. Do this before
 touching the buffer.
 
-**But run 41 found that one channel does not fit a whole house.** Measured
-per node, per access point:
+**Run 41 found that neither 3 nor 6 fits a whole house**, and run 42 found
+the one that does. Measured per node, per access point:
 
-| node | ch 3 | ch 6 |
-| --- | --- | --- |
-| Speakers, on `…0b:d0` | 28.3 underruns/h | **1.3/h** |
-| Stereo, on `…13:b1` | **1.6/h** | 7.2–25.4/h |
+| node | ch 3 | ch 6 | **ch 11** |
+| --- | --- | --- | --- |
+| Speakers, on `…0b:d0` | 28.3 underruns/h | 1.3/h | **0.6/h** |
+| Stereo, on `…13:b1` | 1.6/h | 25.4/h | **1.2/h** |
 
-Each channel is excellent for one mesh point and bad for the other, and
-both times the house was tuned to one number one speaker paid for it. If
-the backhaul is wired, the mesh points do not need to share a channel —
-give them different ones. Otherwise the setting is a compromise, and it is
-worth knowing which speaker is buying it.
+Channels 3 and 6 were each excellent for one mesh point and bad for the
+other; both times the house was tuned to one number and one speaker paid
+for it. **Channel 11 is good for both at once**, with roughly seven times
+fewer arrival gaps on each node, and it took the speaker-to-speaker offset
+to a median of **2 ms with 98.8 % of readings inside 20 ms** — the best
+this project has measured.
 
-Two things that survive from those runs regardless of channel. **Signal
-strength predicts nothing**: Speakers' best hours were at −59 dBm and its
-worst at −49, nine decibels worse for twenty-two times better audio.
-And **a matched pair synchronises better than a good node and a poor
-one** — sync is a differential quantity, so the most balanced pair beat
-the one containing the single best node.
+So the advice is now specific rather than general: **try 11 first.** If it
+is occupied where you are, the per-node table above is how to tell which
+of the three a house can live with, and which speaker is buying the
+compromise.
+
+Two things survive from those runs regardless of channel. **Signal
+strength predicts nothing**: run 42 had Stereo at −56 dBm turning in 1.2
+underruns an hour, where on channel 6 the same node at −46 turned in 25.4
+— ten decibels better signal, twenty times worse audio. And **a matched
+pair synchronises better than a good node and a poor one**, sync being a
+differential quantity; channel 11 is the first configuration to make both
+nodes good at the same time, which is why its offset beats every earlier
+run rather than merely one of them.
 
 The router's own view is under *System Log → Wireless Log* (clients and
 their RSSI) and *System Log → General Log* (association events). Read it
