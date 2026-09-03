@@ -15,7 +15,9 @@
   whole point of splitting the apps up — if the second app needs a second
   mental model, the split has bought nothing.
 
-  The producer here is the node with the record player wired into its ADC,
+  The producer here is the node with something wired into its capture
+  stage: a record player on an ADC, or a MEMS microphone. Both arrive the
+  same way and this page does not care which,
   not the Hub. Nothing else changes: still a cast point, still a volume,
   still one Play.
 -->
@@ -71,7 +73,8 @@
       <h2>Inputs</h2>
       <div class="picker-grid" id="inputs"></div>
       <div class="footer-note">
-        The level is read from the node's ADC and updates every few seconds,
+        The level is read from the node's capture stage — its ADC, or its
+        microphone — and updates every few seconds,
         so you can tell a wiring fault from a quiet passage before you walk
         back to the speaker. A channel reading silent while the other one
         does not is nearly always the cable.
@@ -138,11 +141,17 @@
 
   function renderInputs() {
     $('inputs').innerHTML = state.lineIn.map(device => {
+      /*
+       * A node's input is a turntable or a microphone, and this page was
+       * written when only the first existed. Naming the wrong one is the
+       * same trap the link test's source dropdown had: somebody looking for
+       * their microphone sees a record and concludes it is not here.
+       */
       const level = describeLevel(device);
       return `
         <button class="choice${device.id === chosen ? ' active' : ''}"
                 data-input="${OAL.esc(device.id)}">
-          <div class="mini-logo">💿</div>
+          <div class="mini-logo">${device.status?.inputStage === 'mic' ? '🎙️' : '💿'}</div>
           <div style="min-width:0">
             <div class="choice-title">${OAL.esc(device.name)}</div>
             <div class="choice-sub">${OAL.esc(level.lead)}</div>
@@ -150,7 +159,8 @@
         </button>`;
     }).join('')
       || '<div class="footer-note">No node with an input is online. A node needs '
-         + 'the producer role and an ADC wired up before it appears here.</div>';
+         + 'the producer role and a capture stage — an ADC or a microphone — '
+         + 'before it appears here.</div>';
   }
 
   function renderHero() {
@@ -210,7 +220,9 @@
         say(`Starting ${device.name}…`);
         await OAL.api('POST', `/api/castpoints/${encodeURIComponent(room)}/play`,
           { producer: device.id, source: 'capture' });
-        say(`${device.name} is playing. Drop the needle.`);
+        say(device.status?.inputStage === 'mic'
+          ? `${device.name} is playing. Mind the feedback.`
+          : `${device.name} is playing. Drop the needle.`);
       }
     } catch (error) {
       say(error.message, true);

@@ -71,7 +71,7 @@
       isLive: state => state.playing && state.stream?.source === 'radio',
     },
     {
-      id: 'vinyl', href: 'vinyl.html', glyph: '💿', name: 'Vinyl',
+      id: 'vinyl', href: 'vinyl.html', glyph: '💿', name: 'Vinyl or microphone',
       what: 'Whatever is plugged into a node’s input.',
       ready: state => state.lineIn.length ? null : 'No node with an input is online',
       isLive: state => state.playing && state.playing.source === 'capture',
