@@ -170,19 +170,38 @@ public sealed class RecordingService : IAsyncDisposable
             _startedAt = DateTimeOffset.UtcNow;
 
             /*
-             * The Hub last, so the speakers are named first and a node that
-             * truncates the list keeps the audible destinations. The Hub is
-             * always present; the speakers are whatever the caller chose.
+             * Device ids resolved to addresses, because that is what a node
+             * can dial.
+             *
+             * The browser's To list carries ids -- `mac-1cdbd4447900` and
+             * the like -- and /api/devices/{id}/stream/start resolves them
+             * on the way through. Calling the command client directly, as
+             * this does, skips that step, and the first version of this
+             * passed the ids to the node unchanged: it could not parse them
+             * as addresses and refused the whole request, which surfaced as
+             * "the node refused to start streaming" with no clue why.
+             *
+             * Anything that is not a known device is passed through as
+             * typed, so an address entered by hand still works.
              */
-            var destinations = alsoTo.Where(d => !string.IsNullOrWhiteSpace(d))
-                                     .Append($"{local}:{Port}")
-                                     .ToArray();
+            var destinations = new List<string>();
+            foreach (var entry in alsoTo.Where(d => !string.IsNullOrWhiteSpace(d)))
+            {
+                destinations.Add(
+                    _registry.TryGet(entry, out var consumer) ? consumer.Address : entry.Trim());
+            }
+            // The Hub last, so a node that truncated the list would keep the
+            // audible destinations.
+            destinations.Add($"{local}:{Port}");
             var ok = await _commands.StartStreamAsync(
                 producer, destinations, Port, source, toneHz, cancellationToken);
             if (!ok)
             {
-                await StopInternalAsync("the node refused to start streaming");
-                return "the node refused to start streaming";
+                // Naming them, because "refused" on its own sent me looking
+                // in the wrong place for twenty minutes.
+                var to = string.Join(", ", destinations);
+                await StopInternalAsync($"the node refused to stream to {to}");
+                return $"{producer.Name} refused to start streaming to {to}";
             }
 
             _cancellation = new CancellationTokenSource();
