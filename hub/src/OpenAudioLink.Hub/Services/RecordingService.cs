@@ -169,30 +169,9 @@ public sealed class RecordingService : IAsyncDisposable
             _note = null;
             _startedAt = DateTimeOffset.UtcNow;
 
-            /*
-             * Device ids resolved to addresses, because that is what a node
-             * can dial.
-             *
-             * The browser's To list carries ids -- `mac-1cdbd4447900` and
-             * the like -- and /api/devices/{id}/stream/start resolves them
-             * on the way through. Calling the command client directly, as
-             * this does, skips that step, and the first version of this
-             * passed the ids to the node unchanged: it could not parse them
-             * as addresses and refused the whole request, which surfaced as
-             * "the node refused to start streaming" with no clue why.
-             *
-             * Anything that is not a known device is passed through as
-             * typed, so an address entered by hand still works.
-             */
-            var destinations = new List<string>();
-            foreach (var entry in alsoTo.Where(d => !string.IsNullOrWhiteSpace(d)))
-            {
-                destinations.Add(
-                    _registry.TryGet(entry, out var consumer) ? consumer.Address : entry.Trim());
-            }
-            // The Hub last, so a node that truncated the list would keep the
-            // audible destinations.
-            destinations.Add($"{local}:{Port}");
+            var destinations = BuildDestinations(
+                alsoTo, local, id => _registry.TryGet(id, out var d) ? d.Address : null);
+
             var ok = await _commands.StartStreamAsync(
                 producer, destinations, Port, source, toneHz, cancellationToken);
             if (!ok)
@@ -359,6 +338,69 @@ public sealed class RecordingService : IAsyncDisposable
             writer.WriteL24(payload);
         }
         return true;
+    }
+
+
+    /// <summary>
+    /// The destination list a node can actually dial: the chosen speakers
+    /// plus this Hub.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Static and separate because the three lines it replaces were wrong
+    /// twice in a row, in two different ways, and neither was reachable by
+    /// a test.
+    /// </para>
+    /// <para>
+    /// <b>Device ids are not addresses.</b> The browser's To list carries
+    /// ids — <c>mac-1cdbd4447900</c> — and
+    /// <c>/api/devices/{id}/stream/start</c> resolves them on the way
+    /// through. Calling the command client directly skips that, and the
+    /// node cannot dial an id.
+    /// </para>
+    /// <para>
+    /// <b>Addresses carry no port.</b> The producer parses each entry with
+    /// <c>inet_addr</c> and takes one port for all of them from a separate
+    /// field, so <c>192.168.0.201:41100</c> is not a longer address, it is
+    /// an unparseable one. Which is also why the Hub has to listen on the
+    /// same port the speakers receive on: there is only one.
+    /// </para>
+    /// </remarks>
+    /// <param name="resolve">Device id to address, or null if unknown.</param>
+    public static IReadOnlyList<string> BuildDestinations(
+        IEnumerable<string> alsoTo, string hubAddress, Func<string, string?> resolve)
+    {
+        var destinations = new List<string>();
+        foreach (var entry in alsoTo)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                continue;
+            }
+            var trimmed = entry.Trim();
+            // Anything unknown is passed through as typed, so an address
+            // entered by hand still works.
+            var address = resolve(trimmed) ?? trimmed;
+            // A port on a hand-typed address is dropped rather than sent:
+            // the node cannot parse it, and one port covers the whole list.
+            var colon = address.LastIndexOf(':');
+            if (colon > 0 && address.IndexOf(':') == colon)
+            {
+                address = address[..colon];
+            }
+            if (!destinations.Contains(address))
+            {
+                destinations.Add(address);
+            }
+        }
+
+        // The Hub last, so a node that truncated the list would keep the
+        // audible destinations.
+        if (!destinations.Contains(hubAddress))
+        {
+            destinations.Add(hubAddress);
+        }
+        return destinations;
     }
 
     /// <summary>A device name reduced to something safe in a filename.</summary>
