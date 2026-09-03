@@ -502,6 +502,25 @@ and swap supplies between two nodes to find out.">Clock</th>
     <tbody></tbody>
   </table>
   <p id="rr-measurements-empty" class="empty">No measurements yet.</p>
+  <div class="fw-bar">
+    <label>Apply to <select id="rc-device"></select></label>
+    <label>Left speaker <select id="rc-left"></select></label>
+    <label>Right speaker <select id="rc-right"></select></label>
+    <button id="rc-apply">Write correction</button>
+    <button id="rc-on">Correction on</button>
+    <button id="rc-off">Correction off</button>
+  </div>
+  <p id="rc-status" class="hint">
+    Writing sends both vectors, the shared headroom and the switch in one
+    request, so a speaker is never left running one channel's correction
+    against the other's. The headroom is the deeper of the two channels'
+    needs: it is a broadband cut, so different values left and right would
+    walk the stereo image sideways.
+    <br>
+    <strong>Then measure again with the correction on</strong>, name it
+    "after", and put the two curves on the chart. That is the only thing
+    that says whether it worked.
+  </p>
   <details id="rr-table-view">
     <summary class="hint">The numbers, at third-octave centres</summary>
     <div id="rr-table"></div>
@@ -1963,6 +1982,7 @@ and swap supplies between two nodes to find out.">Clock</th>
         }
       };
       fill('rm-speaker', d => (d.roles ?? []).includes('consumer') && d.online);
+      fill('rc-device', d => (d.roles ?? []).includes('consumer') && d.online);
       // Not filtered to input=mic: the node is the authority on what is
       // plugged into it, and a node whose setting is stale would vanish
       // from the list with no way to find out why. It is said in the
@@ -3976,6 +3996,27 @@ and swap supplies between two nodes to find out.">Clock</th>
         </tr>`;
       }).join('');
 
+      // Which measurement is which loudspeaker. Offered as a choice
+      // rather than guessed from the channel a sweep went down: a node set
+      // to play one channel on both outputs is measured once and wants
+      // that curve on both sides, and only a person knows which case this
+      // is.
+      for (const [id, want] of [['rc-left', 'left'], ['rc-right', 'right']]) {
+        const select = document.getElementById(id);
+        const picked = select.value;
+        select.innerHTML = '<option value="">(leave empty)</option>'
+          + measurements.map(m =>
+              `<option value="${esc(m.file)}">${esc(measurementName(m))}</option>`).join('');
+        if ([...select.options].some(o => o.value === picked)) {
+          select.value = picked;
+        } else {
+          // A first sensible guess: the newest measurement whose sweep went
+          // down this channel.
+          const match = measurements.find(m => m.channel === want);
+          select.value = match ? match.file : '';
+        }
+      }
+
       drawTicked();
     }
 
@@ -4053,6 +4094,63 @@ and swap supplies between two nodes to find out.">Clock</th>
      * and the notes say what the fitter declined to touch and why, which is
      * the more interesting half of a conservative correction.
      */
+    async function writeCorrection() {
+      const status = document.getElementById('rc-status');
+      const device = document.getElementById('rc-device').value;
+      if (!device) {
+        status.textContent = 'Pick a speaker to write to.';
+        return;
+      }
+
+      status.textContent = 'Fitting and writing…';
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(device)}/correction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            left: document.getElementById('rc-left').value || null,
+            right: document.getElementById('rc-right').value || null,
+            enabled: true,
+          }),
+        });
+      const answer = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        status.textContent = `Could not write it: ${answer.error ?? response.status}`;
+        return;
+      }
+
+      const notes = [...(answer.left.notes ?? []), ...(answer.right.notes ?? [])];
+      status.textContent =
+        `${answer.device}: L [${answer.left.vector || 'none'}] `
+        + `R [${answer.right.vector || 'none'}], preamp ${answer.preampDb} dB, on.`
+        + (notes.length ? ' ' + notes.join(' ') : '');
+      refreshDevices();
+    }
+
+    async function switchCorrection(on) {
+      const status = document.getElementById('rc-status');
+      const device = document.getElementById('rc-device').value;
+      if (!device) {
+        status.textContent = 'Pick a speaker first.';
+        return;
+      }
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(device)}/correction/enabled`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: on }),
+        });
+      const answer = await response.json().catch(() => ({}));
+      status.textContent = response.ok
+        ? `Correction ${on ? 'on' : 'off'} on ${answer.device}. `
+          + 'The coefficients are kept either way — flip it while music plays.'
+        : `Could not switch it: ${answer.error ?? response.status}`;
+    }
+
+    document.getElementById('rc-apply').addEventListener('click', writeCorrection);
+    document.getElementById('rc-on').addEventListener('click', () => switchCorrection(true));
+    document.getElementById('rc-off').addEventListener('click', () => switchCorrection(false));
+
     async function fitCorrection(file) {
       const summary = document.getElementById('rr-summary');
       summary.textContent = 'Fitting…';

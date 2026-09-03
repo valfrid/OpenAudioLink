@@ -1020,9 +1020,49 @@ POST /config {"eqLeft":"104.0/3.78/-9.0", "eqRight":"...",
               "eqEnabled":true, "eqPreampDb":-2.0}
 ```
 
-## What is still missing
+## Writing it to a loudspeaker
 
-The Hub sending it: a button that takes a fitted profile, works out the
-shared preamp, and writes both vectors to the node — and the switch in the
-speaker's own controls, so a correction can be turned off while the music
-plays.
+```
+POST /api/devices/<id>/correction          {"left": "<recording>", "right": "<recording>"}
+POST /api/devices/<id>/correction/enabled  {"enabled": false}
+```
+
+The request names **measurements, not coefficients**. The Hub fits both
+sides, works out the one thing that cannot be decided per channel, and
+writes the pair in a single request — so a node is never left running one
+channel's correction against the other's, which would be audible as the
+stereo image walking sideways and would be nobody's fault in particular.
+
+**The headroom is the deeper of the two channels' needs.** Each channel
+needs at least its own; the node gets the larger, and the channel that
+needed less is simply quieter by the same amount as its partner, which is
+what keeps the image where it was.
+
+Either side may be omitted — a mono node has one loudspeaker, and only one
+may have been measured. An omitted side is *cleared* rather than left
+alone: a node carrying last week's correction on one channel and this
+week's on the other is the worst of both.
+
+## The whole loop
+
+1. **Measure** each loudspeaker, one at a time. Name them.
+2. **Fit** — the predicted curve is drawn beside the measurement, and the
+   notes say what the fitter declined to touch and why. Refuse it here if
+   it looks wrong; nothing has been sent.
+3. **Write** it to the speaker.
+4. **Measure again with the correction on**, name it "after", and put the
+   two curves on one chart.
+
+Step 4 is the point. Everything before it is a prediction — the deviation
+figures come from applying the fitted filters' magnitude response to the
+measurement they were fitted to, which is arithmetic rather than evidence.
+The second measurement is the evidence, and the switch is what makes it
+cheap to get: turn the correction off, measure, turn it on, measure, and
+compare on the same chart without ever losing the profile.
+
+### Populating the vectors
+
+From measurements that already exist. Fitting reads the stored analysis, so
+any room measured before the correction stage existed can be fitted and
+written without measuring again. A fresh measurement is needed only to
+*check* the result — which is the interesting half.

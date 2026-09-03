@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -984,6 +985,103 @@ app.MapPost("/api/recordings/{file}/correction",
         // The profile is still the answer.
     }
     return Results.Ok(answer);
+});
+
+/*
+ * Send a fitted correction to a loudspeaker, and close the loop.
+ *
+ * Takes the measurements rather than coefficients: which recording is the
+ * left speaker and which the right. The Hub fits both, works out the one
+ * piece that cannot be decided per channel -- the headroom -- and writes
+ * the pair in a single request.
+ *
+ * **The preamp is the deeper of the two.** It is a broadband attenuation,
+ * so different values left and right would move the stereo image sideways
+ * by the difference. Each channel needs at least its own; the node gets the
+ * larger need, and the channel that needed less is simply quieter by the
+ * same amount as its partner, which is what keeps the image where it was.
+ *
+ * Either side may be omitted -- a mono node has one loudspeaker, and only
+ * one may have been measured so far. An omitted side is cleared rather than
+ * left, because a node carrying last week's correction on one channel and
+ * this week's on the other is the worst of both.
+ */
+app.MapPost("/api/devices/{id}/correction",
+    async (string id, CorrectionRequest request, DeviceRegistry registry,
+           RecordingService recorder, DeviceCommandClient commands,
+           CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound(new { error = "no such device" });
+    }
+
+    var fitted = new Dictionary<string, CorrectionProfile?>();
+    foreach (var (side, file) in new[] { ("left", request.Left), ("right", request.Right) })
+    {
+        if (string.IsNullOrWhiteSpace(file))
+        {
+            fitted[side] = null;
+            continue;
+        }
+        var response = ReadResponse(Path.Combine(recorder.DirectoryPath, Path.GetFileName(file)));
+        if (response is null)
+        {
+            return Results.BadRequest(new { error = $"'{file}' has not been analysed" });
+        }
+        fitted[side] = RoomCorrection.Fit(response);
+    }
+
+    if (fitted["left"] is null && fitted["right"] is null)
+    {
+        return Results.BadRequest(new { error = "name a measurement for at least one channel" });
+    }
+
+    static string Vector(CorrectionProfile? profile) =>
+        profile is null
+            ? ""
+            : string.Join(" ", profile.Filters.Select(
+                f => $"{f.FrequencyHz.ToString("0.0", CultureInfo.InvariantCulture)}/"
+                   + $"{f.Q.ToString("0.00", CultureInfo.InvariantCulture)}/"
+                   + $"{f.GainDb.ToString("0.0", CultureInfo.InvariantCulture)}"));
+
+    var preamp = Math.Min(fitted["left"]?.PreampDb ?? 0, fitted["right"]?.PreampDb ?? 0);
+    var enabled = request.Enabled ?? true;
+
+    var ok = await commands.SetCorrectionAsync(
+        device, Vector(fitted["left"]), Vector(fitted["right"]), preamp, enabled, cancellationToken);
+    if (!ok)
+    {
+        return Results.StatusCode(502);
+    }
+
+    return Results.Ok(new
+    {
+        device = device.Name,
+        enabled,
+        preampDb = preamp,
+        left = new { vector = Vector(fitted["left"]), notes = fitted["left"]?.Notes ?? [] },
+        right = new { vector = Vector(fitted["right"]), notes = fitted["right"]?.Notes ?? [] },
+    });
+});
+
+/// <summary>The switch, on its own, so a correction can be auditioned.</summary>
+app.MapPost("/api/devices/{id}/correction/enabled",
+    async (string id, EnabledRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound(new { error = "no such device" });
+    }
+    if (request.Enabled is null)
+    {
+        return Results.BadRequest(new { error = "enabled is required" });
+    }
+
+    return await commands.SetCorrectionEnabledAsync(device, request.Enabled.Value, cancellationToken)
+        ? Results.Ok(new { device = device.Name, enabled = request.Enabled.Value })
+        : Results.StatusCode(502);
 });
 
 /*
@@ -2612,6 +2710,15 @@ internal sealed record MeasureRequest(
 
 /// <summary>What to call a measurement. Empty clears it.</summary>
 internal sealed record LabelRequest(string? Label);
+
+/// <summary>
+/// Which measurement belongs to which loudspeaker. Named by recording
+/// rather than by coefficients, so the Hub fits and the node is told —
+/// there is one fitter and it is the one with the tests.
+/// </summary>
+internal sealed record CorrectionRequest(string? Left, string? Right, bool? Enabled);
+
+internal sealed record EnabledRequest(bool? Enabled);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting

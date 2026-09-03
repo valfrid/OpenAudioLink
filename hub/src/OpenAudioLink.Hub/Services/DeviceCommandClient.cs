@@ -266,6 +266,54 @@ public sealed class DeviceCommandClient
             device, "/config", JsonSerializer.Serialize(new { micGainDb }), cancellationToken);
     }
 
+    /// <summary>
+    /// Writes a room correction (docs/ROOM-CALIBRATION.md).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both vectors, the shared headroom and the switch in one request, so
+    /// a node is never left running one channel's correction against the
+    /// other's — which would be audible as the stereo image walking
+    /// sideways, and would be nobody's fault in particular.
+    /// </para>
+    /// <para>
+    /// The vectors are the readable triples the node stores, not
+    /// coefficients: the node derives those, and a person reading
+    /// <c>/status</c> should see what their loudspeaker is doing.
+    /// </para>
+    /// </remarks>
+    public async Task<bool> SetCorrectionAsync(
+        DeviceRecord device, string eqLeft, string eqRight, double preampDb, bool enabled,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Setting room correction on {Device}: L [{Left}] R [{Right}], preamp {Preamp} dB, {State}",
+            device.Name, eqLeft, eqRight, preampDb, enabled ? "on" : "off");
+        return await PostAsync(
+            device, "/config",
+            JsonSerializer.Serialize(new { eqLeft, eqRight, eqPreampDb = preampDb, eqEnabled = enabled }),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Turns a stored correction on or off without touching it.
+    /// </summary>
+    /// <remarks>
+    /// The control that makes a correction checkable. Comparing corrected
+    /// against uncorrected must not mean deleting a profile and measuring
+    /// again to get it back, or nobody will ever compare — and whether the
+    /// correction helped is the one thing worth knowing.
+    /// </remarks>
+    public async Task<bool> SetCorrectionEnabledAsync(
+        DeviceRecord device, bool enabled, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Room correction {State} on {Device}", enabled ? "on" : "off", device.Name);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { eqEnabled = enabled }),
+            cancellationToken);
+    }
+
     public async Task<bool> SetRingAsync(
         DeviceRecord device, int ringMs, CancellationToken cancellationToken)
     {
