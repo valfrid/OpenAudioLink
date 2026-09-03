@@ -778,6 +778,37 @@ Audibly: three interruptions on Speakers and six on Stereo across nearly
 five hours, 1.2 seconds of inserted silence between them. Against run 40's
 **one interruption every six minutes**, this is about one every half hour.
 
+### The microphone, four minutes of it, and run 35 reproduced
+
+The same session ended with the first audio this project has ever sent
+from a MEMS capsule: the Hub's radio stopped at +4.88 h and the
+node-to-node link test ran the ICS-43434 into one speaker at a time —
+Speakers for about four minutes, Stereo for two.
+
+It worked. Speakers took 33 269 packets with **zero underruns**, a fill
+holding 212–251 ms, and 11 packets lost in the first moments of the stream
+and none after. Stereo's two minutes were the same picture with nothing
+lost at all.
+
+The interesting number is the gap rate, because it is the cleanest test
+this series has made of a question run 35 asked:
+
+| source | path | arrival gaps |
+| --- | --- | --- |
+| Hub radio | Hub → AP → node, one air hop | **0.48 %** |
+| Microphone node | node → AP → node, two air hops | **1.1 %** |
+
+Same channel, same nodes, same hour, one variable. Run 35 measured the
+second air hop as roughly doubling the stall rate and could only compare
+across runs; this is 2.3× within one session. **The cost of a
+node-sourced stream is real and it is about what was claimed.**
+
+Two things this run could not answer, both because the speakers were
+driven one at a time rather than together: whether a microphone-sourced
+stream holds the 2 ms offset a Hub-sourced one does, and whether the
+0.43.0 channel fold works — that one is audible rather than countable, and
+needs someone in the room.
+
 ### What this changes about the buffer
 
 The case for the **Long** profile is now much weaker, and that is the
