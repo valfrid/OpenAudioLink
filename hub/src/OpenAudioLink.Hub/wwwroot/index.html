@@ -324,6 +324,7 @@ and swap supplies between two nodes to find out.">Clock</th>
     <button id="rec-start">● Record to a file</button>
     <button id="rec-stop" hidden>■ Stop recording</button>
     <span id="rec-state" class="muted"></span>
+    <span id="rec-volumes" class="muted"></span>
   </div>
   <table id="link-results" hidden>
     <thead>
@@ -3334,6 +3335,25 @@ and swap supplies between two nodes to find out.">Clock</th>
       try {
         r = await (await fetch('/api/recording', { cache: 'no-store' })).json();
       } catch { return; }
+      /*
+       * What the destination speakers are set to, because a measurement
+       * taken at 46% volume is a different measurement from one taken at
+       * 100% and nothing in the file records which it was. Two response
+       * curves at different gains are not comparable, and the difference
+       * is invisible afterwards -- the same reason the substituted-silence
+       * figure is on this line.
+       */
+      const dests = selectedLinkDestinations();
+      const vols = (lastDevices ?? [])
+        .filter(d => dests.includes(d.id) || dests.includes(d.address))
+        .map(d => `${d.name} ${d.status?.volume ?? '?'}%`);
+      const quiet = (lastDevices ?? []).some(d =>
+        (dests.includes(d.id) || dests.includes(d.address))
+        && typeof d.status?.volume === 'number' && d.status.volume < 100);
+      document.getElementById('rec-volumes').textContent =
+        vols.length ? `at ${vols.join(', ')}` : '';
+      document.getElementById('rec-volumes').className = quiet ? 'rssi fair' : 'muted';
+
       document.getElementById('rec-start').hidden = !!r.running;
       document.getElementById('rec-stop').hidden = !r.running;
       const el = document.getElementById('rec-state');
