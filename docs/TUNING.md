@@ -102,6 +102,73 @@ actual depth ≈ 1.125 × target      ← the midpoint, and what decides latency
 air to ear   ≈ actual depth + the output stage
 ```
 
+### Measured, at last
+
+Everything above is arithmetic. On 3 September 2026 it was checked against
+the room, and it holds.
+
+**Method:** a microphone node and a phone together at one end, a speaker
+4.5 m away, one clap. The phone records the clap directly and then the
+speaker's reproduction of it; the gap, less the flight time, is the whole
+path — capture DMA, packetise, Wi-Fi, jitter buffer, DAC, air.
+
+Eight claps, on the Standard profile:
+
+| | |
+| --- | --- |
+| Gap, clap to reproduction | 293.3–295.8 ms, **sd 0.84 ms** |
+| Acoustic flight, 4.5 m at 343 m/s | −13.1 ms |
+| **End-to-end latency** | **281.4 ms** |
+
+Against the budget:
+
+| stage | derived |
+| --- | --- |
+| Capture DMA, 4 × 5 ms | 20 ms |
+| Packetise, one packet | 5 ms |
+| Network | 2 ms |
+| Playout ring at a 200 ms target | 225 ms |
+| Sink DMA, 4 × 5 ms | 20 ms |
+| **Total** | **272 ms** |
+| **Measured** | **281.4 ms** |
+| Unaccounted | **+9.4 ms (+3.5 %)** |
+
+Nine milliseconds out over a 272 ms path, from a chain of five estimates
+none of which had ever been checked. The residual is most likely the
+capture ring's resting fill, which is the one stage above with no number
+of its own.
+
+**What this fixes elsewhere:** the non-ring overhead is now measured
+rather than assumed — 281.4 − 225 = **56 ms** of fixed cost either side of
+the buffer. So a hypothetical low-latency profile at a 20 ms target lands
+near **79 ms**, not the ~48 ms this project previously estimated from
+datasheet figures. Still comfortably inside what ensemble playing needs,
+and still nowhere near in-ear monitoring.
+
+#### Two ways of reading it that gave wrong answers
+
+Worth recording, because the obvious tool fails and one failure is
+convincing.
+
+**Waveform cross-correlation does not work.** The speaker, the room and
+the amplifier reshape a clap, so the reproduction is not a delayed copy of
+the original. Correlating the raw waveform returned 57, 115, 121, 318,
+318, 433, 440 and 508 ms — obviously scattered, which at least announces
+itself.
+
+**Envelope cross-correlation over too long a window is worse, because it
+is consistent.** Matching a 50 ms envelope shape returned 359.2, 359.5,
+361.1 and 359.2 ms on the four clean claps: four readings inside 2 ms of
+each other, and all wrong by 65 ms. The window was long enough that the
+best match aligned the *decay* of the direct clap with the decay of the
+reproduction rather than onset with onset.
+
+What works is finding the reproduction's **onset** after the direct
+clap's reverb tail has died — visible in the energy profile as a clean gap
+between about 160 ms and 293 ms, with a distinct new arrival after it.
+A tight answer is not a right one; the scattered method was the honest
+one.
+
 The depth is also **how long a silent gap the node can ride out** before
 the ring runs dry, which is the single number a buffer profile is chosen
 on. Run 40 measured 1 329 and 1 583 arrival gaps in the 100–200 ms band
