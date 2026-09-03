@@ -651,6 +651,110 @@ app.MapPost("/api/recording/stop",
     async (RecordingService recorder, CancellationToken cancellationToken) =>
         Results.Ok(await recorder.StopAsync(cancellationToken)));
 
+app.MapGet("/api/recordings", (RecordingService recorder) =>
+{
+    var dir = new DirectoryInfo(recorder.DirectoryPath);
+    if (!dir.Exists)
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+    return Results.Ok(dir.EnumerateFiles("*.wav")
+        .OrderByDescending(f => f.LastWriteTimeUtc)
+        .Select(f => new
+        {
+            file = f.Name,
+            size = f.Length,
+            modifiedAt = f.LastWriteTimeUtc,
+            url = $"/recordings/{f.Name}",
+            // Whether a curve has already been worked out for it, so the
+            // page can offer to show one rather than only to compute one.
+            analysed = File.Exists(Path.ChangeExtension(f.FullName, ".response.json")),
+        })
+        .ToList());
+});
+
+/*
+ * Turn a recording of the sweep into a frequency response
+ * (docs/ROOM-CALIBRATION.md).
+ *
+ * The answer is written next to the recording as JSON. A measurement is
+ * worth keeping: the recording is the evidence, the curve is the reading of
+ * it, and a room measured today is what a correction fitted next month has
+ * to be checked against. Recomputing it is cheap, but agreeing with
+ * yesterday's number is not something a recomputation can promise once the
+ * analysis changes.
+ */
+app.MapPost("/api/recordings/{file}/analyse",
+    async (string file, int? channel, RecordingService recorder) =>
+{
+    var path = Path.Combine(recorder.DirectoryPath, Path.GetFileName(file));
+    if (!File.Exists(path))
+    {
+        return Results.NotFound(new { error = $"no recording called '{file}'" });
+    }
+
+    try
+    {
+        return await Task.Run(() =>
+        {
+            var audio = WavReader.Read(path, channel ?? 0);
+            var signal = new SweepSignal { SampleRate = audio.SampleRate };
+            var response = SweepAnalyser.Analyse(audio.Samples, signal);
+
+            var answer = new
+            {
+                file = Path.GetFileName(path),
+                channel = channel ?? 0,
+                recordedSeconds = audio.Duration.TotalSeconds,
+                sampleRate = response.SampleRate,
+                signal = signal.ToString(),
+                cyclesAveraged = response.CyclesAveraged,
+                signalToNoiseDb = Round(response.SignalToNoiseDb),
+                peakDbFs = Round(response.PeakDbFs),
+                clippedSamples = response.ClippedSamples,
+                impulsePeakSeconds = Round(response.ImpulsePeakSeconds, 4),
+                alignMarginSeconds = Round(response.AlignMarginSeconds, 4),
+                warnings = response.Warnings,
+                points = response.FrequenciesHz
+                    .Select((hz, i) => new { hz = Round(hz, 2), db = Round(response.MagnitudeDb[i]) })
+                    .ToList(),
+            };
+
+            try
+            {
+                File.WriteAllText(
+                    Path.ChangeExtension(path, ".response.json"),
+                    System.Text.Json.JsonSerializer.Serialize(answer,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (IOException)
+            {
+                // The curve is still the answer; failing to keep a copy of
+                // it is not a reason to withhold it.
+            }
+
+            return Results.Ok(answer);
+        });
+    }
+    catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapGet("/api/recordings/{file}/response", (string file, RecordingService recorder) =>
+{
+    var path = Path.ChangeExtension(
+        Path.Combine(recorder.DirectoryPath, Path.GetFileName(file)), ".response.json");
+    return File.Exists(path)
+        ? Results.Content(File.ReadAllText(path), "application/json")
+        : Results.NotFound(new { error = "that recording has not been analysed yet" });
+});
+
+// Infinities and NaN are not JSON, and a silent recording produces both.
+static double? Round(double value, int digits = 2) =>
+    double.IsFinite(value) ? Math.Round(value, digits) : null;
+
 /*
  * Capture gain, which only a microphone node needs.
  *

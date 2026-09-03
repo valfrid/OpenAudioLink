@@ -81,12 +81,20 @@ public sealed record SweepSignal
     public int SampleRate { get; init; } = 48000;
 
     /// <summary>
-    /// A raised cosine at the start, over five cycles of
+    /// A raised cosine at the start, over two cycles of
     /// <see cref="StartHz"/>. Switching a 20 Hz sine on at full amplitude
     /// is a step, and a step excites everything — which would show up as a
     /// second, untimed impulse in the result.
     /// </summary>
-    public double FadeInSeconds { get; init; } = 0.25;
+    /// <remarks>
+    /// The fade is divided out exactly by the analyser, which works from
+    /// this definition rather than from an ideal sweep, so it introduces no
+    /// bias — it only costs signal-to-noise where the amplitude was low.
+    /// A hundred milliseconds is the whole of that cost: the sweep has
+    /// reached 21.8 Hz by the time it is at level, so the band paid for is
+    /// 20–21.8 Hz, which no loudspeaker here reproduces.
+    /// </remarks>
+    public double FadeInSeconds { get; init; } = 0.1;
 
     /// <summary>
     /// Shorter than the fade in, because the end of the sweep is at 20 kHz

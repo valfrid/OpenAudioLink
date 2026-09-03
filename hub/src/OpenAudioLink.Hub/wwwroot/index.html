@@ -388,6 +388,37 @@ and swap supplies between two nodes to find out.">Clock</th>
   </div>
   <p id="tone-status" class="hint">Not streaming.</p>
 
+  <h2>Room measurement</h2>
+  <p class="hint">
+    What the room did to the sweep: a recording divided by the signal that
+    made it. Play the measurement sweep to one speaker, record the
+    microphone node for at least four cycles — forty seconds — and analyse
+    the file here.
+    <br>
+    The curve is levelled so that 200 Hz–2 kHz sits at 0 dB, because the
+    shape is the measurement and the absolute level would be a property of
+    the microphone's sensitivity, which is not calibrated. A sixth of an
+    octave is averaged into each point: a raw response is a forest of
+    interference nulls that move when the microphone moves an inch, and
+    what survives the smoothing is what belongs to the room.
+    <br>
+    <strong>Read the warnings before the curve.</strong> A clipped
+    recording measures the clipping, and it looks exactly like a real
+    measurement.
+  </p>
+  <div class="fw-bar">
+    <label>Recording <select id="rr-file"></select></label>
+    <label>Channel
+      <select id="rr-channel">
+        <option value="0">Left</option>
+        <option value="1">Right</option>
+      </select>
+    </label>
+    <button id="rr-analyse">Analyse</button>
+  </div>
+  <div id="rr-plot" hidden></div>
+  <p id="rr-summary" class="hint">Pick a recording of the sweep.</p>
+
   <h2>Firmware</h2>
   <div class="fw-bar">
     <button id="fw-fetch">Fetch latest from GitHub</button>
@@ -3448,6 +3479,120 @@ and swap supplies between two nodes to find out.">Clock</th>
       refreshLinkResults();
     });
 
+    // --- room measurement -------------------------------------------
+
+    /*
+     * The curve, drawn rather than tabulated.
+     *
+     * Two hundred numbers in a table is not a frequency response to
+     * anybody. A mode at 60 Hz is obvious in a picture and invisible in a
+     * list, and the whole reason to measure a room is to look at its shape.
+     *
+     * Logarithmic in both directions, because hearing is: an octave is an
+     * octave wherever it sits, and a decibel is a decibel. A linear
+     * frequency axis would give the top octave half the width and squeeze
+     * everything this measurement is for into the first inch.
+     */
+    function plotResponse(response) {
+      const points = response.points ?? [];
+      const box = document.getElementById('rr-plot');
+      if (!points.length) {
+        box.hidden = true;
+        return;
+      }
+
+      const w = 720, h = 300, left = 44, right = 12, top = 12, bottom = 28;
+      const plotW = w - left - right, plotH = h - top - bottom;
+
+      const lowHz = points[0].hz, highHz = points[points.length - 1].hz;
+      const span = Math.log(highHz / lowHz);
+      const x = hz => left + plotW * Math.log(hz / lowHz) / span;
+
+      // The scale grows to hold the data but never shrinks below +-12 dB,
+      // so a flat room looks flat instead of being magnified into drama.
+      const values = points.map(p => p.db).filter(v => v !== null && isFinite(v));
+      const reach = Math.max(12, Math.ceil(Math.max(...values.map(Math.abs)) / 6) * 6);
+      const y = db => top + plotH * (reach - db) / (2 * reach);
+
+      const parts = [];
+      for (const hz of [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) {
+        if (hz < lowHz || hz > highHz) continue;
+        parts.push(`<line x1="${x(hz).toFixed(1)}" y1="${top}" x2="${x(hz).toFixed(1)}" `
+          + `y2="${top + plotH}" stroke="currentColor" stroke-opacity="0.15"/>`);
+        parts.push(`<text x="${x(hz).toFixed(1)}" y="${h - 8}" font-size="11" `
+          + `text-anchor="middle" fill="var(--muted)">`
+          + `${hz >= 1000 ? (hz / 1000) + 'k' : hz}</text>`);
+      }
+      for (let db = -reach; db <= reach; db += 6) {
+        const zero = db === 0;
+        parts.push(`<line x1="${left}" y1="${y(db).toFixed(1)}" x2="${left + plotW}" `
+          + `y2="${y(db).toFixed(1)}" stroke="currentColor" `
+          + `stroke-opacity="${zero ? 0.45 : 0.15}"/>`);
+        parts.push(`<text x="${left - 6}" y="${(y(db) + 4).toFixed(1)}" font-size="11" `
+          + `text-anchor="end" fill="var(--muted)">${db > 0 ? '+' : ''}${db}</text>`);
+      }
+
+      const line = points
+        .filter(p => p.db !== null && isFinite(p.db))
+        .map(p => `${x(p.hz).toFixed(1)},${y(Math.max(-reach, Math.min(reach, p.db))).toFixed(1)}`)
+        .join(' ');
+      parts.push(`<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>`);
+
+      box.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" `
+        + `aria-label="Measured frequency response"`
+        + ` style="max-width:${w}px">${parts.join('')}</svg>`;
+      box.hidden = false;
+    }
+
+    async function refreshRecordings() {
+      const select = document.getElementById('rr-file');
+      const picked = select.value;
+      const files = await fetch('/api/recordings').then(r => r.json()).catch(() => []);
+      select.innerHTML = files
+        .map(f => `<option value="${esc(f.file)}">${esc(f.file)}`
+          + `${f.analysed ? ' ✓' : ''}</option>`).join('');
+      if ([...select.options].some(o => o.value === picked)) {
+        select.value = picked;
+      }
+      return files;
+    }
+
+    function describeResponse(answer) {
+      const bits = [
+        `${answer.cyclesAveraged} sweep(s) averaged`,
+        answer.signalToNoiseDb === null ? null : `${answer.signalToNoiseDb} dB above the room`,
+        answer.peakDbFs === null ? 'silent' : `peak ${answer.peakDbFs} dBFS`,
+        `${answer.recordedSeconds.toFixed(1)} s recorded`,
+      ].filter(Boolean);
+      const warnings = (answer.warnings ?? []).join(' ');
+      return (warnings ? '⚠ ' + warnings + ' — ' : '') + bits.join(', ') + '.';
+    }
+
+    document.getElementById('rr-analyse').addEventListener('click', async () => {
+      const file = document.getElementById('rr-file').value;
+      const channel = document.getElementById('rr-channel').value;
+      const summary = document.getElementById('rr-summary');
+      if (!file) {
+        summary.textContent = 'There are no recordings yet.';
+        return;
+      }
+
+      summary.textContent = 'Analysing…';
+      const response = await fetch(
+        `/api/recordings/${encodeURIComponent(file)}/analyse?channel=${channel}`,
+        { method: 'POST' });
+      const answer = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        document.getElementById('rr-plot').hidden = true;
+        summary.textContent = `Could not analyse ${file}: ${answer.error ?? response.status}`;
+        return;
+      }
+
+      plotResponse(answer);
+      summary.textContent = describeResponse(answer);
+      refreshRecordings();
+    });
+
     refreshHealth();
     refreshHubUpdate();
     refreshDevices();
@@ -3456,6 +3601,7 @@ and swap supplies between two nodes to find out.">Clock</th>
     refreshCastPoints();
     refreshTone();
     refreshRecording();
+    refreshRecordings();
     setInterval(refreshRecording, 2000);
     setInterval(refreshLinkResults, 2000);
     setInterval(refreshDevices, 2000);
@@ -3464,6 +3610,9 @@ and swap supplies between two nodes to find out.">Clock</th>
     // Slowly: a file that grows two rows a minute does not need
     // watching, and the list only changes at midnight.
     setInterval(refreshSamples, 60000);
+    // A recording appears when one is stopped, which is a person's action
+    // and not a stream of events.
+    setInterval(refreshRecordings, 30000);
     setInterval(refreshCastPoints, 3000);
     // Rarely: this asks GitHub, and a release does not appear twice a minute.
     setInterval(refreshHubUpdate, 15 * 60 * 1000);

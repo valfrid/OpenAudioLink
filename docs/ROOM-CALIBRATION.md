@@ -579,7 +579,7 @@ ends compute from the same code and nothing has to be agreed at run time.
 | Silence | 2 s |
 | Cycle | 10 s, repeating |
 | Amplitude | −6 dBFS peak |
-| Fade in / out | 250 ms / 10 ms, raised cosine |
+| Fade in / out | 100 ms / 10 ms, raised cosine |
 
 Each choice is load-bearing:
 
@@ -594,11 +594,14 @@ Each choice is load-bearing:
 - **It repeats** because every complete cycle is an independent look at the
   same room, and averaging *k* of them lifts the signal by √k. That is what
   makes a −91 dBFS microphone in a −63 dBFS room a usable instrument.
-- **The fade in is long** (250 ms, five cycles of 20 Hz) because switching
+- **The fade in is long** (100 ms, two cycles of 20 Hz) because switching
   a 20 Hz sine on at half scale is a step, and a step excites everything at
   once — it would arrive in the result as a second impulse response with no
-  fixed relationship to the first. The fade out is short because 10 ms at
-  20 kHz is two hundred cycles.
+  fixed relationship to the first. The analyser divides by this definition
+  rather than by an ideal sweep, so the fade costs signal-to-noise rather
+  than accuracy: by the time the sweep is at level it has reached 21.8 Hz,
+  and that is the whole of the band paid for. The fade out is short because
+  10 ms at 20 kHz is two hundred cycles.
 - **−6 dBFS**, because a sweep that clips is a measurement of the clipping.
 
 A sweep also separates the loudspeaker's harmonic distortion from its
@@ -645,9 +648,90 @@ Order matters only in that the recording has to overlap whole cycles; the
 analyser finds the cycle boundary itself and discards the partial ones at
 each end.
 
+## The analyser
+
+What came back, divided by what went out. Everything else is the
+bookkeeping that makes that division legitimate.
+
+1. **Fold and average.** The signal repeats every cycle, so the recording
+   is folded on the cycle and the cycles are averaged. Noise is
+   uncorrelated between them and falls as the square root of their number;
+   the sweep is not and does not. This is why the sweep repeats at all.
+2. **Align first.** The recording starts whenever somebody pressed the
+   button. Folding at the wrong phase *rotates* the response rather than
+   delaying it, and no division undoes a rotation. The phase is found by
+   looking for the silence — the gap has an edge, while a logarithmic
+   sweep's autocorrelation peak is broad and dominated by its bottom
+   octave.
+3. **Divide, with a floor.** `H = Y·conj(X) / (|X|² + ε)`. Outside the
+   swept band the sweep has no energy at all, and the unregularised
+   quotient there is the microphone's own noise multiplied by an
+   arbitrarily large number — a spectacular curve describing nothing. With
+   the floor it goes quietly to zero, which is the honest answer for a band
+   that was never excited.
+4. **Window the impulse response.** Half a second, with 5 ms kept ahead of
+   the peak. The pre-window is where the loudspeaker's harmonic distortion
+   lands: with an exponential sweep the *n*th harmonic arrives a fixed time
+   *ahead* of its fundamental, so a short pre-window is what separates
+   distortion from response.
+5. **Smooth and level.** A sixth of an octave averaged into each of 240
+   logarithmically spaced points, then slid so that 200 Hz–2 kHz sits at
+   0 dB. The absolute level would be a property of the microphone's
+   sensitivity, which is not calibrated; the shape is the measurement.
+
+### Why zero-padding the transform is exact
+
+Dividing spectra is a circular operation, and circular arithmetic wraps a
+room's decay back onto the start of the sweep. It does not here, and the
+silent gap is the reason: the response is shorter than the gap, so the
+periodic response and the linear one are the same sequence, and padding to
+a power of two for the transform changes nothing. That is the gap's second
+job, and it is why the FFT can be a plain radix-2 one.
+
+### What it reports besides the curve
+
+- **Cycles averaged** — the measurement's confidence.
+- **Signal to noise** — sweep against the quiet part of the cycle. Below
+  about 20 dB the bottom of the curve is the room's noise floor rather than
+  the room, and it says so.
+- **Peak level and clipped samples.** A clipped sweep measures the
+  clipping, and the curve looks exactly like a real one. This is the first
+  thing to read.
+- **Where the direct sound landed.** It belongs on the alignment margin;
+  far from it means the alignment locked onto the wrong edge and the curve
+  is not a measurement of this room.
+
+It is *not* a latency figure. The window is placed by looking for the
+arrival, so the network and playout delay has already been taken out, and
+the three clocks involved are not the same one.
+
+```
+POST /api/recordings/<file>/analyse?channel=0
+GET  /api/recordings/<file>/response
+```
+
+The answer is written next to the recording as `<name>.response.json`. A
+measurement is worth keeping: the recording is the evidence, the curve is
+the reading of it, and a room measured today is what a correction fitted
+next month has to be checked against.
+
+## How the analyser is tested
+
+Against rooms whose answer is written down in advance. A peaking filter of
+known frequency, Q and gain is applied to the sweep, delayed, started at an
+arbitrary offset and buried in noise; the analyser has to find that shape
+and nothing else. The end-to-end test does it at the real sizes and the
+shipped defaults — a 480 000-frame cycle padded to 2^19, through the
+recorder's own 24-bit writer and the byte swap — and recovers a +9 dB mode
+at 62 Hz and a −5 dB dip at 3.5 kHz to within 1.5 dB.
+
+That is the only way to tell a fault in the analysis from a fault in a
+room without a calibrated laboratory.
+
 ## What is still missing
 
-The analyser and the correction constants. The recorder and the signal are
-what this section describes; turning a recording into a curve and a curve
-into biquads is the next work, and the conservative-correction rules in the
-proposal above are the specification for the second half of it.
+The correction constants. Turning a curve into biquads is the next work,
+and the conservative-correction rules in the proposal above are its
+specification: correct broad peaks strongly, broad dips moderately, leave
+narrow nulls alone, cap the boost at +3 to +4 dB, and pre-attenuate by the
+largest boost so the EQ has somewhere to put it.
