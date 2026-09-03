@@ -1712,7 +1712,13 @@ and swap supplies between two nodes to find out.">Clock</th>
            */
           (d.status?.inputStage === 'mic'
             ? ` <button data-cmd="micgain" data-id="${esc(d.id)}" ` +
-              `data-gain="${esc(d.status.micGainDb ?? 0)}"${disabled}>` +
+              `data-gain="${esc(d.status.micGainDb ?? 0)}" ` +
+              // The measured peak, so the dialog can name the answer
+              // instead of asking somebody to guess it. Louder of the two
+              // slots: one capsule fills one, and the other is silence.
+              `data-peak="${esc(Math.max(
+                  d.status.input?.leftDb ?? -120, d.status.input?.rightDb ?? -120))}"` +
+              `${disabled}>` +
               `Gain ${esc(d.status.micGainDb ?? 0)} dB…</button>`
             : '') +
           (d.status?.inputStage
@@ -2361,17 +2367,40 @@ and swap supplies between two nodes to find out.">Clock</th>
          * below full scale stays there however far the speaker is turned up.
          */
         const current = button.dataset.gain ?? '0';
+        /*
+         * The meter already knows the answer, so the dialog says it.
+         *
+         * The peak is measured in the capture task, before the boost is
+         * applied on the way out, so it is always the *raw* capsule level
+         * however much gain is already set -- which is exactly what this
+         * arithmetic needs, and also why the reading does not move after
+         * a change. Somebody who set 30 dB and saw the meter sit still
+         * would otherwise conclude nothing happened.
+         */
+        const peak = Number(button.dataset.peak);
+        const headroom = 6;
+        const suggested = Number.isFinite(peak) && peak > -120
+          ? Math.max(0, Math.min(40, Math.round(-peak - headroom)))
+          : null;
+        const advice = suggested === null
+          ? 'The meter reads silence, so there is nothing to size this against\n' +
+            'yet. Make some sound at the microphone and open this again.\n'
+          : `The meter peaks at ${Math.round(peak)} dBFS right now, so about\n` +
+            `${suggested} dB would put it near -${headroom} dBFS — loud, with room\n` +
+            'left for something louder. Make the sound you actually care\n' +
+            'about first; sizing this against a quiet room sets it too high.\n';
         const answer = prompt(
           'Capture gain for this microphone, 0 to 40 dB.\n\n' +
+          advice + '\n' +
           'The ICS-43434 gives -26 dBFS at 94 dB SPL, so an ordinary room\n' +
           'lands near -45 dBFS — about 40 dB below music mastered to the\n' +
           'top of the scale. A speaker at full volume cannot make that up;\n' +
           'its volume control only ever attenuates.\n\n' +
-          'Start around 30 dB for speech at conversational distance and\n' +
-          'watch the input meter: it should peak well short of 0 dBFS.\n' +
+          'The meter reads the capsule before this gain, so it will not\n' +
+          'move when you change this. Judge the result by listening.\n' +
           'Too much clips, and clipping here cannot be undone later.\n\n' +
           'Applies at the node\'s next reboot.',
-          current);
+          suggested === null ? current : String(suggested));
         if (answer === null) return;
         const micGainDb = Number(answer.trim());
         if (!Number.isInteger(micGainDb) || micGainDb < 0 || micGainDb > 40) {
