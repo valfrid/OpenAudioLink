@@ -283,6 +283,10 @@ void app_main(void)
              * for a source rather than for itself. LEFT because SEL is
              * tied low (docs/HARDWARE.md). */
             capture.fold      = OAL_CHANNEL_LEFT;
+            /* And the gain, without which the stream is audible and far
+             * too quiet: the capsule puts an ordinary room around
+             * -45 dBFS, and a consumer's volume control attenuates only. */
+            capture.boost_db  = oal_config_get_mic_gain_db();
         }
         ESP_LOGI(TAG, "capturing from %s (%s)", oal_input_name(stage),
                  capture.slave ? "following the module's clock"

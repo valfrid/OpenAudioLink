@@ -646,6 +646,22 @@ configuring — and in particular a consumer's `channel` setting stays a
 description of *that speaker* rather than of whatever it happens to be
 listening to.
 
+**It also needs gain, and nothing else in the chain can give it.** The
+part's sensitivity is −26 dBFS at 94 dB SPL, so a room at ordinary
+listening level lands near **−45 dBFS** — some 40 dB below music mastered
+to the top of the scale. A consumer's volume control cannot make that up:
+it attenuates and never amplifies, deliberately, because the streams it
+normally carries already arrive near full scale. The first microphone
+stream this project sent was perfectly audible and far too quiet with
+every speaker at 100 %.
+
+So firmware 0.44.0 adds `micGainDb`, 0–40 dB, applied at capture where
+there are still 24 bits of headroom under the signal. Start near **30 dB**
+for speech at conversational distance and watch the input meter peak well
+short of 0 dBFS; the boost saturates rather than wrapping, but clipping
+here cannot be undone downstream. Set it from the **Gain … dB…** button,
+which appears only on a node whose input stage is the microphone.
+
 **The level meter still reads one-sided, and that is correct.** It is
 measured in the capture task from what the converter delivers, before the
 ring — the fold is applied on the way out, in `oal_capture_read`. So a

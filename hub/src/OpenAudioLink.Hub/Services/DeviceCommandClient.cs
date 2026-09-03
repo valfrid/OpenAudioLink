@@ -248,6 +248,24 @@ public sealed class DeviceCommandClient
     /// experiment, and an experiment needs a knob rather than a rebuild and
     /// a cable — particularly for the node that is awkward to reach.
     /// </remarks>
+    /// <summary>
+    /// Capture gain for a microphone node, in whole decibels.
+    /// </summary>
+    /// <remarks>
+    /// Applies at the node's next boot, like the ring and unlike the
+    /// delay: the capture task reads it once when the I²S channel comes
+    /// up, and a microphone's level is not something anybody rides during
+    /// a take.
+    /// </remarks>
+    public async Task<bool> SetMicGainAsync(
+        DeviceRecord device, int micGainDb, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Setting microphone gain on {Device} to {Db} dB", device.Name, micGainDb);
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(new { micGainDb }), cancellationToken);
+    }
+
     public async Task<bool> SetRingAsync(
         DeviceRecord device, int ringMs, CancellationToken cancellationToken)
     {

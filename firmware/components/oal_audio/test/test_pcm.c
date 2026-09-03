@@ -470,8 +470,84 @@ static void the_two_channels_are_measured_apart(void)
     CHECK_EQ(oal_pcm_peak(NULL, 8, 0), 0);
 }
 
+/*
+ * The boost is the microphone's, and it must saturate. A 24-bit sample
+ * that wraps does not sound loud, it sounds torn -- the sign inverting
+ * mid-waveform -- so this is the property worth pinning down.
+ */
+static void test_the_boost_amplifies_by_decibels(void)
+{
+    TEST("the boost amplifies by whole decibels");
+
+    CHECK_EQ(oal_pcm_boost_q16(0), OAL_GAIN_UNITY);
+
+    /* 6 dB is a shade *under* double -- 6.02 dB is exactly double -- and
+     * getting that backwards is what this line is here to catch. 20 dB is
+     * ten times, 40 dB a hundred, and those are exact. */
+    CHECK(oal_pcm_boost_q16(6) < 2 * OAL_GAIN_UNITY);
+    CHECK(oal_pcm_boost_q16(6) > 199 * OAL_GAIN_UNITY / 100);
+    CHECK_EQ(oal_pcm_boost_q16(20), 10 * OAL_GAIN_UNITY);
+    CHECK_EQ(oal_pcm_boost_q16(40), 100 * OAL_GAIN_UNITY);
+
+    /* Monotonic, and clamped rather than read off the end. */
+    for (uint8_t db = 1; db <= OAL_BOOST_DB_MAX; db++) {
+        CHECK(oal_pcm_boost_q16(db) > oal_pcm_boost_q16((uint8_t)(db - 1)));
+    }
+    CHECK_EQ(oal_pcm_boost_q16(200), oal_pcm_boost_q16(OAL_BOOST_DB_MAX));
+}
+
+static void test_the_boost_saturates_rather_than_wrapping(void)
+{
+    TEST("the boost saturates rather than wrapping");
+
+    uint8_t payload[3 * 4];
+    oal_pcm_write_l24(0x400000, payload + 0);   /* half scale, positive */
+    oal_pcm_write_l24(-0x400000, payload + 3);  /* half scale, negative */
+    oal_pcm_write_l24(0x7FFFFF, payload + 6);   /* full scale */
+    oal_pcm_write_l24(-0x800000, payload + 9);
+
+    /* 20 dB on half scale is five times over: every one must peg. */
+    oal_pcm_boost_l24(payload, 4, oal_pcm_boost_q16(20));
+
+    CHECK_EQ(oal_pcm_read_l24(payload + 0), 0x7FFFFF);
+    CHECK_EQ(oal_pcm_read_l24(payload + 3), -0x800000);
+    CHECK_EQ(oal_pcm_read_l24(payload + 6), 0x7FFFFF);
+    CHECK_EQ(oal_pcm_read_l24(payload + 9), -0x800000);
+}
+
+static void test_the_boost_scales_what_fits(void)
+{
+    TEST("the boost scales what fits");
+
+    uint8_t payload[3 * 2];
+    oal_pcm_write_l24(1000, payload + 0);
+    oal_pcm_write_l24(-1000, payload + 3);
+
+    oal_pcm_boost_l24(payload, 2, oal_pcm_boost_q16(20));
+
+    CHECK_EQ(oal_pcm_read_l24(payload + 0), 10000);
+    CHECK_EQ(oal_pcm_read_l24(payload + 3), -10000);
+}
+
+static void test_unity_and_below_leave_the_payload_alone(void)
+{
+    TEST("unity and below leave the payload alone");
+
+    uint8_t payload[3];
+    oal_pcm_write_l24(12345, payload);
+    oal_pcm_boost_l24(payload, 1, oal_pcm_boost_q16(0));
+    CHECK_EQ(oal_pcm_read_l24(payload), 12345);
+
+    oal_pcm_boost_l24(payload, 1, OAL_GAIN_UNITY / 2);
+    CHECK_EQ(oal_pcm_read_l24(payload), 12345);
+}
+
 int main(void)
 {
+    test_the_boost_amplifies_by_decibels();
+    test_the_boost_saturates_rather_than_wrapping();
+    test_the_boost_scales_what_fits();
+    test_unity_and_below_leave_the_payload_alone();
     reads_the_extremes();
     byte_order_is_big_endian();
     the_top_bit_means_negative();

@@ -105,6 +105,19 @@ public sealed record DeviceStatus
     public int? MaxDelayMs { get; init; }
 
     /// <summary>
+    /// Capture gain on a microphone node, in whole decibels.
+    /// </summary>
+    /// <remarks>
+    /// Nothing else in the chain can supply it. A consumer's volume
+    /// attenuates and never amplifies — deliberately, because the streams
+    /// it normally rides arrive near full scale — and an ICS-43434 puts an
+    /// ordinary room around −45 dBFS. The first microphone stream was
+    /// perfectly audible and far too quiet with every consumer at 100 %,
+    /// which is what this exists to fix.
+    /// </remarks>
+    public int? MicGainDb { get; init; }
+
+    /// <summary>
     /// Which app slot is running, and whether the image in it is confirmed.
     /// </summary>
     /// <remarks>

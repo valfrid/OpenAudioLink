@@ -282,7 +282,7 @@ static char s_ota[176];
 /*
  * /status, sized against its measured worst case rather than by eye.
  *
- * 1 060 bytes with every field saturated -- a 32-character id, a long
+ * 1 075 bytes with every field saturated -- a 32-character id, a long
  * node name, a full-length SSID, and the partyReady and delayMs fields
  * added since this was 1 024. It had not failed yet only because the
  * names in this house are short, which is not a property to rely on.
@@ -403,7 +403,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        /* Whether, never what. This document is polled by
                         * the Hub, the switchboard and every node's own
                         * page; a passphrase does not belong in it. */
-                       "\"partyReady\":%s,\"delayMs\":%u,"
+                       "\"partyReady\":%s,\"delayMs\":%u,\"micGainDb\":%u,"
                        /* The ring as allocated and the two limits that
                         * follow from it. Published rather than assumed
                         * because assuming is how the Hub came to offer
@@ -431,6 +431,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        (unsigned)esp_get_free_heap_size(), wifi,
                        oal_wifi_has_party() ? "true" : "false",
                        (unsigned)oal_config_get_delay_ms(),
+                       (unsigned)oal_config_get_mic_gain_db(),
                        (unsigned)reported_ring_ms(),
                        (unsigned)oal_playout_max_target_ms(),
                        (unsigned)delay_ceiling(), ota,
@@ -499,6 +500,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const cJSON *party = cJSON_GetObjectItemCaseSensitive(root, "party");
     const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ringMs");
     const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    const cJSON *mic_gain = cJSON_GetObjectItemCaseSensitive(root, "micGainDb");
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
@@ -507,6 +509,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const bool has_delay = cJSON_IsNumber(delay);
     const bool has_ring = cJSON_IsNumber(ring);
     const bool has_name = cJSON_IsString(name);
+    const bool has_mic_gain = cJSON_IsNumber(mic_gain);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
     const uint32_t ring_ms = has_ring ? (uint32_t)ring->valueint : 0;
 
@@ -514,10 +517,10 @@ static esp_err_t config_handler(httpd_req_t *req)
      * nothing to do with whether it is still a consumer, and requiring
      * both would make one setting able to clobber the other. */
     if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
-            && !has_ring && !has_input && !has_name) {
+            && !has_ring && !has_input && !has_name && !has_mic_gain) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "expected roles, channel, output, input, name, delayMs, "
+                            "expected roles, channel, output, input, name, micGainDb, delayMs, "
                             "ringMs or party");
         return ESP_FAIL;
     }
@@ -589,6 +592,17 @@ static esp_err_t config_handler(httpd_req_t *req)
         ESP_LOGW(TAG, "refused delayMs %d; this ring allows up to %" PRIu32,
                  delay->valueint, delay_ceiling());
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "delayMs out of range");
+        return ESP_FAIL;
+    }
+    /* Whole decibels, and bounded: the table behind the boost has
+     * OAL_BOOST_DB_MAX entries and reading off the end of it is not the
+     * error anybody wants to debug. */
+    if (has_mic_gain
+            && (mic_gain->valueint < 0 || mic_gain->valueint > OAL_BOOST_DB_MAX)) {
+        cJSON_Delete(root);
+        ESP_LOGW(TAG, "refused micGainDb %d; the range is 0 to %d",
+                 mic_gain->valueint, OAL_BOOST_DB_MAX);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "micGainDb out of range");
         return ESP_FAIL;
     }
     if (has_ring
@@ -725,6 +739,19 @@ static esp_err_t config_handler(httpd_req_t *req)
         } else {
             ESP_LOGI(TAG, "renamed to \"%s\"", s_config.name);
         }
+    }
+    /*
+     * At the next boot, like the ring and unlike the delay: the capture
+     * task reads its gain once when the I2S channel is brought up, and
+     * a microphone's level is not something anybody rides during a take.
+     */
+    if (has_mic_gain) {
+        if (oal_config_set_mic_gain_db((uint8_t)mic_gain->valueint) != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "mic gain not stored");
+            return ESP_FAIL;
+        }
+        ESP_LOGI(TAG, "microphone gain %d dB, at the next reboot",
+                 mic_gain->valueint);
     }
     if (has_delay) {
         if (oal_config_set_delay_ms(delay_ms) != ESP_OK) {

@@ -126,6 +126,41 @@ int32_t oal_pcm_gain_q16(uint8_t percent);
  */
 void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16);
 
+/** The largest boost a microphone may be given, in whole decibels. */
+#define OAL_BOOST_DB_MAX 40
+
+/**
+ * Q16 multiplier for a whole-decibel boost, 0 to
+ * <see cref="OAL_BOOST_DB_MAX"/>. Zero decibels returns unity.
+ *
+ * Separate from oal_pcm_gain_q16 because it answers the opposite question
+ * and must not inherit that one's promise. A volume control attenuates and
+ * never amplifies, because the stream it rides on is already mastered near
+ * full scale and amplifying it would clip the loud passages. A microphone
+ * is the reverse case: the ICS-43434 gives -26 dBFS at 94 dB SPL, so
+ * ordinary room sound lands 40 dB or more below full scale and *needs*
+ * amplifying to be listenable. Two opposite contracts, two functions,
+ * rather than one with a flag.
+ *
+ * From a table rather than a pow() call: integer throughout, so a node and
+ * a host test agree exactly, and no FPU is touched on the audio path.
+ */
+int32_t oal_pcm_boost_q16(uint8_t db);
+
+/**
+ * Amplifies L24 payload in place, saturating rather than wrapping.
+ *
+ * @param payload  big-endian 24-bit samples, as they go on the wire
+ * @param samples  samples, not frames and not bytes
+ * @param gain_q16 from oal_pcm_boost_q16; unity or below is a no-op
+ *
+ * <b>Saturation is the whole point.</b> A boost large enough to be useful
+ * on a quiet room is large enough to clip a door slamming, and a 24-bit
+ * value that wraps turns the loudest moment into the ugliest noise a
+ * speaker can make. Clipped audio is merely loud; wrapped audio is broken.
+ */
+void oal_pcm_boost_l24(uint8_t *payload, size_t samples, int32_t gain_q16);
+
 /** What <see cref="oal_pcm_dbfs"/> returns for silence. */
 #define OAL_DBFS_SILENT (-120)
 

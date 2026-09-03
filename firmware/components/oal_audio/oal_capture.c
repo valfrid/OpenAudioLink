@@ -84,6 +84,7 @@ static uint64_t s_meter_at_us;
  */
 static bool s_ever_read;
 static oal_channel_t s_fold = OAL_CHANNEL_STEREO;
+static int32_t s_boost_q16 = OAL_GAIN_UNITY;
 
 bool oal_capture_running(void)
 {
@@ -173,6 +174,13 @@ size_t oal_capture_read(uint8_t *payload, size_t frames)
     if (s_fold != OAL_CHANNEL_STEREO) {
         oal_channel_apply(payload, samples / OAL_RTP_CHANNELS, s_fold);
     }
+
+    /*
+     * After the fold, so one boost covers both slots rather than being
+     * applied to one and copied into the other -- same result here, and it
+     * stays the same result if the fold ever becomes a mix.
+     */
+    oal_pcm_boost_l24(payload, samples, s_boost_q16);
 
     xSemaphoreGive(s_lock);
     return copied / OAL_RTP_CHANNELS;
@@ -407,6 +415,7 @@ esp_err_t oal_capture_start(const oal_capture_config_t *config)
 
     /* Before the first read can happen. */
     s_fold = config->fold;
+    s_boost_q16 = oal_pcm_boost_q16(config->boost_db);
 
     err = i2s_channel_enable(s_rx);
     if (err != ESP_OK) {

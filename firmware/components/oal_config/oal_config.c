@@ -22,6 +22,7 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_VOLUME "volume"
 #define NVS_KEY_OUTPUT "output"
 #define NVS_KEY_INPUT  "input"
+#define NVS_KEY_MIC_GAIN "mic_gain"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -549,6 +550,52 @@ esp_err_t oal_config_set_name(const char *name)
         err = nvs_set_str(nvs, NVS_KEY_NAME, name);
     }
 
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+/*
+ * Capture gain for a microphone, in whole decibels.
+ *
+ * Stored beside the volume and shaped like it, and the pair is worth
+ * reading together: volume attenuates a stream that arrives near full
+ * scale, this amplifies one that arrives 40 dB below it. Opposite ends of
+ * the same chain, and neither can do the other's job -- which is why the
+ * first microphone stream was audible but far too quiet even with every
+ * consumer at 100%.
+ *
+ * Zero for a line input, and zero is the default, so nothing that is not a
+ * microphone is affected by the existence of this setting.
+ */
+uint8_t oal_config_get_mic_gain_db(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
+        return 0;
+    }
+    uint8_t stored = 0;
+    esp_err_t err = nvs_get_u8(nvs, NVS_KEY_MIC_GAIN, &stored);
+    nvs_close(nvs);
+    if (err != ESP_OK || stored > OAL_BOOST_DB_MAX) {
+        return 0;
+    }
+    return stored;
+}
+
+esp_err_t oal_config_set_mic_gain_db(uint8_t db)
+{
+    if (db > OAL_BOOST_DB_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(nvs, NVS_KEY_MIC_GAIN, db);
     if (err == ESP_OK) {
         err = nvs_commit(nvs);
     }

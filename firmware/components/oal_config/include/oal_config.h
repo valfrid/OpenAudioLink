@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "oal_pcm.h"
 #include "oal_channel.h"
 #include "oal_input.h"
 #include "oal_output.h"
@@ -158,6 +159,16 @@ uint8_t oal_config_get_volume(void);
 
 /** Persists the volume. Rejects anything above 100. */
 esp_err_t oal_config_set_volume(uint8_t percent);
+
+/**
+ * Capture gain for a microphone, whole decibels, 0 to
+ * <see cref="OAL_BOOST_DB_MAX"/>. Zero by default and zero for a line
+ * input; only a microphone needs it.
+ */
+uint8_t oal_config_get_mic_gain_db(void);
+
+/** Stores it. Rejects anything above OAL_BOOST_DB_MAX. */
+esp_err_t oal_config_set_mic_gain_db(uint8_t db);
 
 /*
  * Which output stage this board has (docs/USB-AUDIO.md).

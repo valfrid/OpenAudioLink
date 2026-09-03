@@ -1700,6 +1700,21 @@ and swap supplies between two nodes to find out.">Clock</th>
            * measurement microphone is often sitting there as a Consumer
            * between jobs, and that is exactly when the setting is changed.
            */
+          /*
+           * Gain, and only where a microphone is the input. A line stage
+           * arrives near full scale and wants none; a capsule arrives 40 dB
+           * below it and is unusable without. Showing this on every node
+           * would invite it being set on the one place it can only do harm.
+           *
+           * The value is on the face of the button for the same reason the
+           * delay's is: a gain that has been set and one that has not sound
+           * completely different and look identical.
+           */
+          (d.status?.inputStage === 'mic'
+            ? ` <button data-cmd="micgain" data-id="${esc(d.id)}" ` +
+              `data-gain="${esc(d.status.micGainDb ?? 0)}"${disabled}>` +
+              `Gain ${esc(d.status.micGainDb ?? 0)} dB…</button>`
+            : '') +
           (d.status?.inputStage
             ? ` <button data-cmd="input" data-id="${esc(d.id)}" ` +
               `data-input="${esc(d.status.inputStage)}"${disabled}>` +
@@ -2337,6 +2352,42 @@ and swap supplies between two nodes to find out.">Clock</th>
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the delay: ${error.error ?? response.status}`);
+        }
+      } else if (button.dataset.cmd === 'micgain') {
+        /*
+         * The number that makes a microphone listenable rather than merely
+         * present. Nothing else in the chain can supply it: a consumer's
+         * volume attenuates and never amplifies, so a capsule sitting 40 dB
+         * below full scale stays there however far the speaker is turned up.
+         */
+        const current = button.dataset.gain ?? '0';
+        const answer = prompt(
+          'Capture gain for this microphone, 0 to 40 dB.\n\n' +
+          'The ICS-43434 gives -26 dBFS at 94 dB SPL, so an ordinary room\n' +
+          'lands near -45 dBFS — about 40 dB below music mastered to the\n' +
+          'top of the scale. A speaker at full volume cannot make that up;\n' +
+          'its volume control only ever attenuates.\n\n' +
+          'Start around 30 dB for speech at conversational distance and\n' +
+          'watch the input meter: it should peak well short of 0 dBFS.\n' +
+          'Too much clips, and clipping here cannot be undone later.\n\n' +
+          'Applies at the node\'s next reboot.',
+          current);
+        if (answer === null) return;
+        const micGainDb = Number(answer.trim());
+        if (!Number.isInteger(micGainDb) || micGainDb < 0 || micGainDb > 40) {
+          say('Give a whole number of decibels from 0 to 40.');
+          return;
+        }
+        const response = await fetch(`/api/devices/${encodeURIComponent(id)}/mic-gain`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ micGainDb }),
+        });
+        if (response.ok) {
+          say(`Microphone gain set to ${micGainDb} dB — reboot this node for it to take effect.`);
+        } else {
+          const error = await response.json().catch(() => ({}));
+          say(`Could not set the gain: ${error.error ?? response.status}`);
         }
       } else if (button.dataset.cmd === 'profile') {
         /*

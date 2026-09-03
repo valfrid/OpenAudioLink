@@ -197,3 +197,59 @@ int oal_pcm_dbfs(int32_t peak)
 
     return db < OAL_DBFS_SILENT ? OAL_DBFS_SILENT : db;
 }
+
+/*
+ * Q16 multipliers for 0..OAL_BOOST_DB_MAX decibels, rounded from
+ * 65536 * 10^(dB/20). Precomputed because the audio path must not call
+ * pow() and because a table is checkable by eye: entry 6 is a shade under
+ * double (6.02 dB is exactly double), entry 20 is ten times, entry 40 is
+ * a hundred.
+ */
+static const int32_t BOOST_Q16[OAL_BOOST_DB_MAX + 1] = {
+    65536, 73533, 82505, 92572,
+    103868, 116541, 130762, 146717,
+    164619, 184706, 207243, 232531,
+    260904, 292739, 328458, 368536,
+    413504, 463959, 520571, 584090,
+    655360, 735326, 825049, 925721,
+    1038676, 1165413, 1307615, 1467168,
+    1646190, 1847055, 2072430, 2325305,
+    2609035, 2927386, 3284581, 3685360,
+    4135042, 4639593, 5205710, 5840902,
+    6553600,
+};
+
+int32_t oal_pcm_boost_q16(uint8_t db)
+{
+    if (db > OAL_BOOST_DB_MAX) {
+        db = OAL_BOOST_DB_MAX;
+    }
+    return BOOST_Q16[db];
+}
+
+void oal_pcm_boost_l24(uint8_t *payload, size_t samples, int32_t gain_q16)
+{
+    /* Unity is the common case -- every node that is not a microphone --
+     * and skipping it costs nothing rather than multiplying by one. */
+    if (payload == NULL || gain_q16 <= OAL_GAIN_UNITY) {
+        return;
+    }
+
+    for (size_t i = 0; i < samples; i++) {
+        uint8_t *at = payload + i * 3u;
+        /*
+         * 64-bit intermediate, then saturate. A 24-bit sample near full
+         * scale times a hundred overflows 32 bits several times over, and
+         * a wrapped sample is not a loud sample -- it is the sign
+         * inverting mid-waveform, which sounds like tearing rather than
+         * like clipping.
+         */
+        int64_t scaled = ((int64_t)oal_pcm_read_l24(at) * gain_q16) / OAL_GAIN_UNITY;
+        if (scaled > 0x7FFFFF) {
+            scaled = 0x7FFFFF;
+        } else if (scaled < -0x800000) {
+            scaled = -0x800000;
+        }
+        oal_pcm_write_l24((int32_t)scaled, at);
+    }
+}

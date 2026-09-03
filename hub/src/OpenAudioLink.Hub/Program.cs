@@ -605,6 +605,42 @@ app.MapPost("/api/devices/{id}/ring",
 });
 
 /*
+ * Capture gain, which only a microphone node needs.
+ *
+ * The chain has no other place to put it. A consumer's volume attenuates
+ * and never amplifies -- deliberately, because the streams it normally
+ * rides arrive mastered near full scale -- and an ICS-43434 gives
+ * -26 dBFS at 94 dB SPL, so an ordinary room lands around -45. The first
+ * microphone stream this project sent was perfectly audible and far too
+ * quiet with every consumer at 100 %, and no setting that existed at the
+ * time could have fixed it.
+ */
+app.MapPost("/api/devices/{id}/mic-gain",
+    async (string id, MicGainRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound();
+    }
+
+    var db = request.MicGainDb ?? -1;
+    if (db < 0 || db > 40)
+    {
+        return Results.BadRequest(new
+        {
+            error = "micGainDb must be 0 to 40; it is whole decibels of gain on what "
+                  + "this node captures, and only a microphone needs any",
+        });
+    }
+
+    var ok = await commands.SetMicGainAsync(device, db, cancellationToken);
+    return ok
+        ? Results.Ok(new { status = "stored", micGainDb = db, appliesAt = "reboot" })
+        : Results.StatusCode(502);
+});
+
+/*
  * The two settings above, as a decision rather than as arithmetic.
  *
  * Ring and delay are the right primitives and a poor interface: they fail
@@ -1943,6 +1979,9 @@ internal sealed record ChannelRequest(string? Channel);
 internal sealed record DelayRequest(int? DelayMs);
 
 internal sealed record RingRequest(int? RingMs);
+
+/// <summary>Whole decibels of capture gain for a microphone node.</summary>
+internal sealed record MicGainRequest(int? MicGainDb);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting

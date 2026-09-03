@@ -127,6 +127,7 @@ public sealed class DeviceStatusService : BackgroundService
                 RingMs = status.RingMs,
                 MaxTargetMs = status.MaxTargetMs,
                 MaxDelayMs = status.MaxDelayMs,
+                MicGainDb = status.MicGainDb,
                 OtaSlot = status.Ota?.Slot,
                 OtaState = status.Ota?.State,
                 OtaOtherState = status.Ota?.OtherState,
@@ -179,6 +180,9 @@ public sealed class DeviceStatusService : BackgroundService
         /// Extra playout delay this node holds, or null from firmware that
         /// predates it.
         /// </summary>
+        [JsonPropertyName("micGainDb")]
+        public int? MicGainDb { get; init; }
+
         [JsonPropertyName("delayMs")]
         public int? DelayMs { get; init; }
 

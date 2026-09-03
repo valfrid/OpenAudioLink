@@ -74,6 +74,20 @@ typedef struct {
     oal_channel_t fold;
 
     /**
+     * Whole decibels of gain applied to what this node captures, 0 to
+     * <see cref="OAL_BOOST_DB_MAX"/>.
+     *
+     * A microphone needs it and a line input does not. The ICS-43434 gives
+     * -26 dBFS at 94 dB SPL, so a room at ordinary listening level lands
+     * around -45 dBFS and a stream of it is 40 dB quieter than music
+     * mastered near full scale. The consumer's volume control cannot
+     * recover that -- it attenuates and never amplifies, deliberately --
+     * so the gain has to be here, where the signal still has 24 bits of
+     * headroom under it.
+     */
+    uint8_t boost_db;
+
+    /**
      * True when the ADC generates BCK and LRCK and this end follows.
      *
      * The module's own oscillator then sets the sample rate, and it is
