@@ -1602,6 +1602,23 @@ app.MapPost("/api/castpoints/{id}/play",
                 kind = "test-tone";
                 break;
 
+            case "sweep":
+                // One speaker at a time, so the channel is part of the
+                // request rather than a default: a sweep from both at once
+                // measures the pair's interference and not either speaker.
+                try
+                {
+                    source = new SweepSource(
+                        format, new SweepSignal { SampleRate = format.SampleRate },
+                        request.SweepChannel ?? AudioChannel.Stereo);
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                kind = "sweep";
+                break;
+
             case "system-audio":
                 if (!OperatingSystem.IsWindows())
                 {
@@ -1625,8 +1642,8 @@ app.MapPost("/api/castpoints/{id}/play",
                 return Results.BadRequest(new
                 {
                     error = string.IsNullOrWhiteSpace(request.Source)
-                        ? $"{producer.Name} needs a source: radio, tone or system-audio"
-                        : $"{producer.Name} can produce radio, tone or system-audio, "
+                        ? $"{producer.Name} needs a source: radio, tone, sweep or system-audio"
+                        : $"{producer.Name} can produce radio, tone, sweep or system-audio, "
                             + $"not '{request.Source}'",
                 });
         }
@@ -1917,6 +1934,51 @@ app.MapPost("/api/stream/test-tone", async (
     }
 });
 
+/*
+ * The measurement signal (docs/ROOM-CALIBRATION.md).
+ *
+ * Beside the tone rather than inside it, because the two answer different
+ * questions and only one of them is a measurement: a tone says "is this
+ * speaker working", a sweep says "what does this room do to it". The
+ * analyser divides a recording of what came back by this exact signal, so
+ * nothing about it is chosen here — the defaults in SweepSignal are the
+ * contract, and both ends compute from them.
+ *
+ * The channel is the one thing worth choosing per run, and it is not a
+ * detail: a sweep from both speakers at once measures their interference
+ * at the microphone rather than either speaker, and a correction fitted to
+ * that would make both of them worse.
+ */
+app.MapPost("/api/stream/sweep", async (
+    StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer) =>
+{
+    var failure = ResolveDestinations(request, context, registry, out var destinations);
+    if (destinations.Count == 0)
+    {
+        return failure;
+    }
+
+    var port = request.Port ?? 41100;
+    if (port is < 1 or > 65535)
+    {
+        return Results.BadRequest(new { error = "port out of range" });
+    }
+
+    try
+    {
+        var format = BuildFormat(request);
+        format.Validate();
+        var sweep = new SweepSource(
+            format, new SweepSignal { SampleRate = format.SampleRate },
+            request.Channel ?? AudioChannel.Stereo);
+        return Results.Ok(await streamer.StartAsync("sweep", sweep, destinations, port, format));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapPost("/api/stream/radio", async (
     StreamRequest request, HttpContext context, DeviceRegistry registry, RtpStreamer streamer,
     IHttpClientFactory clients, ILoggerFactory loggers) =>
@@ -2085,7 +2147,11 @@ internal sealed record CastPointPlayRequest(
     // radio. A station id is the switchboard's way of saying it; a bare
     // url is for anything driving the API without saving one first.
     string? Url = null,
-    string? StationId = null);
+    string? StationId = null,
+    // Which channel a measurement sweep goes down, so one loudspeaker can
+    // be measured without the other one answering. Ignored by every other
+    // source.
+    string? SweepChannel = null);
 
 /// <summary>Force skips the "already up to date" and "something is playing" refusals.</summary>
 internal sealed record HubUpdateRequest(bool? Force = null);
@@ -2124,4 +2190,7 @@ internal sealed record StreamRequest(
     double? FrequencyHz,
     int? PacketMilliseconds,
     // The station, for /api/stream/radio. Ignored by every other endpoint.
-    string? Url = null);
+    string? Url = null,
+    // Which channel carries the signal, for /api/stream/sweep. One
+    // loudspeaker is measured at a time.
+    string? Channel = null);

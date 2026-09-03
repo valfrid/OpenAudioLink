@@ -522,3 +522,132 @@ After the open reliability work, not before it. `ROADMAP.md` lists this
 under DSP. The proposal already says the microphone must never be required
 for normal operation, which is the right constraint and the one that keeps
 this from delaying anything else.
+
+---
+
+# What exists now
+
+The proposal above is a year of intent. This section is the part that has
+been built, and it differs from the proposal on one structural point.
+
+## The measurement runs on the Hub, not on the node
+
+The proposal has the receiver generate the sweep, record it, and analyse it
+in PSRAM. It does not, and it should not. The Hub already produces streams
+(radio, Spotify, a tone), already receives them (the recorder), has as much
+memory and floating point as the analysis wants, and is the only place that
+can look at the same measurement twice.
+
+So the chain is:
+
+```text
+Hub --- sweep, RTP ------> speaker node ---> amplifier ---> speaker
+                                                              |
+                                                             room
+                                                              |
+Hub <-- capture, RTP ----- microphone node <--- ICS-43434 <----+
+```
+
+Both legs are ordinary OpenAudioLink streams at the ordinary profile. The
+microphone node is a Producer with `input=mic`; the speaker node is a
+Consumer like any other. Nothing about either is special, which is the
+point — a measurement that needs a special mode measures the special mode.
+
+This drops the PSRAM requirement for *measuring* as well. A node still
+needs nothing but the ability to apply biquads, which is what the last
+section of the proposal already argued for keeping separate.
+
+**The two clocks are back, though.** The proposal's arrangement had the
+sweep and the recording on one crystal. Here the speaker's playout clock,
+the microphone's capture clock and the Hub's sender are three, and the
+measurement crosses all of them. That is fine for a *frequency* response —
+a few ppm of rate error over ten seconds is far below the resolution of
+anything the analyser reports. It is not fine for absolute time, so the
+impulse response's position is a latency figure with a clock-drift term in
+it, not a calibrated one.
+
+## The signal
+
+`SweepSignal` in the Hub. A logarithmic sine sweep, and the analyser
+divides by this exact definition rather than by a recording of it, so both
+ends compute from the same code and nothing has to be agreed at run time.
+
+| | |
+|---|---|
+| Band | 20 Hz – 20 kHz |
+| Sweep | 8 s |
+| Silence | 2 s |
+| Cycle | 10 s, repeating |
+| Amplitude | −6 dBFS peak |
+| Fade in / out | 250 ms / 10 ms, raised cosine |
+
+Each choice is load-bearing:
+
+- **Logarithmic, not linear.** Every octave gets the same number of
+  seconds. Half the sweep is spent below 632 Hz — the geometric mean of the
+  band — which is where rooms misbehave. A linear sweep is past 10 kHz by
+  its halfway point and gives the bottom two octaves 0.2 % of its time.
+- **The silence is not padding.** It has to outlast the room's
+  reverberation, or the tail of one sweep lands on the head of the next and
+  late reflections fold onto the direct sound. A domestic room decays in
+  0.3–0.6 s; two seconds covers it several times over.
+- **It repeats** because every complete cycle is an independent look at the
+  same room, and averaging *k* of them lifts the signal by √k. That is what
+  makes a −91 dBFS microphone in a −63 dBFS room a usable instrument.
+- **The fade in is long** (250 ms, five cycles of 20 Hz) because switching
+  a 20 Hz sine on at half scale is a step, and a step excites everything at
+  once — it would arrive in the result as a second impulse response with no
+  fixed relationship to the first. The fade out is short because 10 ms at
+  20 kHz is two hundred cycles.
+- **−6 dBFS**, because a sweep that clips is a measurement of the clipping.
+
+A sweep also separates the loudspeaker's harmonic distortion from its
+linear response for free: because the frequency rises exponentially, the
+*n*th harmonic arrives a fixed time *ahead* of the fundamental that
+produced it, so distortion products land before the impulse response and a
+window discards them. Noise gives neither this nor the signal-to-noise
+ratio.
+
+## One loudspeaker at a time
+
+The sweep goes down one channel of the stream, chosen per run. This is not
+a convenience: two speakers playing the same sweep arrive at the microphone
+at different times, and their sum has deep cancellations that belong to the
+*pair* — to the microphone's position between them — rather than to either
+speaker. A correction fitted to that would make both of them worse.
+
+Using the stream's own channels rather than a separate target means nothing
+needs to be told to stop. Every node already knows which half of the stream
+it plays (decision 10), so a left-channel sweep silences the right-hand
+speaker by construction.
+
+```
+POST /api/stream/sweep   { "destinations": [...], "channel": "left" }
+```
+
+or the **Start measurement sweep** button in Hub streaming, which is beside
+the test tone because they share a destination list and nothing else — a
+tone answers "is this speaker working", a sweep answers "what does this
+room do to it".
+
+## How a measurement is taken
+
+1. Put the microphone node at the listening position. Check its level in
+   the gain dialog first: the sweep should peak somewhere around −20 dBFS,
+   which is loud enough to be well clear of the room and far enough from
+   full scale not to clip on a bass mode.
+2. Start the sweep to the speaker under test, on its channel.
+3. Record the microphone node to a file. Give it at least four cycles —
+   40 seconds — so there is something to average.
+4. Stop both.
+
+Order matters only in that the recording has to overlap whole cycles; the
+analyser finds the cycle boundary itself and discards the partial ones at
+each end.
+
+## What is still missing
+
+The analyser and the correction constants. The recorder and the signal are
+what this section describes; turning a recording into a curve and a curve
+into biquads is the next work, and the conservative-correction rules in the
+proposal above are the specification for the second half of it.

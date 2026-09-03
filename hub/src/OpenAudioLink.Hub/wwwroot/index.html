@@ -350,6 +350,16 @@ and swap supplies between two nodes to find out.">Clock</th>
     Ctrl+click, or list addresses separated by commas. One stream runs at a
     time. The test tone is a diagnostic — it answers "is this speaker
     working?" without involving a source.
+    <br>
+    The <strong>measurement sweep</strong> is the other half of a room
+    measurement: 20 Hz to 20 kHz over eight seconds, then two seconds of
+    silence for the room to stop ringing, repeating. Record it back through
+    a microphone node and dividing one by the other gives the room's
+    frequency response.
+    <strong>Measure one loudspeaker at a time.</strong> Two playing the same
+    sweep arrive at the microphone at different times, and where they cancel
+    belongs to the pair rather than to either speaker — so the channel
+    chooses which one answers, and nodes set to the other half stay silent.
   </p>
   <div class="fw-bar">
     <label>To <select id="tone-target" multiple size="4"></select></label>
@@ -362,9 +372,17 @@ and swap supplies between two nodes to find out.">Clock</th>
       </select>
     </label>
     <label>Tone Hz <input id="tone-frequency" type="number" value="1000" min="20" max="20000"></label>
+    <label>Sweep channel
+      <select id="sweep-channel">
+        <option value="left">Left speaker</option>
+        <option value="right">Right speaker</option>
+        <option value="stereo">Both (not a measurement)</option>
+      </select>
+    </label>
   </div>
   <div class="fw-bar">
     <button id="tone-start">Start test tone</button>
+    <button id="sweep-start">Start measurement sweep</button>
     <button id="system-start">Stream this computer's audio</button>
     <button id="tone-stop">Stop</button>
   </div>
@@ -2714,6 +2732,8 @@ and swap supplies between two nodes to find out.">Clock</th>
         port: Number(document.getElementById('tone-port').value),
         encoding: document.getElementById('tone-encoding').value,
         frequencyHz: Number(document.getElementById('tone-frequency').value),
+        // Only /api/stream/sweep reads this; the others ignore it.
+        channel: document.getElementById('sweep-channel').value,
       };
       say('Starting stream…');
       const response = await fetch(`/api/stream/${kind}`, {
@@ -2733,6 +2753,7 @@ and swap supplies between two nodes to find out.">Clock</th>
     }
 
     document.getElementById('tone-start').addEventListener('click', () => startStream('test-tone'));
+    document.getElementById('sweep-start').addEventListener('click', () => startStream('sweep'));
     document.getElementById('system-start').addEventListener('click', () => startStream('system-audio'));
 
     document.getElementById('tone-stop').addEventListener('click', async () => {
