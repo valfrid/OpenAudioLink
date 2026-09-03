@@ -28,6 +28,7 @@ all of the gaps causing them under 200 ms. Run 42 then removed most of
 that population by changing channel, and Standard now runs at about one
 interruption every half hour — so **fix the air before reaching for
 Long**.
+
 **Short** is the firmware's floor and is realistic only on a wired
 backhaul; it is for video, where lip-sync beats robustness.
 
