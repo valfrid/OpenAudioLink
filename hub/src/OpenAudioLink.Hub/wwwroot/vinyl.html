@@ -30,7 +30,7 @@
   <div class="layout">
     <section class="card now">
       <div>
-        <div class="section-label">Vinyl</div>
+        <div class="section-label" id="hero-kind">Vinyl</div>
 
         <div class="station-hero">
           <div class="logo" id="hero-logo">💿</div>
@@ -115,13 +115,37 @@
     const input = device?.status?.input;
     if (!input) return { lead: '—', sub: 'This node reports no input' };
     const { leftDb, rightDb } = input;
+    const mic = device?.status?.inputStage === 'mic';
+
     if (leftDb <= -120 && rightDb <= -120) {
-      return { lead: 'Silent', sub: 'Nothing on either channel — check the cable and the deck' };
+      return {
+        lead: 'Silent',
+        sub: mic
+          ? 'Nothing from the capsule — check SEL, the 3V3 rail and the wiring'
+          : 'Nothing on either channel — check the cable and the deck',
+      };
     }
+
+    /*
+     * One live channel is a fault on a turntable and the normal state of a
+     * microphone: a MEMS capsule fills whichever half of the frame its SEL
+     * pin selects and leaves the other at digital silence. Telling somebody
+     * to go and check an RCA plug that does not exist is worse than saying
+     * nothing, and this page said exactly that for the first microphone
+     * ever plugged into it.
+     */
     if (leftDb <= -120 || rightDb <= -120) {
       const dead = leftDb <= -120 ? 'left' : 'right';
+      const live = dead === 'left' ? 'right' : 'left';
+      if (mic) {
+        const level = dead === 'left' ? rightDb : leftDb;
+        return {
+          lead: `${level} dBFS`,
+          sub: `One capsule, in the ${live} slot — folded to both on the way out`,
+        };
+      }
       return {
-        lead: `Only the ${dead === 'left' ? 'right' : 'left'} channel`,
+        lead: `Only the ${live} channel`,
         sub: `The ${dead} channel is silent — check that RCA plug and the ground`,
       };
     }
@@ -165,6 +189,11 @@
 
   function renderHero() {
     const device = state.lineIn.find(d => d.id === chosen);
+    /* The heading and the glyph, which 0.77.0 changed in the list and
+     * missed here -- so the page still announced VINYL over a microphone. */
+    const mic = device?.status?.inputStage === 'mic';
+    $('hero-kind').textContent = mic ? 'Microphone' : 'Vinyl';
+    $('hero-logo').textContent = mic ? '🎙️' : '💿';
     $('input-name').textContent = device ? device.name : 'No input chosen';
     $('input-meta').textContent = device ? `Node at ${device.address}` : 'Pick a node from the list';
 

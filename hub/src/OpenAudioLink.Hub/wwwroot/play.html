@@ -121,9 +121,17 @@
     // What is playing, in the words of whatever is producing it. The Hub's
     // stream describes itself ("Internet radio: Groove Salad"); a node
     // producer does not, so the source name is the honest fallback.
+    /*
+     * "Line in" named one of the two capture stages and got it wrong for
+     * the other, which is the third place this assumption had been left --
+     * after the link test's source dropdown and the Vinyl app's own copy.
+     * The producing node knows which it is; ask it rather than guessing.
+     */
+    const producer = (state.devices ?? []).find(d => d.id === playing.producer);
+    const captureName = producer?.status?.inputStage === 'mic' ? 'Microphone' : 'Line in';
     const description = state.stream?.running
       ? state.stream.description
-      : playing.source === 'capture' ? 'Line in' : (playing.source ?? 'Playing');
+      : playing.source === 'capture' ? captureName : (playing.source ?? 'Playing');
     $('playing-lead').textContent = description;
     $('playing-sub').textContent = `in ${playing.name}`;
 
