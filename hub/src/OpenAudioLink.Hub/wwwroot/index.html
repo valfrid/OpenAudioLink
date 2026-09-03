@@ -84,6 +84,7 @@
         --series-4: #c98500;
       }
     }
+    .eq-vector { font: inherit; font-size: 0.8rem; font-family: ui-monospace, monospace; }
     .legend {
       display: flex;
       flex-wrap: wrap;
@@ -1167,6 +1168,37 @@ and swap supplies between two nodes to find out.">Clock</th>
         .map(([k, v]) => `<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`)
         .join('');
 
+      /*
+       * The room correction, shown as the node stores it and editable in
+       * place (docs/ROOM-CALIBRATION.md).
+       *
+       * The whole reason the stored form is "hz/Q/dB" triples rather than
+       * coefficients is that a person can read what their loudspeaker is
+       * doing and change it. That is only true if it is somewhere they can
+       * see it, so it is here rather than behind an API.
+       *
+       * Absent entirely on firmware that predates it, which is a more
+       * useful thing to say than an empty box.
+       */
+      const hasEq = s.eqLeft !== undefined && s.eqLeft !== null;
+      const eqField = (side, value) =>
+        `<input type="text" class="eq-vector" data-eq="${esc(d.id)}" data-side="${side}" ` +
+        `value="${esc(value ?? '')}" placeholder="104.0/3.78/-9.0 …" size="34">`;
+      const correction = !hasEq
+        ? '<p class="hint">This node\'s firmware predates room correction.</p>'
+        : cell([
+            ['Correction', s.eqEnabled
+              ? '<strong>on</strong>'
+              : '<span class="muted">off</span>'],
+            ['Headroom', s.eqPreampDb != null ? `${esc(s.eqPreampDb)} dB` : '—'],
+          ])
+          + `<div class="kv"><span class="muted">Left</span>${eqField('left', s.eqLeft)}</div>`
+          + `<div class="kv"><span class="muted">Right</span>${eqField('right', s.eqRight)}</div>`
+          + `<p class="hint">Frequency / Q / gain, one triple per filter. `
+          + `Edit and press Enter to write it. Up to eight per channel; `
+          + `the Hub fits six, leaving room to add your own.</p>`;
+
+
       return `<tr class="detail"><td colspan="12"><div class="panel">` +
         `<div class="panel-cols">` +
         `<section><h4>Device</h4>${cell(facts)}</section>` +
@@ -1178,10 +1210,42 @@ and swap supplies between two nodes to find out.">Clock</th>
         `<section><h4>Stream</h4><div id="dstream-${esc(d.id)}">` +
         `${deviceStreams.get(d.id) ?? '<span class="muted">reading…</span>'}` +
         `</div></section>` +
+        `<section><h4>Room correction</h4>${correction}</section>` +
         `</div>` +
         `<div class="panel-actions">${actions}</div>` +
         `</div></td></tr>`;
     }
+
+    /*
+     * A vector edited by hand, written on Enter.
+     *
+     * Delegated from the document because the device table is rebuilt every
+     * two seconds and a listener bound to the input would go with it. The
+     * rebuild is also paused while one of these fields has focus, or an
+     * edit would be thrown away mid-keystroke.
+     */
+    document.addEventListener('keydown', async event => {
+      const field = event.target;
+      if (event.key !== 'Enter' || !field.dataset || !field.dataset.eq) {
+        return;
+      }
+      event.preventDefault();
+
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(field.dataset.eq)}/eq`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field.dataset.side]: field.value }),
+        });
+      const answer = await response.json().catch(() => ({}));
+      say(response.ok
+        ? `${field.dataset.side} correction written: ${answer.stored || '(cleared)'}`
+        : `Could not write it: ${answer.error ?? response.status}`);
+      // Blurred so the paused refresh resumes and shows what the node
+      // stored, which is the normalised form of what was typed.
+      field.blur();
+      refreshDevices();
+    });
 
     /*
      * The open panels' counters, read straight from each node.
@@ -1776,6 +1840,19 @@ and swap supplies between two nodes to find out.">Clock</th>
     }
 
     async function refreshDevices() {
+      /*
+       * Not while somebody is typing a correction into it.
+       *
+       * This table is rebuilt every two seconds, and rebuilding it under a
+       * half-typed vector throws the edit away mid-keystroke. Two seconds
+       * of slightly stale counters is a much smaller cost than a field that
+       * cannot be typed into, and the pause ends the moment the field loses
+       * focus.
+       */
+      if (document.activeElement?.classList?.contains('eq-vector')) {
+        return;
+      }
+
       let devices = [];
       try {
         devices = await (await fetch('/api/devices', { cache: 'no-store' })).json();

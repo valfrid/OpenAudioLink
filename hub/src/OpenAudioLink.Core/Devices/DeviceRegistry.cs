@@ -117,6 +117,21 @@ public sealed record DeviceStatus
     /// </remarks>
     public int? MicGainDb { get; init; }
 
+    /*
+     * Room correction as the node holds it (docs/ROOM-CALIBRATION.md).
+     *
+     * The vectors are the readable triples the node stores, not
+     * coefficients, so what is shown here is exactly what is in NVS and can
+     * be handed straight back for editing. Null from firmware predating it.
+     */
+    public string? EqLeft { get; init; }
+
+    public string? EqRight { get; init; }
+
+    public bool? EqEnabled { get; init; }
+
+    public double? EqPreampDb { get; init; }
+
     /// <summary>
     /// Which app slot is running, and whether the image in it is confirmed.
     /// </summary>

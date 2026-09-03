@@ -1065,6 +1065,41 @@ app.MapPost("/api/devices/{id}/correction",
     });
 });
 
+/*
+ * A vector written by hand.
+ *
+ * The other endpoint fits from a measurement; this one takes the triples
+ * as typed. Both exist because the readable stored form is only worth
+ * having if something lets a person use it -- a format nobody can edit is
+ * just a slower way of storing coefficients.
+ *
+ * Validated by the node, not here. It is the node's fence, its clamps and
+ * its parser that decide what a vector is, and a second opinion on this
+ * side would be one more place for the two to disagree.
+ */
+app.MapPost("/api/devices/{id}/eq",
+    async (string id, EqRequest request, DeviceRegistry registry,
+           DeviceCommandClient commands, CancellationToken cancellationToken) =>
+{
+    if (!registry.TryGet(id, out var device))
+    {
+        return Results.NotFound(new { error = "no such device" });
+    }
+    if (request.Left is null && request.Right is null)
+    {
+        return Results.BadRequest(new { error = "name a channel to write" });
+    }
+
+    // Only the side that was named. Sending the other one back as it was
+    // read would race a change made from somewhere else in the two seconds
+    // since the page last refreshed.
+    var ok = await commands.SetEqVectorAsync(
+        device, request.Left, request.Right, cancellationToken);
+    return ok
+        ? Results.Ok(new { device = device.Name, stored = request.Left ?? request.Right })
+        : Results.StatusCode(502);
+});
+
 /// <summary>The switch, on its own, so a correction can be auditioned.</summary>
 app.MapPost("/api/devices/{id}/correction/enabled",
     async (string id, EnabledRequest request, DeviceRegistry registry,
@@ -2719,6 +2754,9 @@ internal sealed record LabelRequest(string? Label);
 internal sealed record CorrectionRequest(string? Left, string? Right, bool? Enabled);
 
 internal sealed record EnabledRequest(bool? Enabled);
+
+/// <summary>One or both vectors, exactly as typed. Empty clears a channel.</summary>
+internal sealed record EqRequest(string? Left, string? Right);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting

@@ -128,6 +128,10 @@ public sealed class DeviceStatusService : BackgroundService
                 MaxTargetMs = status.MaxTargetMs,
                 MaxDelayMs = status.MaxDelayMs,
                 MicGainDb = status.MicGainDb,
+                EqLeft = status.EqLeft,
+                EqRight = status.EqRight,
+                EqEnabled = status.EqEnabled,
+                EqPreampDb = status.EqPreampDb,
                 OtaSlot = status.Ota?.Slot,
                 OtaState = status.Ota?.State,
                 OtaOtherState = status.Ota?.OtherState,
@@ -185,6 +189,23 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("delayMs")]
         public int? DelayMs { get; init; }
+
+        /// <summary>
+        /// The room correction, as stored. Readable triples rather than
+        /// coefficients, so what the Hub shows is what is in NVS and can be
+        /// handed back for hand tuning.
+        /// </summary>
+        [JsonPropertyName("eqLeft")]
+        public string? EqLeft { get; init; }
+
+        [JsonPropertyName("eqRight")]
+        public string? EqRight { get; init; }
+
+        [JsonPropertyName("eqEnabled")]
+        public bool? EqEnabled { get; init; }
+
+        [JsonPropertyName("eqPreampDb")]
+        public double? EqPreampDb { get; init; }
 
         /// <summary>
         /// The ring as the node actually allocated it, in milliseconds, or

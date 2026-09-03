@@ -314,6 +314,34 @@ public sealed class DeviceCommandClient
             cancellationToken);
     }
 
+    /// <summary>
+    /// Writes one or both vectors as given, without touching the switch or
+    /// the headroom.
+    /// </summary>
+    /// <remarks>
+    /// The hand-tuning path. Only the sides actually named are sent:
+    /// echoing the other one back as it was last read would race a change
+    /// made elsewhere since.
+    /// </remarks>
+    public async Task<bool> SetEqVectorAsync(
+        DeviceRecord device, string? eqLeft, string? eqRight, CancellationToken cancellationToken)
+    {
+        var body = new Dictionary<string, object>();
+        if (eqLeft is not null)
+        {
+            body["eqLeft"] = eqLeft;
+        }
+        if (eqRight is not null)
+        {
+            body["eqRight"] = eqRight;
+        }
+
+        _logger.LogInformation(
+            "Writing eq on {Device}: {Body}", device.Name, JsonSerializer.Serialize(body));
+        return await PostAsync(
+            device, "/config", JsonSerializer.Serialize(body), cancellationToken);
+    }
+
     public async Task<bool> SetRingAsync(
         DeviceRecord device, int ringMs, CancellationToken cancellationToken)
     {

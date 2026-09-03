@@ -1060,6 +1060,33 @@ The second measurement is the evidence, and the switch is what makes it
 cheap to get: turn the correction off, measure, turn it on, measure, and
 compare on the same chart without ever losing the profile.
 
+### Seeing it, and changing it by hand
+
+Expand a speaker in the device table: **Room correction** shows whether it
+is on, the headroom, and both vectors in editable fields. Edit one and
+press Enter to write it.
+
+```
+POST /api/devices/<id>/eq  {"left": "104.0/3.78/-9.0 60/1.5/-3"}
+```
+
+That is the whole reason the stored form is readable triples rather than
+coefficients — a format nobody can edit is just a slower way of storing
+`b0..a2`. Only the side named is sent: echoing the other one back as it was
+last read would race a change made elsewhere in the two seconds since.
+
+The vector is validated by the *node*, not by the Hub. It is the node's
+fence, its clamps and its parser that decide what a vector is, and a second
+opinion on the Hub would be one more place for the two to disagree. What
+comes back in `/status` is the normalised form of what was typed, so
+`104/3.8/-9` is stored and shown as `104.0/3.80/-9.0`.
+
+The device table rebuilds every two seconds and pauses while one of these
+fields has focus, or an edit would be thrown away mid-keystroke.
+
+A node on firmware older than 0.46.0 says so rather than showing an empty
+box.
+
 ### Populating the vectors
 
 From measurements that already exist. Fitting reads the stored analysis, so
