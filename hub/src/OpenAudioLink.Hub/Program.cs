@@ -40,6 +40,7 @@ builder.Services.AddSingleton(sp => new FirmwareStore(
     dataDirectory, sp.GetRequiredService<ILoggerFactory>().CreateLogger<FirmwareStore>()));
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
 builder.Services.AddSingleton(new NodeAudioStore(dataDirectory));
+builder.Services.AddSingleton<RecordingService>();
 builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 /*
@@ -195,6 +196,21 @@ if (Directory.Exists(sampleLogDirectory))
         RequestPath = "/samples",
         ServeUnknownFileTypes = true,
         DefaultContentType = "text/csv",
+    });
+}
+
+var recordingDirectory = app.Services.GetRequiredService<RecordingService>().DirectoryPath;
+// Guarded for the same reason, and it is the same failure: a missing root
+// here would stop the Hub rather than disable a download.
+if (Directory.Exists(recordingDirectory))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+            recordingDirectory),
+        RequestPath = "/recordings",
+        ServeUnknownFileTypes = true,
+        DefaultContentType = "audio/wav",
     });
 }
 
@@ -603,6 +619,36 @@ app.MapPost("/api/devices/{id}/ring",
         ? Results.Ok(new { status = "stored", ringMs = ring, appliesAt = "reboot" })
         : Results.StatusCode(502);
 });
+
+/*
+ * Recording a node's capture to a file, which is what turns a measurement
+ * into something that can be looked at twice.
+ *
+ * The Hub does not carry audio and this is the deliberate exception
+ * (ARCHITECTURE.md section 3). A clap, a sweep or a click is worth nothing
+ * once it has finished playing, and until this existed the microphone
+ * could only ever be listened to. It reuses the producer's own destination
+ * machinery rather than inventing a path: the Hub names itself as a
+ * destination, which is the same call the link test makes.
+ */
+app.MapGet("/api/recording", (RecordingService recorder) =>
+    Results.Ok(recorder.State()));
+
+app.MapPost("/api/recording/start",
+    async (RecordRequest request, RecordingService recorder,
+           CancellationToken cancellationToken) =>
+{
+    var source = string.IsNullOrWhiteSpace(request.Source) ? "capture" : request.Source.Trim();
+    var error = await recorder.StartAsync(
+        request.Producer ?? "", source, request.ToneHz ?? 1000, cancellationToken);
+    return error is null
+        ? Results.Ok(recorder.State())
+        : Results.BadRequest(new { error });
+});
+
+app.MapPost("/api/recording/stop",
+    async (RecordingService recorder, CancellationToken cancellationToken) =>
+        Results.Ok(await recorder.StopAsync(cancellationToken)));
 
 /*
  * Capture gain, which only a microphone node needs.
@@ -1988,6 +2034,9 @@ internal sealed record RingRequest(int? RingMs);
 
 /// <summary>Whole decibels of capture gain for a microphone node.</summary>
 internal sealed record MicGainRequest(int? MicGainDb);
+
+/// <summary>Which producer to record, and what it should send.</summary>
+internal sealed record RecordRequest(string? Producer, string? Source, int? ToneHz);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting

@@ -310,6 +310,19 @@ and swap supplies between two nodes to find out.">Clock</th>
     <label>Port <input id="link-port" type="number" value="41100" min="1" max="65535"></label>
     <button id="link-start">Start link</button>
     <button id="link-stop">Stop &amp; reset counters</button>
+    <!--
+      Recording sends the same stream to the Hub instead of to a speaker,
+      and writes it to a file. It is the difference between hearing a
+      measurement and being able to look at one twice: a clap, a click or
+      a sweep is gone the moment it has finished playing.
+
+      Beside the link test because it is the same controls -- a producer
+      and a source -- pointed somewhere else. The consumer list is ignored;
+      the Hub is the destination.
+    -->
+    <button id="rec-start">● Record to a file</button>
+    <button id="rec-stop" hidden>■ Stop recording</button>
+    <span id="rec-state" class="muted"></span>
   </div>
   <table id="link-results" hidden>
     <thead>
@@ -3309,6 +3322,68 @@ and swap supplies between two nodes to find out.">Clock</th>
       refreshLinkResults();
     });
 
+    /*
+     * Recording state, polled while one is running so the operator can see
+     * the file growing -- and, more usefully, see the substituted-silence
+     * figure. A recording that had to invent 3 % of its length is not one
+     * to take a measurement from, and that is invisible in the file itself.
+     */
+    async function refreshRecording() {
+      let r;
+      try {
+        r = await (await fetch('/api/recording', { cache: 'no-store' })).json();
+      } catch { return; }
+      document.getElementById('rec-start').hidden = !!r.running;
+      document.getElementById('rec-stop').hidden = !r.running;
+      const el = document.getElementById('rec-state');
+      if (r.running) {
+        const lost = r.silenceFraction > 0
+          ? ` · ${(r.silenceFraction * 100).toFixed(2)}% invented` : '';
+        el.textContent = `recording ${r.file} — ${r.seconds.toFixed(1)} s${lost}`;
+        el.className = r.silenceFraction > 0.001 ? 'rssi fair' : 'muted';
+      } else if (r.file) {
+        const lost = (r.silenceFraction * 100).toFixed(2);
+        el.innerHTML = `<a href="/recordings/${esc(r.file)}">${esc(r.file)}</a>` +
+          ` · ${r.seconds.toFixed(1)} s · ${esc(lost)}% substituted silence` +
+          (r.note ? ` · ${esc(r.note)}` : '');
+        el.className = r.silenceFraction > 0.001 ? 'rssi fair' : 'muted';
+      } else {
+        el.textContent = '';
+      }
+    }
+
+    document.getElementById('rec-start').addEventListener('click', async () => {
+      const producer = document.getElementById('link-producer').value;
+      if (!producer) { say('Pick a producer node first.'); return; }
+      const response = await fetch('/api/recording/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          producer,
+          source: document.getElementById('link-source').value,
+          toneHz: Number(document.getElementById('link-tone').value) || 1000,
+        }),
+      });
+      if (response.ok) {
+        say('Recording. The stream goes to the Hub, not to a speaker.');
+      } else {
+        const error = await response.json().catch(() => ({}));
+        say(`Could not start recording: ${error.error ?? response.status}`);
+      }
+      await refreshRecording();
+    });
+
+    document.getElementById('rec-stop').addEventListener('click', async () => {
+      const response = await fetch('/api/recording/stop', { method: 'POST' });
+      if (response.ok) {
+        const r = await response.json().catch(() => ({}));
+        say(`Recorded ${r.seconds?.toFixed(1)} s to ${r.file}.`);
+      } else {
+        say('Could not stop the recording.');
+      }
+      await refreshRecording();
+    });
+
     document.getElementById('link-stop').addEventListener('click', async () => {
       // Every node, not just the producer: stopping also clears the
       // consumers' counters, which is how the next measurement begins.
@@ -3329,6 +3404,8 @@ and swap supplies between two nodes to find out.">Clock</th>
     refreshSamples();
     refreshCastPoints();
     refreshTone();
+    refreshRecording();
+    setInterval(refreshRecording, 2000);
     setInterval(refreshLinkResults, 2000);
     setInterval(refreshDevices, 2000);
     setInterval(refreshTone, 2000);
