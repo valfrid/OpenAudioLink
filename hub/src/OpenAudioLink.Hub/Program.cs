@@ -624,12 +624,18 @@ app.MapPost("/api/devices/{id}/mic-gain",
         return Results.NotFound();
     }
 
+    /*
+     * Sixty, matching OAL_BOOST_DB_MAX. The ceiling is the capsule's noise
+     * rather than the arithmetic: 65 dB SNR puts the ICS-43434's own hiss
+     * near -91 dBFS, so 60 dB of boost lifts it to -31 and more would buy
+     * noise rather than signal.
+     */
     var db = request.MicGainDb ?? -1;
-    if (db < 0 || db > 40)
+    if (db < 0 || db > 60)
     {
         return Results.BadRequest(new
         {
-            error = "micGainDb must be 0 to 40; it is whole decibels of gain on what "
+            error = "micGainDb must be 0 to 60; it is whole decibels of gain on what "
                   + "this node captures, and only a microphone needs any",
         });
     }

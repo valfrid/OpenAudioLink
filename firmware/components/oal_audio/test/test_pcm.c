@@ -488,6 +488,7 @@ static void test_the_boost_amplifies_by_decibels(void)
     CHECK(oal_pcm_boost_q16(6) > 199 * OAL_GAIN_UNITY / 100);
     CHECK_EQ(oal_pcm_boost_q16(20), 10 * OAL_GAIN_UNITY);
     CHECK_EQ(oal_pcm_boost_q16(40), 100 * OAL_GAIN_UNITY);
+    CHECK_EQ(oal_pcm_boost_q16(60), 1000 * OAL_GAIN_UNITY);
 
     /* Monotonic, and clamped rather than read off the end. */
     for (uint8_t db = 1; db <= OAL_BOOST_DB_MAX; db++) {

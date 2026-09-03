@@ -655,12 +655,23 @@ normally carries already arrive near full scale. The first microphone
 stream this project sent was perfectly audible and far too quiet with
 every speaker at 100 %.
 
-So firmware 0.44.0 adds `micGainDb`, 0–40 dB, applied at capture where
-there are still 24 bits of headroom under the signal. Start near **30 dB**
-for speech at conversational distance and watch the input meter peak well
-short of 0 dBFS; the boost saturates rather than wrapping, but clipping
-here cannot be undone downstream. Set it from the **Gain … dB…** button,
-which appears only on a node whose input stage is the microphone.
+So firmware 0.44.0 adds `micGainDb`, applied at capture where there are
+still 24 bits of headroom under the signal. Set it from the
+**Gain … dB…** button, which appears only on a node whose input stage is
+the microphone; the dialog reads the node's measured peak and suggests
+the number.
+
+**The range is 0–60 dB, and the ceiling is the capsule rather than the
+arithmetic.** 65 dB SNR puts the part's own noise near −91 dBFS, so 40 dB
+of boost lifts that to −51 and 60 dB lifts it to −31 — audible hiss, and
+the point past which more gain buys noise rather than signal. It was 40
+until a room measuring −63 dBFS showed that 40 reaches only −23, still
+quieter than program material.
+
+**Size it against the sound you want, not against the room.** A room at
+rest reads 20 dB or more below anything worth capturing, and a gain
+chosen there is far too much for the real thing. The boost saturates
+rather than wrapping, but clipping here cannot be undone downstream.
 
 **The level meter still reads one-sided, and that is correct.** It is
 measured in the capture task from what the converter delivers, before the

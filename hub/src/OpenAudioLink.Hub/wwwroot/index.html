@@ -2379,18 +2379,33 @@ and swap supplies between two nodes to find out.">Clock</th>
          */
         const peak = Number(button.dataset.peak);
         const headroom = 6;
-        const suggested = Number.isFinite(peak) && peak > -120
-          ? Math.max(0, Math.min(40, Math.round(-peak - headroom)))
-          : null;
+        const MAX_DB = 60;
+        const wanted = Number.isFinite(peak) && peak > -120
+          ? Math.round(-peak - headroom) : null;
+        const suggested = wanted === null ? null : Math.max(0, Math.min(MAX_DB, wanted));
+        /*
+         * When the ask exceeds the ceiling, say what the ceiling actually
+         * reaches rather than repeating the target it cannot hit. The first
+         * version claimed "40 dB would put it near -6" against a -63 dBFS
+         * room, where 40 dB reaches -23 -- the clamp happened and the
+         * sentence did not notice, which is a worse failure than no advice.
+         */
         const advice = suggested === null
           ? 'The meter reads silence, so there is nothing to size this against\n' +
             'yet. Make some sound at the microphone and open this again.\n'
+          : wanted > MAX_DB
+          ? `The meter peaks at ${Math.round(peak)} dBFS, which would need\n` +
+            `${wanted} dB to reach -${headroom}. The ceiling is ${MAX_DB}, and that\n` +
+            `reaches ${Math.round(peak + MAX_DB)} dBFS — still short.\n\n` +
+            'That usually means the meter caught a quiet moment rather than\n' +
+            'the sound you want. Play it, then open this again; a room at\n' +
+            'rest reads 20 dB below anything worth capturing.\n'
           : `The meter peaks at ${Math.round(peak)} dBFS right now, so about\n` +
             `${suggested} dB would put it near -${headroom} dBFS — loud, with room\n` +
             'left for something louder. Make the sound you actually care\n' +
             'about first; sizing this against a quiet room sets it too high.\n';
         const answer = prompt(
-          'Capture gain for this microphone, 0 to 40 dB.\n\n' +
+          'Capture gain for this microphone, 0 to 60 dB.\n\n' +
           advice + '\n' +
           'The ICS-43434 gives -26 dBFS at 94 dB SPL, so an ordinary room\n' +
           'lands near -45 dBFS — about 40 dB below music mastered to the\n' +
@@ -2398,13 +2413,15 @@ and swap supplies between two nodes to find out.">Clock</th>
           'its volume control only ever attenuates.\n\n' +
           'The meter reads the capsule before this gain, so it will not\n' +
           'move when you change this. Judge the result by listening.\n' +
+          'Past about 40 dB the capsule\'s own hiss becomes audible: its\n' +
+          '65 dB SNR puts that near -91 dBFS, so 60 dB lifts it to -31.\n' +
           'Too much clips, and clipping here cannot be undone later.\n\n' +
           'Applies at the node\'s next reboot.',
           suggested === null ? current : String(suggested));
         if (answer === null) return;
         const micGainDb = Number(answer.trim());
-        if (!Number.isInteger(micGainDb) || micGainDb < 0 || micGainDb > 40) {
-          say('Give a whole number of decibels from 0 to 40.');
+        if (!Number.isInteger(micGainDb) || micGainDb < 0 || micGainDb > 60) {
+          say('Give a whole number of decibels from 0 to 60.');
           return;
         }
         const response = await fetch(`/api/devices/${encodeURIComponent(id)}/mic-gain`, {

@@ -126,8 +126,17 @@ int32_t oal_pcm_gain_q16(uint8_t percent);
  */
 void oal_pcm_apply_gain(int32_t *samples, size_t count, int32_t gain_q16);
 
-/** The largest boost a microphone may be given, in whole decibels. */
-#define OAL_BOOST_DB_MAX 40
+/**
+ * The largest boost a microphone may be given, in whole decibels.
+ *
+ * Sixty, and the ceiling is set by the capsule rather than by the
+ * arithmetic. The ICS-43434's 65 dB SNR puts its own noise near
+ * -91 dBFS, so 40 dB of boost lifts that to -51 and 60 dB lifts it to
+ * -31 — audible hiss, and the point past which more gain buys noise
+ * rather than signal. It was 40 until a room measured at -63 dBFS showed
+ * that 40 reaches only -23, which is still quieter than program material.
+ */
+#define OAL_BOOST_DB_MAX 60
 
 /**
  * Q16 multiplier for a whole-decibel boost, 0 to
