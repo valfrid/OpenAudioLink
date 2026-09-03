@@ -34,6 +34,23 @@ public class SweepSignalTests
     }
 
     /// <summary>
+    /// How long somebody has to stand still for. Two cycles more than
+    /// asked for, and both are spent: the recording starts at an arbitrary
+    /// point in the cycle, so the first aligned cycle may not begin until
+    /// one cycle in, and the analyser then discards the one after it.
+    /// </summary>
+    [Theory]
+    [InlineData(6, 80)]
+    [InlineData(4, 60)]
+    [InlineData(12, 140)]
+    [InlineData(1, 60)]     // below the floor, which is four sweeps
+    [InlineData(0, 60)]
+    public void The_time_to_average_a_number_of_sweeps_is_known_in_advance(int cycles, double seconds)
+    {
+        Assert.Equal(seconds, Default.TimeToAverage(cycles).TotalSeconds, 6);
+    }
+
+    /// <summary>
     /// A negative index is not an error case here: the analyser addresses
     /// the signal relative to a peak it found, and that arithmetic goes
     /// backwards past zero as a matter of course.

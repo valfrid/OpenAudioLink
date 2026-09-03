@@ -113,6 +113,27 @@ public sealed record SweepSignal
 
     public TimeSpan CycleDuration => TimeSpan.FromSeconds((double)CycleFrames / SampleRate);
 
+    /// <summary>
+    /// Fewer sweeps than this and there is nothing to average, and the
+    /// alignment gets one look at the silent gap instead of several.
+    /// </summary>
+    public const int MinimumCycles = 4;
+
+    /// <summary>
+    /// How long to record so that <paramref name="cycles"/> whole sweeps
+    /// survive to be averaged.
+    /// </summary>
+    /// <remarks>
+    /// Two more than asked for, and both are spent rather than wasted. The
+    /// recording begins at an arbitrary point in the cycle, so the first
+    /// whole cycle at the aligned phase does not start until up to one
+    /// cycle in; and the analyser then discards the one after it, because
+    /// the receiver is still filling its buffer and the sweep in it may
+    /// have been half sent before the socket opened.
+    /// </remarks>
+    public TimeSpan TimeToAverage(int cycles) => TimeSpan.FromSeconds(
+        (double)CycleFrames * (Math.Max(MinimumCycles, cycles) + 2) / SampleRate);
+
     private int Frames(double seconds) => (int)Math.Round(seconds * SampleRate);
 
     /// <summary>

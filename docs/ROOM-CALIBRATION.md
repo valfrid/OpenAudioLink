@@ -635,18 +635,47 @@ room do to it".
 
 ## How a measurement is taken
 
-1. Put the microphone node at the listening position. Check its level in
-   the gain dialog first: the sweep should peak somewhere around −20 dBFS,
-   which is loud enough to be well clear of the room and far enough from
-   full scale not to clip on a bass mode.
-2. Start the sweep to the speaker under test, on its channel.
-3. Record the microphone node to a file. Give it at least four cycles —
-   40 seconds — so there is something to average.
-4. Stop both.
+Put the microphone node at the listening position — where you listen, not
+beside the speaker. Check its level in the gain dialog first: the sweep
+should peak somewhere around −20 dBFS, loud enough to be well clear of the
+room and far enough from full scale not to clip on a bass mode. Then, in
+**Room measurement**, pick the speaker, its channel and the microphone, and
+press Measure.
 
-Order matters only in that the recording has to overlap whole cycles; the
-analyser finds the cycle boundary itself and discards the partial ones at
-each end.
+That is one action because the sequence behind it is where the mistakes
+were, and every one of them has happened here:
+
+- the recorder left on the pattern source, so the file holds the synthetic
+  test pattern and not a room;
+- the sweep sent to both speakers, so the curve describes their
+  interference at the microphone rather than either speaker;
+- the microphone node still set to capture from `line`, so the file is the
+  ADC's silence;
+- stopped before enough whole cycles had passed to average.
+
+So the Hub does it: sweep first, microphone recording second — milliseconds
+apart, so what is recorded is steady state — then both stopped after the
+sweeps asked for, then the analysis. The two panels above still work on
+their own and are still the right tools for anything that is not this.
+
+**The microphone streams to the Hub alone.** This is the one measurement
+where the speakers must not also be in its destination list: they are
+already playing the sweep, and adding the microphone to them puts a
+microphone and a loudspeaker in one room with a loop between them. (The
+clap test wanted the opposite, which is why the recorder's own panel still
+offers it.)
+
+Six sweeps takes eighty seconds. Two more cycles are recorded than are
+averaged: the recording starts at an arbitrary point in a cycle, so the
+first aligned one may not begin until a cycle in, and the analyser then
+discards the one after it while the receiver is still filling its buffer.
+
+```
+POST /api/measurement/start  { "speaker": "...", "channel": "left",
+                               "microphone": "...", "cycles": 6 }
+GET  /api/measurement
+POST /api/measurement/stop
+```
 
 ## The analyser
 

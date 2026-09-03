@@ -41,6 +41,7 @@ builder.Services.AddSingleton(sp => new FirmwareStore(
 builder.Services.AddSingleton(new CastPointStore(dataDirectory));
 builder.Services.AddSingleton(new NodeAudioStore(dataDirectory));
 builder.Services.AddSingleton<RecordingService>();
+builder.Services.AddSingleton<RoomMeasurementService>();
 builder.Services.AddSingleton(new StationStore(dataDirectory));
 builder.Services.AddSingleton<RtpStreamer>();
 /*
@@ -650,6 +651,35 @@ app.MapPost("/api/recording/start",
 app.MapPost("/api/recording/stop",
     async (RecordingService recorder, CancellationToken cancellationToken) =>
         Results.Ok(await recorder.StopAsync(cancellationToken)));
+
+/*
+ * A room measurement as one action (docs/ROOM-CALIBRATION.md).
+ *
+ * The sweep, the recorder and the analyser each work on their own and are
+ * still reachable on their own. This is the sequence between them, which is
+ * where the mistakes were: wrong source on the recorder, sweep to both
+ * speakers, microphone still set to line in, stopped before a whole cycle
+ * had passed. Written down once here rather than in a procedure somebody
+ * has to remember.
+ */
+app.MapGet("/api/measurement", (RoomMeasurementService measurement) =>
+    Results.Ok(measurement.State()));
+
+app.MapPost("/api/measurement/start",
+    async (MeasureRequest request, RoomMeasurementService measurement,
+           CancellationToken cancellationToken) =>
+{
+    var error = await measurement.StartAsync(
+        request.Speaker ?? "", request.Channel ?? AudioChannel.Left,
+        request.Microphone ?? "", request.Cycles ?? 6, cancellationToken);
+    return error is null
+        ? Results.Ok(measurement.State())
+        : Results.BadRequest(new { error });
+});
+
+app.MapPost("/api/measurement/stop",
+    async (RoomMeasurementService measurement, CancellationToken cancellationToken) =>
+        Results.Ok(await measurement.StopAsync(cancellationToken)));
 
 app.MapGet("/api/recordings", (RecordingService recorder) =>
 {
@@ -2212,6 +2242,15 @@ internal sealed record MicGainRequest(int? MicGainDb);
 /// </summary>
 internal sealed record RecordRequest(
     string? Producer, string? Source, int? ToneHz, string[]? To);
+
+/// <summary>
+/// One room measurement: which speaker plays the sweep, on which channel,
+/// which node listens, and for how many sweeps. Cycles rather than seconds
+/// because a partial sweep is recorded and then discarded — asking for one
+/// only makes the wait longer.
+/// </summary>
+internal sealed record MeasureRequest(
+    string? Speaker, string? Channel, string? Microphone, int? Cycles);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting
