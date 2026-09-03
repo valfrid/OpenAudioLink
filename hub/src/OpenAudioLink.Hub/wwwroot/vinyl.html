@@ -16,10 +16,10 @@
   mental model, the split has bought nothing.
 
   The producer here is the node with something wired into its capture
-  stage: a record player on an ADC, or a MEMS microphone. Both arrive the
-  same way and this page does not care which,
-  not the Hub. Nothing else changes: still a cast point, still a volume,
-  still one Play.
+  stage — a record player on an ADC, or a MEMS microphone — rather than
+  the Hub. Both arrive the same way and this page does not care which.
+  Nothing else changes: still a cast point, still a volume, still one
+  Play.
 -->
 <div class="app">
   <header>
@@ -108,10 +108,11 @@
   /*
    * What the input is hearing, in a sentence rather than in decibels.
    *
-   * The question this answers is "is the turntable plugged in and running",
-   * asked by somebody standing at the turntable. -120 dBFS is the firmware's
-   * digital silence, so both channels there means nothing is arriving at
-   * all — which is a different fault from one channel silent.
+   * The question this answers is "is it plugged in and running", asked by
+   * somebody standing at the turntable or the microphone. -120 dBFS is the
+   * firmware's digital silence, so both channels there means nothing is
+   * arriving at all — which is a different fault from one channel silent,
+   * and on a microphone one channel silent is not a fault at all.
    */
   function describeLevel(device) {
     const input = device?.status?.input;
