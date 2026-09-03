@@ -147,11 +147,27 @@ bool oal_eq_chain_active(const oal_eq_chain_t *chain);
  * @param samples first sample of this channel
  * @param frames  frames, not samples
  * @param stride  samples between one frame and the next: 2 for stereo
+ * @param gain    the correction's headroom, as a linear factor at or below
+ *                one. See below — this is not a convenience.
  *
  * Full-scale int32, as the playout carries it. Saturates rather than
  * wrapping: a correction that overflows should sound loud, not inverted.
+ *
+ * **The headroom is applied here, inside, and that is the whole point of
+ * passing it in.** A filter that boosts a band pushes material already
+ * mastered near full scale past it, and the sample is clipped at the
+ * moment it is written back as an int32. Attenuating afterwards scales a
+ * value that has already lost its peaks — the headroom would be paid for
+ * in loudness and buy nothing. Applied before the write it prevents the
+ * clip, which is what it exists to do.
+ *
+ * Placing it at the output rather than the input is exactly equivalent: a
+ * biquad is linear, so scaling before and scaling after differ only in the
+ * size of the intermediate values, and those are floats with room to
+ * spare.
  */
-void oal_eq_chain_run(oal_eq_chain_t *chain, int32_t *samples, size_t frames, size_t stride);
+void oal_eq_chain_run(
+    oal_eq_chain_t *chain, int32_t *samples, size_t frames, size_t stride, float gain);
 
 #ifdef __cplusplus
 }

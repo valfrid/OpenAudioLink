@@ -916,10 +916,45 @@ one.
 
 ### Headroom
 
-Every boost is paid for with a preamp attenuation, because the ring holds
-full-scale audio and volume only attenuates — a band boosted on material
-already near full scale overflows, and it presents as distortion on loud
-passages only, which is the worst way to find out.
+**Definition.** Take the combined magnitude response of every filter in a
+channel's vector, evaluate it at each measured frequency, and find its
+largest positive value. The headroom is that, negated, rounded to the next
+half decibel:
+
+```
+worst   = max over f of ( sum over filters of filter.MagnitudeDb(f) )
+headroom = -ceil(worst * 2) / 2          ... always <= 0
+```
+
+So a vector with no boost gets 0 dB, and the number shown in a speaker's
+panel is the amount of output given up to make room for whatever the
+correction lifts.
+
+**Why.** The ring holds full-scale audio and the volume stage only
+attenuates, so a band boosted on material already mastered near full scale
+goes over the top — and it presents as distortion on loud passages only,
+which is the worst way to find out.
+
+**Where it is applied is not a detail.** It goes inside the filter, on the
+way out, before the sample is written back as an int32. That write is where
+the clip happens. Attenuating after it scales a value whose peaks are
+already gone: the headroom would be paid for in loudness and buy nothing.
+The first version of this folded it into the volume multiply after the
+filter, which was one multiply cheaper and did exactly that. A +12 dB boost
+with 12 dB of headroom should come back at the level it went in; it came
+back 9.3 dB light, and `test_eq.c` now measures that rather than looking
+for samples sitting at the rail — which does *not* distinguish the two,
+because the broken ordering scales the clipped values back down.
+
+Placing it at the filter's output rather than its input is exactly
+equivalent, a biquad being linear; only the size of the intermediate values
+differs, and those are floats with room to spare.
+
+**It applies only when the correction does.** It was unconditional at
+first, so turning the correction off left the speaker quieter by the
+headroom — which would have made every A/B comparison a level difference
+rather than a tonal one, and the switch exists precisely so that comparison
+is honest.
 
 The attenuation covers **the worst the filters do together at any one
 frequency**, not the sum of their gains. The sum is a bound and a bad one:

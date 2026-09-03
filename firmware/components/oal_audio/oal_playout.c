@@ -214,7 +214,7 @@ static volatile int32_t s_gain_q16 = OAL_GAIN_UNITY;
  */
 static oal_eq_chain_t s_eq[OAL_RTP_CHANNELS];
 static bool s_eq_enabled;
-static int32_t s_eq_preamp_q16 = OAL_GAIN_UNITY;
+static float s_eq_preamp = 1.0f;
 
 /*
  * What has been asked for but not yet picked up.
@@ -552,21 +552,6 @@ esp_err_t oal_playout_set_target_ms(uint32_t target_ms)
     return ESP_OK;
 }
 
-/*
- * Volume and the correction's headroom, as one multiply.
- *
- * Both are Q16 gains, so composing them is a multiply and a shift. Doing it
- * here rather than as two passes over the chunk keeps the arithmetic in one
- * place and the audio in one pass.
- */
-static int32_t effective_gain(void)
-{
-    if (s_eq_preamp_q16 >= OAL_GAIN_UNITY) {
-        return s_gain_q16;
-    }
-    return (int32_t)(((int64_t)s_gain_q16 * s_eq_preamp_q16) >> 16);
-}
-
 /**
  * Adopts a staged correction between chunks.
  *
@@ -584,9 +569,7 @@ static void adopt_eq(void)
     }
 
     int16_t tenths = s_eq_staged_preamp_tenths;
-    s_eq_preamp_q16 = tenths >= 0
-        ? OAL_GAIN_UNITY
-        : (int32_t)((float)OAL_GAIN_UNITY * powf(10.0f, (float)tenths / 200.0f));
+    s_eq_preamp = tenths >= 0 ? 1.0f : powf(10.0f, (float)tenths / 200.0f);
 
     /* Enabled only if there is something to run. A switch turned on over an
      * empty vector would cost a branch per chunk and change nothing. */
@@ -1306,27 +1289,34 @@ static void playout_task(void *arg)
          * control cannot slowly grind the resolution away.
          */
         /*
-         * Room correction ahead of the volume, and the order matters. The
-         * correction's preamp is headroom against its own boosts, so it has
-         * to be applied to full-scale audio before anything else scales it;
-         * putting the filters after the volume would mean their headroom
-         * depended on how loud somebody had the speaker.
+         * Room correction ahead of the volume, and both halves of that
+         * matter.
          *
-         * The preamp is folded into the volume gain rather than applied
-         * separately -- one multiply either way, and the ring keeps holding
-         * full-scale audio so turning down and back up still returns the
-         * original samples.
+         * The headroom goes INSIDE the filter, not into the volume gain
+         * after it. A boosting band pushes material already near full scale
+         * past it, and the clip happens the moment the sample is written
+         * back as an int32; attenuating afterwards scales a value whose
+         * peaks are already gone. The first version of this folded the
+         * preamp into the volume multiply, which was one multiply cheaper
+         * and bought exactly nothing.
+         *
+         * And the headroom applies only when the correction does. It was
+         * unconditional, so turning the correction off left the speaker
+         * quieter by the preamp -- which would have made every comparison a
+         * level difference rather than a tonal one, and the switch exists
+         * precisely so that comparison is honest.
          */
         if (s_eq_pending) {
             adopt_eq();
         }
         if (s_eq_enabled) {
             for (unsigned ch = 0; ch < OAL_RTP_CHANNELS; ch++) {
-                oal_eq_chain_run(&s_eq[ch], chunk + ch, CHUNK_FRAMES, OAL_RTP_CHANNELS);
+                oal_eq_chain_run(&s_eq[ch], chunk + ch, CHUNK_FRAMES, OAL_RTP_CHANNELS,
+                                 s_eq_preamp);
             }
         }
 
-        oal_pcm_apply_gain(chunk, CHUNK_SAMPLES, effective_gain());
+        oal_pcm_apply_gain(chunk, CHUNK_SAMPLES, s_gain_q16);
 
         /*
          * Write the whole chunk, not as much of it as the driver felt

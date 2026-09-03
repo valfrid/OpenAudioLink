@@ -181,10 +181,16 @@ bool oal_eq_chain_active(const oal_eq_chain_t *chain)
     return chain != NULL && chain->count > 0;
 }
 
-void oal_eq_chain_run(oal_eq_chain_t *chain, int32_t *samples, size_t frames, size_t stride)
+void oal_eq_chain_run(
+    oal_eq_chain_t *chain, int32_t *samples, size_t frames, size_t stride, float gain)
 {
     if (chain == NULL || samples == NULL || chain->count == 0 || stride == 0) {
         return;
+    }
+    /* Attenuation only. A gain above one here is not headroom, and there is
+     * a volume control for the other direction. */
+    if (!(gain > 0.0f) || gain > 1.0f) {
+        gain = 1.0f;
     }
 
     for (size_t frame = 0; frame < frames; frame++) {
@@ -212,6 +218,15 @@ void oal_eq_chain_run(oal_eq_chain_t *chain, int32_t *samples, size_t frames, si
             s->z2 = s->b2 * x - s->a2 * y;
             x = y;
         }
+
+        /*
+         * The headroom, applied before the value becomes an int32.
+         *
+         * After the write it would be scaling a sample whose peaks have
+         * already been clipped off, which is the whole failure it exists to
+         * prevent -- paid for in loudness, buying nothing.
+         */
+        x *= gain;
 
         /* Saturate. A correction that overflows should sound loud rather
          * than inverted, which is what wrapping sounds like. */

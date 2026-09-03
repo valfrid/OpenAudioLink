@@ -160,6 +160,27 @@ static double reference(double hz, double q, double gain_db, double at)
     return 10.0 * log10(num / den);
 }
 
+/** What the chain does to a sine at a given headroom, in dB. */
+static double measured_at_gain(oal_eq_chain_t *chain, double hz, float gain)
+{
+    oal_eq_chain_reset(chain);
+
+    const size_t settle = RATE * 2;
+    const size_t count = RATE * 2;
+    double energy = 0;
+
+    for (size_t n = 0; n < settle + count; n++) {
+        double value = sin(2.0 * PI * hz * (double)n / RATE) * 100000000.0;
+        int32_t sample = (int32_t)value;
+        oal_eq_chain_run(chain, &sample, 1, 1, gain);
+        if (n >= settle) {
+            energy += (double)sample * (double)sample;
+        }
+    }
+    double amplitude = sqrt(2.0 * energy / (double)count);
+    return 20.0 * log10(amplitude / 100000000.0);
+}
+
 /** What the chain actually does to a sine, in dB. */
 static double measured(oal_eq_chain_t *chain, double hz)
 {
@@ -174,7 +195,7 @@ static double measured(oal_eq_chain_t *chain, double hz)
     for (size_t n = 0; n < settle + count; n++) {
         double value = sin(2.0 * PI * hz * (double)n / RATE) * 100000000.0;
         int32_t sample = (int32_t)value;
-        oal_eq_chain_run(chain, &sample, 1, 1);
+        oal_eq_chain_run(chain, &sample, 1, 1, 1.0f);
         if (n >= settle) {
             energy += (double)sample * (double)sample;
         }
@@ -271,7 +292,7 @@ static void test_an_empty_chain_leaves_the_audio_alone(void)
 
     int32_t samples[4] = { 1000, -2000, 3000, -4000 };
     int32_t before[4] = { 1000, -2000, 3000, -4000 };
-    oal_eq_chain_run(&chain, samples, 4, 1);
+    oal_eq_chain_run(&chain, samples, 4, 1, 1.0f);
     check(memcmp(samples, before, sizeof(samples)) == 0, "and it did nothing");
 }
 
@@ -285,7 +306,7 @@ static void test_it_touches_only_its_own_channel(void)
     oal_eq_chain_build(&chain, &curve, RATE);
 
     int32_t frames[8] = { 1000000, 7, 1000000, 7, 1000000, 7, 1000000, 7 };
-    oal_eq_chain_run(&chain, frames, 4, 2);
+    oal_eq_chain_run(&chain, frames, 4, 2, 1.0f);
 
     for (size_t i = 0; i < 4; i++) {
         check(frames[i * 2 + 1] == 7, "the other channel is untouched");
@@ -310,14 +331,14 @@ static void test_state_can_be_forgotten(void)
     for (size_t i = 0; i < 64; i++) {
         loud[i] = 100000000;
     }
-    oal_eq_chain_run(&chain, loud, 64, 1);
+    oal_eq_chain_run(&chain, loud, 64, 1, 1.0f);
     check(chain.sections[0].z1 != 0.0f, "the filter is ringing");
 
     oal_eq_chain_reset(&chain);
     check(chain.sections[0].z1 == 0.0f && chain.sections[0].z2 == 0.0f, "and now it is not");
 
     int32_t quiet = 0;
-    oal_eq_chain_run(&chain, &quiet, 1, 1);
+    oal_eq_chain_run(&chain, &quiet, 1, 1, 1.0f);
     check(quiet == 0, "silence in, silence out");
 }
 
@@ -333,11 +354,83 @@ static void test_it_saturates_rather_than_wrapping(void)
     for (size_t n = 0; n < 4000; n++) {
         int32_t sample = (int32_t)(sin(2.0 * PI * 100.0 * (double)n / RATE) * 2100000000.0);
         int32_t was = sample;
-        oal_eq_chain_run(&chain, &sample, 1, 1);
+        oal_eq_chain_run(&chain, &sample, 1, 1, 1.0f);
         if (was > 1500000000) {
             check(sample > 0, "a loud positive sample never came back negative");
         }
     }
+}
+
+/*
+ * The headroom, and the reason it is passed into the filter rather than
+ * applied after it.
+ *
+ * A boosting band pushes material already near full scale past it, and the
+ * clip happens the moment the sample is written back as an int32.
+ * Attenuating afterwards scales a value whose peaks are already gone: the
+ * headroom is paid for in loudness and buys nothing. The first version of
+ * the playout folded it into the volume multiply after the filter, which is
+ * exactly that mistake.
+ */
+static void test_headroom_prevents_the_clip_rather_than_following_it(void)
+{
+    /*
+     * +12 dB at 200 Hz with 12 dB of headroom is a net of nothing: a
+     * full-scale 200 Hz input must come back out at full scale.
+     *
+     * That is the whole assertion, and it is the one that distinguishes the
+     * two orderings. Applied inside, the boost never reaches the rail and
+     * the output matches the input. Applied afterwards, the filter's output
+     * is clipped at the rail first and the attenuation then scales what
+     * survives -- which comes back about 12 dB light.
+     *
+     * Checking for samples sitting at INT32_MAX does NOT distinguish them,
+     * and the first version of this test made exactly that mistake: in the
+     * broken ordering the clipped values are scaled down afterwards, so
+     * nothing is at the rail by the time anybody looks.
+     */
+    oal_eq_curve_t curve = { .count = 1 };
+    curve.bands[0] = (oal_eq_band_t){ 200.0f, 1.0f, 12.0f };
+
+    oal_eq_chain_t chain;
+    oal_eq_chain_build(&chain, &curve, RATE);
+    oal_eq_chain_reset(&chain);
+
+    const double amplitude = 2100000000.0;   /* -0.2 dBFS, as loud as music gets */
+    const float headroom = 0.25119f;         /* -12 dB */
+    double energy = 0;
+    size_t counted = 0;
+
+    for (size_t n = 0; n < 12000; n++) {
+        double value = sin(2.0 * PI * 200.0 * (double)n / RATE) * amplitude;
+        int32_t sample = (int32_t)value;
+        oal_eq_chain_run(&chain, &sample, 1, 1, headroom);
+        if (n >= 4000) {                     /* past the filter's settling */
+            energy += (double)sample * (double)sample;
+            counted++;
+        }
+    }
+
+    double out = sqrt(2.0 * energy / (double)counted);
+    check_close(20.0 * log10(out / amplitude), 0.0, 0.3,
+                "a boost cancelled by its own headroom comes back at the level it went in");
+}
+
+static void test_headroom_scales_what_comes_out(void)
+{
+    oal_eq_curve_t curve = { .count = 1 };
+    curve.bands[0] = (oal_eq_band_t){ 1000.0f, 1.0f, -6.0f };
+
+    oal_eq_chain_t chain;
+    oal_eq_chain_build(&chain, &curve, RATE);
+
+    /* Half amplitude is 6 dB down, on top of the filter's own 6. */
+    check_close(measured_at_gain(&chain, 1000.0, 0.5f), -12.0, 0.2, "gain of a half is -6 dB");
+
+    /* A gain above one is not headroom and is ignored: there is a volume
+     * control for the other direction. */
+    check_close(measured_at_gain(&chain, 1000.0, 4.0f), -6.0, 0.2, "a gain above one is refused");
+    check_close(measured_at_gain(&chain, 1000.0, 0.0f), -6.0, 0.2, "and so is a gain of nothing");
 }
 
 int main(void)
@@ -358,6 +451,8 @@ int main(void)
     test_it_touches_only_its_own_channel();
     test_state_can_be_forgotten();
     test_it_saturates_rather_than_wrapping();
+    test_headroom_prevents_the_clip_rather_than_following_it();
+    test_headroom_scales_what_comes_out();
 
     if (failures != 0) {
         printf("%d check(s) failed\n", failures);
