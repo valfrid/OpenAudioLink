@@ -58,6 +58,50 @@
     .hint { color: var(--muted); font-size: 0.85rem; margin: 0.25rem 0; }
     input[type="number"] { font: inherit; font-size: 0.85rem; width: 5.5rem; }
     #message { color: var(--muted); font-size: 0.85rem; min-height: 1.2rem; }
+
+    /*
+     * Four curves' worth of colour, validated for colour-vision deficiency
+     * against both surfaces rather than chosen by eye. The dark column is
+     * the same four hues stepped for the dark background, not an automatic
+     * flip of the light one.
+     *
+     * On the light surface two of them fall below 3:1 against the page, so
+     * colour is never the only thing carrying identity: every curve is in
+     * the legend, named in the hover readout, and present in the
+     * third-octave table under the chart.
+     */
+    :root {
+      --series-1: #2a78d6;
+      --series-2: #eb6834;
+      --series-3: #1baf7a;
+      --series-4: #eda100;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --series-3: #199e70;
+        --series-4: #c98500;
+      }
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0.25rem 0 0.5rem;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .legend i {
+      width: 0.85rem;
+      height: 0.2rem;
+      border-radius: 0.1rem;
+      background: currentColor;
+    }
+    #rr-plot svg { touch-action: none; }
+    #rr-table table { font-variant-numeric: tabular-nums; }
+    #rr-measurements input[type="text"] { font: inherit; font-size: 0.85rem; width: 9rem; }
     .fw-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0 1rem; }
     code { font-size: 0.85em; }
     .muted { color: var(--muted); }
@@ -438,7 +482,31 @@ and swap supplies between two nodes to find out.">Clock</th>
     Measure. It runs the sweep, records, stops both and draws the curve.
   </p>
   <div id="rr-plot" hidden></div>
+  <div id="rr-legend" class="legend" hidden></div>
   <p id="rr-summary" class="hint"></p>
+
+  <p class="hint">
+    Tick the measurements to draw. Two on one chart is the whole reason
+    they are kept: left against right says which speaker, before against
+    after says whether a correction worked, and the same speaker with the
+    microphone moved says whether a peak belongs to the room or to where
+    you were sitting. Name them so they can be told apart later.
+  </p>
+  <table id="rr-measurements" hidden>
+    <thead>
+      <tr>
+        <th>Draw</th><th>Measured</th><th>Speaker</th><th>Channel</th>
+        <th>Name</th><th>Sweeps</th><th>Above the room</th><th>Peak</th><th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <p id="rr-measurements-empty" class="empty">No measurements yet.</p>
+  <details id="rr-table-view">
+    <summary class="hint">The numbers, at third-octave centres</summary>
+    <div id="rr-table"></div>
+  </details>
+
   <details>
     <summary class="hint">Analyse a recording already made</summary>
     <div class="fw-bar">
@@ -3542,35 +3610,68 @@ and swap supplies between two nodes to find out.">Clock</th>
     // --- room measurement -------------------------------------------
 
     /*
-     * The curve, drawn rather than tabulated.
+     * The curves, drawn rather than tabulated.
      *
      * Two hundred numbers in a table is not a frequency response to
      * anybody. A mode at 60 Hz is obvious in a picture and invisible in a
      * list, and the whole reason to measure a room is to look at its shape.
+     *
+     * Several at once, because one curve says what a room does and two say
+     * what CHANGED — which speaker, which position, whether a correction
+     * worked. That comparison cannot be made from a single reading, and
+     * flipping between two pictures is not the same as laying them over
+     * each other.
      *
      * Logarithmic in both directions, because hearing is: an octave is an
      * octave wherever it sits, and a decibel is a decibel. A linear
      * frequency axis would give the top octave half the width and squeeze
      * everything this measurement is for into the first inch.
      */
-    function plotResponse(response) {
-      const points = response.points ?? [];
+
+    // Four slots, in a fixed order, checked for colour-vision deficiency
+    // against both the light and the dark page rather than picked by eye.
+    // Never cycled: a fifth curve is not a generated colour, it is a
+    // reason to untick one.
+    const SERIES_COLOURS = ['var(--series-1)', 'var(--series-2)',
+                            'var(--series-3)', 'var(--series-4)'];
+    const PLOT = { w: 720, h: 320, left: 46, right: 14, top: 14, bottom: 30 };
+
+    // What is currently drawn, so the hover readout and the table can name
+    // the same things the picture shows.
+    let drawn = [];
+
+    // What the summary line says when the pointer is not on the chart.
+    // Held rather than read back off the element: the hover layer is
+    // attached while drawing, before the summary for the new selection has
+    // been written, so reading it there restores the previous one.
+    let settledSummary = '';
+
+    function plotResponses(series) {
       const box = document.getElementById('rr-plot');
-      if (!points.length) {
+      const legend = document.getElementById('rr-legend');
+      drawn = series.filter(s => (s.points ?? []).length);
+
+      if (!drawn.length) {
         box.hidden = true;
+        legend.hidden = true;
+        renderResponseTable();
         return;
       }
 
-      const w = 720, h = 300, left = 44, right = 12, top = 12, bottom = 28;
+      const { w, h, left, right, top, bottom } = PLOT;
       const plotW = w - left - right, plotH = h - top - bottom;
 
-      const lowHz = points[0].hz, highHz = points[points.length - 1].hz;
+      const lowHz = Math.min(...drawn.map(s => s.points[0].hz));
+      const highHz = Math.max(...drawn.map(s => s.points[s.points.length - 1].hz));
       const span = Math.log(highHz / lowHz);
       const x = hz => left + plotW * Math.log(hz / lowHz) / span;
 
-      // The scale grows to hold the data but never shrinks below +-12 dB,
-      // so a flat room looks flat instead of being magnified into drama.
-      const values = points.map(p => p.db).filter(v => v !== null && isFinite(v));
+      // One scale for every curve, grown to hold the widest of them but
+      // never below +-12 dB — a flat room should look flat rather than be
+      // magnified into drama, and two curves on different scales would be
+      // a comparison of nothing.
+      const values = drawn.flatMap(s => s.points.map(p => p.db))
+        .filter(v => v !== null && isFinite(v));
       const reach = Math.max(12, Math.ceil(Math.max(...values.map(Math.abs)) / 6) * 6);
       const y = db => top + plotH * (reach - db) / (2 * reach);
 
@@ -3578,8 +3679,8 @@ and swap supplies between two nodes to find out.">Clock</th>
       for (const hz of [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]) {
         if (hz < lowHz || hz > highHz) continue;
         parts.push(`<line x1="${x(hz).toFixed(1)}" y1="${top}" x2="${x(hz).toFixed(1)}" `
-          + `y2="${top + plotH}" stroke="currentColor" stroke-opacity="0.15"/>`);
-        parts.push(`<text x="${x(hz).toFixed(1)}" y="${h - 8}" font-size="11" `
+          + `y2="${top + plotH}" stroke="currentColor" stroke-opacity="0.12"/>`);
+        parts.push(`<text x="${x(hz).toFixed(1)}" y="${h - 9}" font-size="11" `
           + `text-anchor="middle" fill="var(--muted)">`
           + `${hz >= 1000 ? (hz / 1000) + 'k' : hz}</text>`);
       }
@@ -3587,21 +3688,127 @@ and swap supplies between two nodes to find out.">Clock</th>
         const zero = db === 0;
         parts.push(`<line x1="${left}" y1="${y(db).toFixed(1)}" x2="${left + plotW}" `
           + `y2="${y(db).toFixed(1)}" stroke="currentColor" `
-          + `stroke-opacity="${zero ? 0.45 : 0.15}"/>`);
+          + `stroke-opacity="${zero ? 0.4 : 0.12}"/>`);
         parts.push(`<text x="${left - 6}" y="${(y(db) + 4).toFixed(1)}" font-size="11" `
           + `text-anchor="end" fill="var(--muted)">${db > 0 ? '+' : ''}${db}</text>`);
       }
 
-      const line = points
-        .filter(p => p.db !== null && isFinite(p.db))
-        .map(p => `${x(p.hz).toFixed(1)},${y(Math.max(-reach, Math.min(reach, p.db))).toFixed(1)}`)
-        .join(' ');
-      parts.push(`<polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>`);
+      drawn.forEach((s, i) => {
+        s.colour = SERIES_COLOURS[i % SERIES_COLOURS.length];
+        const line = s.points
+          .filter(p => p.db !== null && isFinite(p.db))
+          .map(p => `${x(p.hz).toFixed(1)},${y(Math.max(-reach, Math.min(reach, p.db))).toFixed(1)}`)
+          .join(' ');
+        parts.push(`<polyline points="${line}" fill="none" stroke="${s.colour}" `
+          + `stroke-width="2" stroke-linejoin="round"/>`);
+      });
+
+      // Units on the axes. The tick values alone read as bare numbers,
+      // and "+12" is not obviously decibels to somebody who did not build
+      // this.
+      parts.push(`<text x="${left - 6}" y="${top - 3}" font-size="11" `
+        + `text-anchor="end" fill="var(--muted)">dB</text>`);
+      parts.push(`<text x="${left + plotW + 2}" y="${h - 9}" font-size="11" `
+        + `text-anchor="start" fill="var(--muted)">Hz</text>`);
+
+      // The hover layer: a crosshair and a readout naming every curve at
+      // the frequency under the pointer. With four curves crossing each
+      // other a direct label at the right-hand end would sit in a pile, so
+      // identity is carried by the legend and by this.
+      parts.push(`<line id="rr-crosshair" y1="${top}" y2="${top + plotH}" x1="-10" x2="-10" `
+        + `stroke="currentColor" stroke-opacity="0.45" stroke-dasharray="3 3"/>`);
+      parts.push(`<rect id="rr-hit" x="${left}" y="${top}" width="${plotW}" height="${plotH}" `
+        + `fill="transparent"/>`);
 
       box.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" `
-        + `aria-label="Measured frequency response"`
-        + ` style="max-width:${w}px">${parts.join('')}</svg>`;
+        + `aria-label="Measured frequency response" style="max-width:${w}px">`
+        + parts.join('') + '</svg>';
       box.hidden = false;
+
+      legend.innerHTML = drawn.map(s =>
+        `<span style="color:${s.colour}"><i></i>`
+        + `<span style="color:var(--muted)">${esc(s.name)}</span></span>`).join('');
+      legend.hidden = false;
+
+      attachHover(box, lowHz, highHz, span);
+      renderResponseTable();
+    }
+
+    function attachHover(box, lowHz, highHz, span) {
+      const svg = box.querySelector('svg');
+      const hit = svg.querySelector('#rr-hit');
+      const crosshair = svg.querySelector('#rr-crosshair');
+      const readout = document.getElementById('rr-summary');
+      const { w, left, right } = PLOT;
+      const plotW = w - left - right;
+
+      const move = event => {
+        // Through the viewBox rather than off clientWidth: the SVG scales
+        // with the page, so pixels on screen are not units in the drawing.
+        const box = hit.getBoundingClientRect();
+        const at = (event.clientX ?? event.touches?.[0]?.clientX) - box.left;
+        const fraction = Math.max(0, Math.min(1, at / box.width));
+        const hz = lowHz * Math.exp(span * fraction);
+
+        crosshair.setAttribute('x1', (left + plotW * fraction).toFixed(1));
+        crosshair.setAttribute('x2', (left + plotW * fraction).toFixed(1));
+
+        const at_ = drawn.map(s => {
+          const point = nearestPoint(s.points, hz);
+          return point ? `${s.name} ${point.db > 0 ? '+' : ''}${point.db.toFixed(1)} dB` : null;
+        }).filter(Boolean);
+        readout.textContent = `${hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : hz.toFixed(0) + ' Hz'}`
+          + ` — ${at_.join(', ')}`;
+      };
+
+      hit.addEventListener('pointermove', move);
+      hit.addEventListener('pointerleave', () => {
+        crosshair.setAttribute('x1', -10);
+        crosshair.setAttribute('x2', -10);
+        readout.textContent = settledSummary;
+      });
+    }
+
+    function nearestPoint(points, hz) {
+      let best = null, distance = Infinity;
+      for (const point of points) {
+        if (point.db === null || !isFinite(point.db)) continue;
+        const away = Math.abs(Math.log(point.hz / hz));
+        if (away < distance) { distance = away; best = point; }
+      }
+      return best;
+    }
+
+    /*
+     * The same curves as numbers, at third-octave centres.
+     *
+     * Two of the four series colours sit below 3:1 against the light page,
+     * so the picture cannot be the only way to read this. Third-octave
+     * rather than all 240 points because that is how a response is read
+     * anyway — nobody needs 1013 Hz separately from 1000.
+     */
+    const THIRD_OCTAVES = [
+      20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630,
+      800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000,
+      12500, 16000, 20000];
+
+    function renderResponseTable() {
+      const box = document.getElementById('rr-table');
+      document.getElementById('rr-table-view').hidden = !drawn.length;
+      if (!drawn.length) {
+        box.innerHTML = '';
+        return;
+      }
+
+      const head = `<tr><th>Hz</th>${drawn.map(s => `<th>${esc(s.name)}</th>`).join('')}</tr>`;
+      const rows = THIRD_OCTAVES.map(hz => {
+        const cells = drawn.map(s => {
+          const point = nearestPoint(s.points, hz);
+          return `<td>${point ? (point.db > 0 ? '+' : '') + point.db.toFixed(1) : '—'}</td>`;
+        }).join('');
+        return `<tr><td>${hz >= 1000 ? (hz / 1000) + 'k' : hz}</td>${cells}</tr>`;
+      }).join('');
+      box.innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
     }
 
     /*
@@ -3669,8 +3876,6 @@ and swap supplies between two nodes to find out.">Clock</th>
         status.textContent = `Could not start: ${error.error ?? response.status}`;
         return;
       }
-      document.getElementById('rr-plot').hidden = true;
-      document.getElementById('rr-summary').textContent = '';
       refreshMeasurement();
     });
 
@@ -3703,6 +3908,135 @@ and swap supplies between two nodes to find out.">Clock</th>
       return (warnings ? '⚠ ' + warnings + ' — ' : '') + bits.join(', ') + '.';
     }
 
+    /*
+     * Everything measured so far, and which of them are on the chart.
+     *
+     * The ticks live here rather than in the server: which two curves
+     * somebody is comparing right now is a property of looking, not of the
+     * measurement. What is on the server is the curve and what it is a
+     * curve of.
+     */
+    let measurements = [];
+    const drawing = new Set();
+
+    // A name that says what the curve is without being read twice. The
+    // person's own label wins when there is one, because "before" and
+    // "after" is exactly the distinction a device name cannot make.
+    function measurementName(m) {
+      const where = [m.speaker, m.channel].filter(Boolean).join(' ');
+      if (m.label) {
+        return where ? `${m.label} — ${where}` : m.label;
+      }
+      if (where) {
+        return `${where}, ${new Date(m.measuredAt ?? m.analysedAt).toLocaleTimeString()}`;
+      }
+      return m.file;
+    }
+
+    async function refreshMeasurements(keepTicks) {
+      measurements = await fetch('/api/measurements').then(r => r.json()).catch(() => []);
+
+      const table = document.getElementById('rr-measurements');
+      const empty = document.getElementById('rr-measurements-empty');
+      table.hidden = measurements.length === 0;
+      empty.hidden = measurements.length > 0;
+
+      if (!keepTicks) {
+        // Opening on the newest alone: a chart of everything ever measured
+        // is not a comparison, it is a haystack.
+        drawing.clear();
+        if (measurements.length) {
+          drawing.add(measurements[0].file);
+        }
+      }
+      for (const file of [...drawing]) {
+        if (!measurements.some(m => m.file === file)) {
+          drawing.delete(file);
+        }
+      }
+
+      table.querySelector('tbody').innerHTML = measurements.map(m => {
+        const r = m.response ?? {};
+        const warned = (r.warnings ?? []).length > 0;
+        return `<tr>
+          <td><input type="checkbox" data-draw="${esc(m.file)}"
+              ${drawing.has(m.file) ? 'checked' : ''}></td>
+          <td>${esc(new Date(m.measuredAt ?? m.analysedAt).toLocaleString())}</td>
+          <td>${esc(m.speaker ?? '—')}</td>
+          <td>${esc(m.channel ?? '—')}</td>
+          <td><input type="text" data-label="${esc(m.file)}" value="${esc(m.label ?? '')}"
+              placeholder="before / after"></td>
+          <td>${r.cyclesAveraged ?? '—'}</td>
+          <td>${r.signalToNoiseDb === null || r.signalToNoiseDb === undefined
+                ? '—' : r.signalToNoiseDb + ' dB'}${warned ? ' ⚠' : ''}</td>
+          <td>${r.peakDbFs === null || r.peakDbFs === undefined
+                ? '—' : r.peakDbFs + ' dBFS'}</td>
+          <td><button data-forget="${esc(m.file)}">Delete</button></td>
+        </tr>`;
+      }).join('');
+
+      drawTicked();
+    }
+
+    function drawTicked() {
+      const chosen = measurements.filter(m => drawing.has(m.file));
+      plotResponses(chosen.map(m => ({
+        name: measurementName(m),
+        points: (m.response?.points ?? []).filter(p => p.db !== null),
+      })));
+
+      settledSummary = chosen.length === 1
+        ? describeResponse(chosen[0].response ?? {})
+        : chosen.length
+          ? `${chosen.length} measurements. Hover the chart to read them.`
+          : 'Tick a measurement to draw it.';
+      document.getElementById('rr-summary').textContent = settledSummary;
+    }
+
+    // Delegated, because the table is rewritten whenever anything changes
+    // and listeners bound to its rows would go with it.
+    document.getElementById('rr-measurements').addEventListener('change', async event => {
+      const draw = event.target.dataset.draw;
+      if (draw) {
+        // Four colours, in a fixed order, and a fifth curve is a reason to
+        // untick one rather than to invent a colour nothing was checked for.
+        if (event.target.checked && drawing.size >= 4) {
+          event.target.checked = false;
+          document.getElementById('rr-summary').textContent =
+            'Four curves at once is the limit — untick one first.';
+          return;
+        }
+        event.target.checked ? drawing.add(draw) : drawing.delete(draw);
+        drawTicked();
+        return;
+      }
+
+      const label = event.target.dataset.label;
+      if (label) {
+        await fetch(`/api/recordings/${encodeURIComponent(label)}/label`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: event.target.value }),
+        }).catch(() => {});
+        refreshMeasurements(true);
+      }
+    });
+
+    document.getElementById('rr-measurements').addEventListener('click', async event => {
+      const forget = event.target.dataset.forget;
+      if (!forget) return;
+      // The recording goes too, and it is a hundred megabytes of evidence
+      // for a reading nobody wants any more. Worth one question first.
+      if (!confirm(`Delete ${forget} and its curve? The recording goes too.`)) {
+        return;
+      }
+      await fetch(`/api/recordings/${encodeURIComponent(forget)}`, { method: 'DELETE' })
+        .catch(() => {});
+      drawing.delete(forget);
+      refreshMeasurements(true);
+      refreshRecordings();
+    });
+
     async function analyseRecording(file, channel, extra) {
       const summary = document.getElementById('rr-summary');
       summary.textContent = 'Analysing…';
@@ -3712,14 +4046,20 @@ and swap supplies between two nodes to find out.">Clock</th>
         { method: 'POST' });
       const answer = await response.json().catch(() => ({}));
       if (!response.ok) {
-        document.getElementById('rr-plot').hidden = true;
         summary.textContent = `Could not analyse ${file}: ${answer.error ?? response.status}`;
         document.getElementById('rm-status').textContent = `Recorded ${file}.`;
         return;
       }
 
-      plotResponse(answer);
-      summary.textContent = describeResponse(answer);
+      // Ticked on arrival and added to whatever is already drawn, so a
+      // fresh measurement lands beside the one it is meant to be compared
+      // with rather than replacing it.
+      if (drawing.size >= 4) {
+        drawing.delete([...drawing][0]);
+      }
+      drawing.add(file);
+      await refreshMeasurements(true);
+
       document.getElementById('rm-status').textContent =
         (extra ? '⚠ ' + extra + ' ' : '') + `Measured, from ${file}.`;
       refreshRecordings();
@@ -3743,6 +4083,7 @@ and swap supplies between two nodes to find out.">Clock</th>
     refreshTone();
     refreshRecording();
     refreshRecordings();
+    refreshMeasurements(false);
     refreshMeasurement();
     setInterval(refreshRecording, 2000);
     setInterval(refreshLinkResults, 2000);

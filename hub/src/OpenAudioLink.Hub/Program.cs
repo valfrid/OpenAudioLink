@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.CastPoints;
 using OpenAudioLink.Core.Devices;
@@ -754,8 +755,7 @@ app.MapPost("/api/recordings/{file}/analyse",
             {
                 File.WriteAllText(
                     Path.ChangeExtension(path, ".response.json"),
-                    System.Text.Json.JsonSerializer.Serialize(answer,
-                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                    JsonSerializer.Serialize(answer, RoomMeasurementService.Json));
             }
             catch (IOException)
             {
@@ -763,7 +763,19 @@ app.MapPost("/api/recordings/{file}/analyse",
                 // it is not a reason to withhold it.
             }
 
-            return Results.Ok(answer);
+            // What it is a curve *of* travels with it, so the page can
+            // name the series without a second request.
+            var context = ReadContext(path);
+            return Results.Ok(new
+            {
+                file = answer.file,
+                context?.Speaker,
+                context?.Channel,
+                context?.Microphone,
+                context?.MeasuredAt,
+                context?.Label,
+                response = answer,
+            });
         });
     }
     catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
@@ -780,6 +792,146 @@ app.MapGet("/api/recordings/{file}/response", (string file, RecordingService rec
         ? Results.Content(File.ReadAllText(path), "application/json")
         : Results.NotFound(new { error = "that recording has not been analysed yet" });
 });
+
+/*
+ * Every curve worked out so far, with what it is a curve of.
+ *
+ * The reason measurements are kept at all. One curve says what a room does;
+ * two say what changed — the left speaker against the right, the same
+ * speaker before and after a correction, the same speaker with the
+ * microphone somewhere else. None of those comparisons can be made from a
+ * single reading, and a curve with no note of what it measured is
+ * unreadable a week later.
+ *
+ * The context is merged over the saved analysis rather than baked into it,
+ * so renaming a measurement never means recomputing one.
+ */
+app.MapGet("/api/measurements", (RecordingService recorder) =>
+{
+    var dir = new DirectoryInfo(recorder.DirectoryPath);
+    if (!dir.Exists)
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+
+    var measurements = new List<object>();
+    foreach (var found in dir.EnumerateFiles("*.response.json").OrderByDescending(f => f.Name))
+    {
+        // "oal-….response.json" -> "oal-….wav", the recording it reads.
+        var recording = found.Name[..^".response.json".Length] + ".wav";
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(found.FullName));
+            var context = ReadContext(Path.Combine(dir.FullName, recording));
+            measurements.Add(new
+            {
+                file = recording,
+                analysedAt = found.LastWriteTimeUtc,
+                context?.Speaker,
+                context?.Channel,
+                context?.Microphone,
+                context?.MeasuredAt,
+                context?.Label,
+                response = document.RootElement.Clone(),
+            });
+        }
+        catch (Exception ex) when (ex is JsonException or IOException)
+        {
+            // One unreadable file must not empty the list.
+        }
+    }
+    return Results.Ok(measurements);
+});
+
+/*
+ * What to call a measurement. "before", "after", "mic moved half a metre"
+ * — whatever makes two curves on one chart tell a person apart.
+ *
+ * Written to the context beside the recording rather than into the
+ * analysis, so naming one does not invalidate the reading of it.
+ */
+app.MapPost("/api/recordings/{file}/label",
+    (string file, LabelRequest request, RecordingService recorder) =>
+{
+    var path = Path.Combine(recorder.DirectoryPath, Path.GetFileName(file));
+    if (!File.Exists(path))
+    {
+        return Results.NotFound(new { error = $"no recording called '{file}'" });
+    }
+
+    var label = request.Label?.Trim();
+    var context = ReadContext(path) ?? new MeasurementContext(null, null, null, null, null);
+    context = context with { Label = string.IsNullOrEmpty(label) ? null : label };
+
+    try
+    {
+        File.WriteAllText(
+            RoomMeasurementService.ContextPathFor(path),
+            JsonSerializer.Serialize(context, RoomMeasurementService.Json));
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return Results.Problem($"could not write the label: {ex.Message}");
+    }
+    return Results.Ok(context);
+});
+
+/*
+ * Throwing a measurement away.
+ *
+ * The recording goes with it. Keeping a 140 MB WAV whose curve has been
+ * discarded is keeping the evidence for a reading nobody wants, and the
+ * recordings directory fills at about two megabytes a second.
+ */
+app.MapDelete("/api/recordings/{file}", (string file, RecordingService recorder) =>
+{
+    var path = Path.Combine(recorder.DirectoryPath, Path.GetFileName(file));
+    if (!File.Exists(path))
+    {
+        return Results.NotFound(new { error = $"no recording called '{file}'" });
+    }
+    if (recorder.Running && recorder.State().File == Path.GetFileName(path))
+    {
+        return Results.BadRequest(new { error = "that recording is still running" });
+    }
+
+    try
+    {
+        foreach (var each in new[]
+                 {
+                     path,
+                     Path.ChangeExtension(path, ".response.json"),
+                     RoomMeasurementService.ContextPathFor(path),
+                 })
+        {
+            File.Delete(each);   // deleting what is not there is not an error
+        }
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return Results.Problem($"could not delete it: {ex.Message}");
+    }
+    return Results.Ok(new { deleted = Path.GetFileName(path) });
+});
+
+/// <summary>The sidecar beside a recording, or null when there is none.</summary>
+static MeasurementContext? ReadContext(string recordingPath)
+{
+    var path = RoomMeasurementService.ContextPathFor(recordingPath);
+    if (!File.Exists(path))
+    {
+        return null;
+    }
+    try
+    {
+        return JsonSerializer.Deserialize<MeasurementContext>(
+            File.ReadAllText(path), RoomMeasurementService.Json);
+    }
+    catch (Exception ex) when (ex is JsonException or IOException)
+    {
+        return null;
+    }
+}
 
 // Infinities and NaN are not JSON, and a silent recording produces both.
 static double? Round(double value, int digits = 2) =>
@@ -2251,6 +2403,9 @@ internal sealed record RecordRequest(
 /// </summary>
 internal sealed record MeasureRequest(
     string? Speaker, string? Channel, string? Microphone, int? Cycles);
+
+/// <summary>What to call a measurement. Empty clears it.</summary>
+internal sealed record LabelRequest(string? Label);
 
 /// <summary>
 /// A named buffer setting, plus how far early this node plays. Omitting

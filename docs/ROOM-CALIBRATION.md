@@ -788,6 +788,45 @@ at 62 Hz and a −5 dB dip at 3.5 kHz to within 1.5 dB.
 That is the only way to tell a fault in the analysis from a fault in a
 room without a calibrated laboratory.
 
+## Keeping measurements, and comparing them
+
+One curve says what a room does. **Two say what changed**, and that is the
+question almost every time:
+
+| Compare | Answers |
+|---|---|
+| Left against right | which speaker, or whether it is the room |
+| Before against after | whether a correction worked |
+| Same speaker, microphone moved | whether a peak belongs to the room or to where you sat |
+
+None of those can be read from a single measurement, and flipping between
+two pictures is not the same as laying them over each other. So every
+analysis is kept, with a note of what it is a measurement *of* — speaker,
+channel, microphone, when — written at the moment it is set up rather than
+reconstructed from a filename later. A free-text name goes beside it, which
+is where "before" and "after" live: no device name can make that
+distinction.
+
+The note is a sidecar (`<recording>.context.json`) rather than part of the
+analysis, so renaming a measurement never means recomputing one, and a
+curve worked out before any of this existed still opens.
+
+```
+GET    /api/measurements                  every curve, with what it is of
+POST   /api/recordings/<file>/label       name one
+DELETE /api/recordings/<file>             throw one away, recording and all
+```
+
+Up to four are drawn at once, on one shared decibel scale — two curves on
+different scales would be a comparison of nothing. Four is the limit
+because the colours stop there: the palette is four fixed slots, checked
+for colour-vision deficiency against both the light and the dark page
+rather than picked by eye, and a fifth curve is a reason to untick one, not
+to invent a colour nothing was validated for. Two of the four fall below
+3:1 contrast on the light page, so colour never carries identity alone —
+every curve is in the legend, named in the hover readout, and present in
+the third-octave table under the chart.
+
 ## What is still missing
 
 The correction constants. Turning a curve into biquads is the next work,

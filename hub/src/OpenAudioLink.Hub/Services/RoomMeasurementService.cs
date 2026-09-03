@@ -1,8 +1,38 @@
 using System.Net;
+using System.Text.Json;
 using OpenAudioLink.Core.Audio;
 using OpenAudioLink.Core.Devices;
 
 namespace OpenAudioLink.Hub.Services;
+
+/// <summary>
+/// What a recording is a measurement <em>of</em>, kept beside it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A curve on its own is unreadable a week later: two of them differ and
+/// there is no way to tell whether that is the left speaker against the
+/// right, or the same speaker before and after a correction, or the
+/// microphone having been moved. So the answer is written down at the
+/// moment it is known — while the measurement is being set up — rather
+/// than reconstructed from a filename.
+/// </para>
+/// <para>
+/// Separate from the analysis result so that renaming a measurement does
+/// not mean recomputing it, and so that a curve worked out before this
+/// existed still opens.
+/// </para>
+/// </remarks>
+public sealed record MeasurementContext(
+    string? Speaker,
+    string? Channel,
+    string? Microphone,
+    DateTimeOffset? MeasuredAt,
+    /// <summary>
+    /// Whatever the person measuring wants to call this one — "before",
+    /// "after", "mic moved 0.5 m". The whole point of keeping several.
+    /// </summary>
+    string? Label);
 
 /// <summary>Where a room measurement has got to.</summary>
 public sealed record RoomMeasurementState(
@@ -176,6 +206,7 @@ public sealed class RoomMeasurementService : IAsyncDisposable
             _microphone = microphone.Name;
             _file = _recorder.State().File;
             _notes = notes;
+            WriteContext(speakerName, channel, microphone.Name);
 
             _countdown = new CancellationTokenSource();
             _timer = RunAsync(_countdown.Token);
@@ -252,6 +283,41 @@ public sealed class RoomMeasurementService : IAsyncDisposable
         {
             var state = await _recorder.StopAsync(cancellationToken);
             _file = state.File ?? _file;
+        }
+    }
+
+    /// <summary>How the context sidecar is written and read, on both ends.</summary>
+    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
+
+    /// <summary>The sidecar beside a recording, whether or not it exists.</summary>
+    public static string ContextPathFor(string recordingPath) =>
+        Path.ChangeExtension(recordingPath, ".context.json");
+
+    /// <summary>
+    /// Records what this measurement is of, at the moment it is set up.
+    /// Best effort: a measurement that cannot write its label is still a
+    /// measurement, and refusing to start one over it would be absurd.
+    /// </summary>
+    private void WriteContext(string speaker, string channel, string microphone)
+    {
+        if (_file is null)
+        {
+            return;
+        }
+        try
+        {
+            File.WriteAllText(
+                ContextPathFor(Path.Combine(_recorder.DirectoryPath, _file)),
+                JsonSerializer.Serialize(
+                    new MeasurementContext(speaker, channel, microphone, _time.GetUtcNow(), null),
+                    Json));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Could not write the measurement's context beside {File}", _file);
         }
     }
 
