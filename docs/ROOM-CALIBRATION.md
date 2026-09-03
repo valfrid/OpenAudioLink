@@ -935,6 +935,20 @@ attenuates, so a band boosted on material already mastered near full scale
 goes over the top — and it presents as distortion on loud passages only,
 which is the worst way to find out.
 
+**Swept, not sampled at the centres.** Two bands close together peak
+*between* them: two +6 dB filters at 90 and 110 Hz reach +11.5 dB at 100,
+where either centre reads +11.1. The headroom is taken across 240 points
+from 20 Hz to 20 kHz — the same grid the measurement uses, so the node and
+the Hub arrive at the same number.
+
+**And it is computed in double, from the design rather than the stored
+coefficients.** |H|² is a sum of terms around 8 that cancels to about 5e-5
+at 100 Hz — five digits gone, and single precision has seven. Done the
+obvious way, a +6 dB filter reports **0.00 dB at its own centre**: as a
+headroom that reads "this correction costs nothing" about a correction that
+clips. It runs when a correction changes, a few hundred times, never per
+sample, so software-emulated double on the S3 costs nothing that matters.
+
 **Where it is applied is not a detail.** It goes inside the filter, on the
 way out, before the sample is written back as an int32. That write is where
 the clip happens. Attenuating after it scales a value whose peaks are
@@ -983,7 +997,9 @@ Four settings in NVS, and the shape of them is the feature.
 |---|---|
 | `eq_l`, `eq_r` | one vector per **output** channel, as readable text |
 | `eq_on` | whether to run it — the coefficients are kept either way |
-| `eq_pre` | headroom for the boosts, tenths of a dB, negative |
+
+There is deliberately no headroom setting: **it is a function of the
+filters**, so the node computes it from the vectors it holds. See below.
 
 **The stored parameter is the design, not the coefficients.**
 
@@ -1013,12 +1029,19 @@ is the one thing worth checking. It applies at once rather than at the next
 boot, because a correction that needed a reboot to audition would never be
 auditioned.
 
-**The preamp is one value for the node**, not one per channel. It is a
-broadband gain, so different values left and right would move the stereo
-image sideways; the Hub works out what each channel needs and sends the
-deeper of the two. It is folded into the existing volume gain — one
-multiply either way — and applied *before* the filters, so their headroom
-does not depend on how loud somebody has the speaker.
+**The headroom is derived, never stored.** It is the peak of the filters'
+combined response, negated — a function of them and nothing else, so a
+stored copy could only ever be a second opinion about the same arithmetic.
+And it would be the wrong one the moment somebody edited a vector by hand,
+which is a supported thing to do: a +10 dB band typed into a speaker still
+carrying last month's headroom clips, with nothing to say why. The node
+works it out from the vectors, so a vector cannot be stored without the
+headroom that belongs to it.
+
+**One figure across both channels**, not one each: it is a broadband
+attenuation, so different values left and right would move the stereo image
+sideways by the difference. The channel that needs less is simply quieter
+by as much as its partner, which is what keeps the image where it was.
 
 The fence around a band (10–20 kHz, Q 0.1–20, ±15 dB) is deliberately wider
 than anything the fitter will produce. Hand tuning is a supported use, and
@@ -1051,9 +1074,11 @@ samples it saw and swapping coefficients underneath a half-filtered chunk
 rings for as long as the filter decays.
 
 ```
-POST /config {"eqLeft":"104.0/3.78/-9.0", "eqRight":"...",
-              "eqEnabled":true, "eqPreampDb":-2.0}
+POST /config {"eqLeft":"104.0/3.78/-9.0", "eqRight":"...", "eqEnabled":true}
 ```
+
+`/status` reports `eqPreampDb` as the node derived it, so what is shown is
+what the speaker is actually giving up.
 
 ## Writing it to a loudspeaker
 

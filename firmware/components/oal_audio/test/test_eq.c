@@ -433,6 +433,90 @@ static void test_headroom_scales_what_comes_out(void)
     check_close(measured_at_gain(&chain, 1000.0, 0.0f), -6.0, 0.2, "and so is a gain of nothing");
 }
 
+/*
+ * The headroom is a function of the filters, which is why it is computed
+ * rather than stored: a stored one goes stale the moment somebody edits a
+ * vector by hand, and the speaker then clips with nothing to say why.
+ */
+static void test_headroom_is_derived_from_the_filters(void)
+{
+    oal_eq_curve_t curve = { .count = 1 };
+
+    /* Nothing boosts, nothing to pay. */
+    curve.bands[0] = (oal_eq_band_t){ 100.0f, 2.0f, -9.0f };
+    check_close(oal_eq_headroom(&curve, 1, RATE), 1.0, 0.001,
+                "a correction that only cuts costs no headroom");
+
+    /* +12 dB wants 12 dB back. */
+    curve.bands[0] = (oal_eq_band_t){ 200.0f, 1.0f, 12.0f };
+    check_close(20.0 * log10(oal_eq_headroom(&curve, 1, RATE)), -12.0, 0.6,
+                "a +12 dB boost costs 12 dB");
+
+    check_close(oal_eq_headroom(NULL, 0, RATE), 1.0, 0.001, "nothing at all costs nothing");
+}
+
+/*
+ * The magnitude is worked out from the design in double, not from the
+ * stored coefficients in float, and this is why: |H|^2 is a sum of terms
+ * around 8 that cancels to about 5e-5 down here. Done the obvious way a
+ * +6 dB filter reported 0.00 dB at its own centre, which as a headroom
+ * reads "this costs nothing" about a correction that clips.
+ */
+static void test_the_magnitude_survives_the_bottom_of_the_band(void)
+{
+    oal_eq_curve_t curve = { .count = 1 };
+    const double at[] = { 30.0, 63.0, 100.0, 200.0, 1000.0 };
+
+    for (size_t i = 0; i < sizeof(at) / sizeof(at[0]); i++) {
+        curve.bands[0] = (oal_eq_band_t){ (float)at[i], 2.0f, 6.0f };
+        char what[80];
+        snprintf(what, sizeof(what), "+6 dB at %.0f Hz reads as +6 dB there", at[i]);
+        check_close(oal_eq_curve_db(&curve, (float)at[i], RATE), 6.0, 0.05, what);
+
+        /* And it agrees with the double reference everywhere around it. */
+        for (double f = at[i] / 2; f < at[i] * 2; f *= 1.2) {
+            snprintf(what, sizeof(what), "%.0f Hz filter at %.0f Hz", at[i], f);
+            check_close(oal_eq_curve_db(&curve, (float)f, RATE),
+                        reference(at[i], 2.0, 6.0, f), 0.05, what);
+        }
+    }
+}
+
+/*
+ * Two bands close together peak BETWEEN them, so the headroom is swept
+ * across the band rather than read off the filters' own centres. Taken at
+ * the centres this would come back 3 dB light and the speaker would clip
+ * halfway between them.
+ */
+static void test_headroom_finds_a_peak_between_two_bands(void)
+{
+    oal_eq_curve_t curve = { .count = 2 };
+    curve.bands[0] = (oal_eq_band_t){ 90.0f, 1.0f, 6.0f };
+    curve.bands[1] = (oal_eq_band_t){ 110.0f, 1.0f, 6.0f };
+
+    double taken = -20.0 * log10(oal_eq_headroom(&curve, 1, RATE));
+    double at_a_centre = oal_eq_curve_db(&curve, 90.0f, RATE);
+
+    check(taken > 6.5, "two overlapping +6 dB bands need more than either alone");
+    check(taken >= at_a_centre - 0.5,
+          "and more than they manage at either centre, because the peak is between them");
+}
+
+/*
+ * One figure for every channel, not one each: it is a broadband
+ * attenuation, so a different value left and right would move the stereo
+ * image sideways by the difference.
+ */
+static void test_one_headroom_covers_both_channels(void)
+{
+    oal_eq_curve_t both[2] = { { .count = 1 }, { .count = 1 } };
+    both[0].bands[0] = (oal_eq_band_t){ 100.0f, 2.0f, 2.0f };
+    both[1].bands[0] = (oal_eq_band_t){ 100.0f, 2.0f, 10.0f };
+
+    check_close(oal_eq_headroom(both, 2, RATE), oal_eq_headroom(&both[1], 1, RATE), 0.001,
+                "both channels get what the hungrier one needs");
+}
+
 int main(void)
 {
     test_parses_a_vector();
@@ -453,6 +537,10 @@ int main(void)
     test_it_saturates_rather_than_wrapping();
     test_headroom_prevents_the_clip_rather_than_following_it();
     test_headroom_scales_what_comes_out();
+    test_headroom_is_derived_from_the_filters();
+    test_the_magnitude_survives_the_bottom_of_the_band();
+    test_headroom_finds_a_peak_between_two_bands();
+    test_one_headroom_covers_both_channels();
 
     if (failures != 0) {
         printf("%d check(s) failed\n", failures);

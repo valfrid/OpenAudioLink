@@ -271,10 +271,17 @@ public sealed class DeviceCommandClient
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Both vectors, the shared headroom and the switch in one request, so
-    /// a node is never left running one channel's correction against the
-    /// other's — which would be audible as the stereo image walking
-    /// sideways, and would be nobody's fault in particular.
+    /// Both vectors and the switch in one request, so a node is never left
+    /// running one channel's correction against the other's — which would
+    /// be audible as the stereo image walking sideways, and would be
+    /// nobody's fault in particular.
+    /// </para>
+    /// <para>
+    /// <b>No headroom is sent.</b> It is a function of the filters, so the
+    /// node works it out from the vectors it holds. Sending a figure as
+    /// well would be a second opinion about the same arithmetic — and the
+    /// wrong one the moment somebody edits a vector by hand, which is a
+    /// supported thing to do.
     /// </para>
     /// <para>
     /// The vectors are the readable triples the node stores, not
@@ -283,15 +290,15 @@ public sealed class DeviceCommandClient
     /// </para>
     /// </remarks>
     public async Task<bool> SetCorrectionAsync(
-        DeviceRecord device, string eqLeft, string eqRight, double preampDb, bool enabled,
+        DeviceRecord device, string eqLeft, string eqRight, bool enabled,
         CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "Setting room correction on {Device}: L [{Left}] R [{Right}], preamp {Preamp} dB, {State}",
-            device.Name, eqLeft, eqRight, preampDb, enabled ? "on" : "off");
+            "Setting room correction on {Device}: L [{Left}] R [{Right}], {State}",
+            device.Name, eqLeft, eqRight, enabled ? "on" : "off");
         return await PostAsync(
             device, "/config",
-            JsonSerializer.Serialize(new { eqLeft, eqRight, eqPreampDb = preampDb, eqEnabled = enabled }),
+            JsonSerializer.Serialize(new { eqLeft, eqRight, eqEnabled = enabled }),
             cancellationToken);
     }
 

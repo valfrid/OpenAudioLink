@@ -294,10 +294,12 @@ uint8_t oal_playout_volume(void);
  * Hands the playout a room correction (docs/ROOM-CALIBRATION.md).
  *
  * One vector per output, because a correction belongs to a loudspeaker and
- * a stereo node drives two of them standing in different corners. The
- * preamp is one value for both, in tenths of a decibel and negative: it is
- * a broadband gain, so different values left and right would move the
- * stereo image sideways.
+ * a stereo node drives two of them standing in different corners.
+ *
+ * No headroom is passed: it is a function of the filters, so the playout
+ * works it out from them (oal_eq_headroom). A separate figure could only
+ * ever be a second opinion about the same arithmetic, and the moment
+ * somebody edits a vector by hand it would be the wrong one.
  *
  * Staged rather than applied. The filters belong to the playout task -- a
  * biquad's state is the last two samples it saw, and swapping coefficients
@@ -309,7 +311,16 @@ uint8_t oal_playout_volume(void);
  *                losing the profile to get back to.
  */
 void oal_playout_set_eq(const oal_eq_curve_t *left, const oal_eq_curve_t *right,
-                        bool enabled, int16_t preamp_tenths);
+                        bool enabled);
+
+/**
+ * How much output the running correction is giving up, in dB, negative.
+ *
+ * Zero when the correction is off, because it is not taking anything then —
+ * which is what makes an on/off comparison a comparison of tone rather than
+ * of loudness.
+ */
+float oal_playout_eq_headroom_db(void);
 
 /**
  * The largest target this node's ring will honour, in milliseconds, or 0

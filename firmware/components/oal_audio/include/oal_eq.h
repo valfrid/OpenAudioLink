@@ -142,13 +142,48 @@ void oal_eq_chain_reset(oal_eq_chain_t *chain);
 bool oal_eq_chain_active(const oal_eq_chain_t *chain);
 
 /**
+ * The attenuation these vectors need so that nothing they boost can clip,
+ * as a linear factor at or below one.
+ *
+ * **Derived, never stored.** The headroom is a function of the filters and
+ * nothing else, so keeping it as a separate setting only creates a way for
+ * the two to disagree — and they would, the moment somebody edited a vector
+ * by hand: a +10 dB band typed into a speaker still carrying the headroom
+ * from last month's fit clips, and nothing says so. Computing it here means
+ * a vector cannot be stored without the headroom that belongs to it.
+ *
+ * **One figure for every channel given, not one each.** It is a broadband
+ * attenuation, so a different value left and right would move the stereo
+ * image sideways by the difference. The channel that needs less is simply
+ * quieter by as much as its partner, which is what keeps the image where it
+ * was.
+ *
+ * The peak of the filters' combined response, not the sum of their gains:
+ * bands an octave apart barely reach each other, and the sum would give
+ * away output to protect against an overlap that does not exist.
+ */
+float oal_eq_headroom(const oal_eq_curve_t *curves, uint8_t count, int sample_rate);
+
+/**
+ * What one vector does at one frequency, in dB. Every band summed.
+ *
+ * From the design parameters and in double, not from the stored
+ * coefficients in float: |H|^2 is a sum of terms around 8 that cancels to
+ * about 5e-5 at 100 Hz, and single precision does not have the five digits
+ * that costs. Done the obvious way, a +6 dB filter reports 0.00 dB at its
+ * own centre — which as a headroom reads "this costs nothing" about a
+ * correction that clips.
+ */
+float oal_eq_curve_db(const oal_eq_curve_t *curve, float hz, int sample_rate);
+
+/**
  * Runs one channel of interleaved audio in place.
  *
  * @param samples first sample of this channel
  * @param frames  frames, not samples
  * @param stride  samples between one frame and the next: 2 for stereo
- * @param gain    the correction's headroom, as a linear factor at or below
- *                one. See below — this is not a convenience.
+ * @param gain    the headroom from oal_eq_headroom, as a linear factor at
+ *                or below one. See below — this is not a convenience.
  *
  * Full-scale int32, as the playout carries it. Saturates rather than
  * wrapping: a correction that overflows should sound loud, not inverted.

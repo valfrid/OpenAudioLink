@@ -397,11 +397,10 @@ static esp_err_t status_handler(httpd_req_t *req)
     static char eq_preamp[16];
     (void)oal_config_get_eq(OAL_SIDE_LEFT, eq_left, sizeof(eq_left));
     (void)oal_config_get_eq(OAL_SIDE_RIGHT, eq_right, sizeof(eq_right));
-    /* Formatted as one number rather than assembled from a quotient and a
-     * remainder: -0.5 dB is -5 tenths, and -5/10 is 0 in C, so building it
-     * from the parts loses the sign on every value between 0 and -1. */
-    snprintf(eq_preamp, sizeof(eq_preamp), "%.1f",
-             (double)oal_config_get_eq_preamp_tenths() / 10.0);
+    /* What the playout worked out from the filters, not a stored setting:
+     * it is derived, and reporting a second copy would be reporting
+     * something that can disagree with what the speaker is doing. */
+    snprintf(eq_preamp, sizeof(eq_preamp), "%.1f", (double)oal_playout_eq_headroom_db());
 
     char *body = s_body;
     int len = snprintf(body, sizeof(s_body),
@@ -434,7 +433,9 @@ static esp_err_t status_handler(httpd_req_t *req)
                        /* Room correction. The vectors are published as
                         * stored -- readable triples, not coefficients --
                         * so the Hub shows a person what their speaker is
-                        * doing and can offer it back for editing. */
+                        * doing and can offer it back for editing. The
+                        * headroom is derived from them and reported so
+                        * somebody can see what a correction costs. */
                        "\"eqEnabled\":%s,\"eqPreampDb\":%s,"
                        "\"eqLeft\":\"%s\",\"eqRight\":\"%s\","
                        /* The ring as allocated and the two limits that
@@ -548,7 +549,7 @@ static esp_err_t config_handler(httpd_req_t *req)
     const cJSON *eq_left = cJSON_GetObjectItemCaseSensitive(root, "eqLeft");
     const cJSON *eq_right = cJSON_GetObjectItemCaseSensitive(root, "eqRight");
     const cJSON *eq_on = cJSON_GetObjectItemCaseSensitive(root, "eqEnabled");
-    const cJSON *eq_pre = cJSON_GetObjectItemCaseSensitive(root, "eqPreampDb");
+
     const bool has_roles = cJSON_IsArray(array);
     const bool has_channel = cJSON_IsString(channel);
     const bool has_party = cJSON_IsObject(party);
@@ -561,7 +562,6 @@ static esp_err_t config_handler(httpd_req_t *req)
     const bool has_eq_left = cJSON_IsString(eq_left);
     const bool has_eq_right = cJSON_IsString(eq_right);
     const bool has_eq_on = cJSON_IsBool(eq_on);
-    const bool has_eq_pre = cJSON_IsNumber(eq_pre);
     const uint32_t delay_ms = has_delay ? (uint32_t)delay->valueint : 0;
     const uint32_t ring_ms = has_ring ? (uint32_t)ring->valueint : 0;
     /*
@@ -575,8 +575,6 @@ static esp_err_t config_handler(httpd_req_t *req)
      */
     const int mic_gain_db = has_mic_gain ? mic_gain->valueint : 0;
     const bool eq_on_wanted = has_eq_on && cJSON_IsTrue(eq_on);
-    const int16_t eq_preamp_tenths =
-        has_eq_pre ? (int16_t)lround(eq_pre->valuedouble * 10.0) : 0;
     char eq_left_text[OAL_EQ_TEXT_MAX] = { 0 };
     char eq_right_text[OAL_EQ_TEXT_MAX] = { 0 };
     if (has_eq_left) {
@@ -591,11 +589,11 @@ static esp_err_t config_handler(httpd_req_t *req)
      * both would make one setting able to clobber the other. */
     if (!has_roles && !has_channel && !has_party && !has_delay && !has_output
             && !has_ring && !has_input && !has_name && !has_mic_gain
-            && !has_eq_left && !has_eq_right && !has_eq_on && !has_eq_pre) {
+            && !has_eq_left && !has_eq_right && !has_eq_on) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
                             "expected roles, channel, output, input, name, micGainDb, delayMs, "
-                            "ringMs, eqLeft, eqRight, eqEnabled, eqPreampDb or party");
+                            "ringMs, eqLeft, eqRight, eqEnabled or party");
         return ESP_FAIL;
     }
 
@@ -689,14 +687,6 @@ static esp_err_t config_handler(httpd_req_t *req)
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
                             "an eq vector is not \"hz/q/db\" triples");
-        return ESP_FAIL;
-    }
-    /* Attenuation only. A preamp that boosts is not headroom, it is a
-     * second volume control that can clip. */
-    if (has_eq_pre && (eq_pre->valuedouble > 0.0
-                       || eq_pre->valuedouble < OAL_EQ_PREAMP_MIN_TENTHS / 10.0)) {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eqPreampDb out of range");
         return ESP_FAIL;
     }
     if (has_ring
@@ -859,15 +849,11 @@ static esp_err_t config_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "right eq not stored");
         return ESP_FAIL;
     }
-    if (has_eq_pre && oal_config_set_eq_preamp_tenths(eq_preamp_tenths) != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eq preamp not stored");
-        return ESP_FAIL;
-    }
     if (has_eq_on && oal_config_set_eq_enabled(eq_on_wanted) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "eq switch not stored");
         return ESP_FAIL;
     }
-    if (has_eq_left || has_eq_right || has_eq_pre || has_eq_on) {
+    if (has_eq_left || has_eq_right || has_eq_on) {
         oal_config_apply_eq();
     }
     if (has_delay) {

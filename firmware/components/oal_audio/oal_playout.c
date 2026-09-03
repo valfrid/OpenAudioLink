@@ -226,7 +226,6 @@ static float s_eq_preamp = 1.0f;
  */
 static oal_eq_curve_t s_eq_staged[OAL_RTP_CHANNELS];
 static volatile bool s_eq_staged_enabled;
-static volatile int16_t s_eq_staged_preamp_tenths;
 static volatile bool s_eq_pending;
 static volatile uint8_t s_volume = OAL_VOLUME_DEFAULT;
 
@@ -568,22 +567,39 @@ static void adopt_eq(void)
         oal_eq_chain_build(&s_eq[ch], &s_eq_staged[ch], OAL_RTP_SAMPLE_RATE);
     }
 
-    int16_t tenths = s_eq_staged_preamp_tenths;
-    s_eq_preamp = tenths >= 0 ? 1.0f : powf(10.0f, (float)tenths / 200.0f);
+    /*
+     * The headroom is computed from the filters that were just built, not
+     * taken from a setting. It is a function of them and nothing else, so
+     * storing it separately only creates a way for the two to disagree --
+     * which they would the moment somebody edited a vector by hand.
+     */
+    s_eq_preamp = oal_eq_headroom(s_eq_staged, OAL_RTP_CHANNELS, OAL_RTP_SAMPLE_RATE);
 
     /* Enabled only if there is something to run. A switch turned on over an
      * empty vector would cost a branch per chunk and change nothing. */
     s_eq_enabled = s_eq_staged_enabled
         && (oal_eq_chain_active(&s_eq[0]) || oal_eq_chain_active(&s_eq[1]));
 
-    ESP_LOGI(TAG, "room correction %s: %u + %u bands, preamp %d.%u dB",
+    ESP_LOGI(TAG, "room correction %s: %u + %u bands, headroom %.1f dB",
              s_eq_enabled ? "on" : "off",
              (unsigned)s_eq[0].count, (unsigned)s_eq[1].count,
-             tenths / 10, (unsigned)(tenths < 0 ? -(tenths % 10) : tenths % 10));
+             (double)(20.0f * log10f(s_eq_preamp)));
+}
+
+/**
+ * The headroom the running correction is taking, in dB. Zero when it is off
+ * or when nothing boosts.
+ */
+float oal_playout_eq_headroom_db(void)
+{
+    if (!s_eq_enabled || s_eq_preamp >= 1.0f) {
+        return 0.0f;
+    }
+    return 20.0f * log10f(s_eq_preamp);
 }
 
 void oal_playout_set_eq(const oal_eq_curve_t *left, const oal_eq_curve_t *right,
-                        bool enabled, int16_t preamp_tenths)
+                        bool enabled)
 {
     /*
      * Staged, not applied. The chains belong to the playout task and this
@@ -597,7 +613,6 @@ void oal_playout_set_eq(const oal_eq_curve_t *left, const oal_eq_curve_t *right,
         s_eq_staged[1] = *right;
     }
     s_eq_staged_enabled = enabled;
-    s_eq_staged_preamp_tenths = preamp_tenths;
     s_eq_pending = true;
 }
 

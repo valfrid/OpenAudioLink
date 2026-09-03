@@ -28,7 +28,6 @@ static const char *TAG = "oal_config";
 #define NVS_KEY_EQ_LEFT "eq_l"
 #define NVS_KEY_EQ_RIGHT "eq_r"
 #define NVS_KEY_EQ_ON "eq_on"
-#define NVS_KEY_EQ_PREAMP "eq_pre"
 
 /* Listed in ARCHITECTURE.md section 2 order, so formatted output always
  * reads the same way regardless of the order roles were set in — and the
@@ -622,13 +621,11 @@ esp_err_t oal_config_set_mic_gain_db(uint8_t db)
  *                means deleting a profile and measuring again to get it
  *                back -- so nobody would ever check, which is the one
  *                thing worth checking.
- *   eq_pre       headroom for the boosts, in tenths of a decibel, as a
- *                NEGATIVE number.
  *
- * The preamp is one value for the node rather than one per channel, and
- * that is deliberate: it is a broadband gain, so different values on left
- * and right would move the stereo image sideways. The Hub works out both
- * channels' needs and sends the deeper of the two.
+ * There is deliberately no headroom setting. It is a function of the
+ * filters, so the playout computes it from them -- a stored figure could
+ * only be a second opinion about the same arithmetic, and it would be the
+ * wrong one the moment somebody edited a vector by hand.
  */
 static esp_err_t get_eq_text(const char *key, char *out, size_t size)
 {
@@ -721,42 +718,6 @@ esp_err_t oal_config_set_eq_enabled(bool on)
     return err;
 }
 
-int16_t oal_config_get_eq_preamp_tenths(void)
-{
-    nvs_handle_t nvs;
-    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
-        return 0;
-    }
-    int16_t stored = 0;
-    esp_err_t err = nvs_get_i16(nvs, NVS_KEY_EQ_PREAMP, &stored);
-    nvs_close(nvs);
-
-    if (err != ESP_OK || stored > 0 || stored < OAL_EQ_PREAMP_MIN_TENTHS) {
-        return 0;
-    }
-    return stored;
-}
-
-esp_err_t oal_config_set_eq_preamp_tenths(int16_t tenths)
-{
-    /* Attenuation only. A preamp that boosts is not headroom, it is a
-     * volume control that can clip, and there is one of those already. */
-    if (tenths > 0 || tenths < OAL_EQ_PREAMP_MIN_TENTHS) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = nvs_set_i16(nvs, NVS_KEY_EQ_PREAMP, tenths);
-    if (err == ESP_OK) {
-        err = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return err;
-}
-
 /**
  * Reads the stored correction and hands it to the playout.
  *
@@ -778,7 +739,5 @@ void oal_config_apply_eq(void)
         (void)oal_eq_parse(text, &right);
     }
 
-    oal_playout_set_eq(&left, &right,
-                       oal_config_get_eq_enabled(),
-                       oal_config_get_eq_preamp_tenths());
+    oal_playout_set_eq(&left, &right, oal_config_get_eq_enabled());
 }

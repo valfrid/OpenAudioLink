@@ -1203,7 +1203,11 @@ and swap supplies between two nodes to find out.">Clock</th>
               + ` <button data-cmd="eq" data-id="${esc(d.id)}" `
               + `data-on="${s.eqEnabled ? 'false' : 'true'}">`
               + `Turn ${s.eqEnabled ? 'off' : 'on'}</button>`],
-            ['Headroom', s.eqPreampDb != null ? `${esc(s.eqPreampDb)} dB` : '—'],
+            // Derived by the node from the vectors below, not a setting.
+            // A stored figure would go stale the moment one was edited by
+            // hand, and the speaker would clip with nothing to say why.
+            ['Headroom', s.eqPreampDb != null
+              ? `${esc(s.eqPreampDb)} dB <span class="muted">(from the filters)</span>` : '—'],
           ])
           + `<div class="kv"><span class="muted">Left</span>${eqField('left', s.eqLeft)}</div>`
           + `<div class="kv"><span class="muted">Right</span>${eqField('right', s.eqRight)}</div>`

@@ -181,6 +181,96 @@ bool oal_eq_chain_active(const oal_eq_chain_t *chain)
     return chain != NULL && chain->count > 0;
 }
 
+/*
+ * The magnitude of one peaking filter, in dB, worked out from its design
+ * rather than from its stored coefficients, and in double.
+ *
+ * Both of those are necessary and the first version had neither. |H|^2 is a
+ * sum of terms around 8 that cancels to about 5e-5 at 100 Hz — five digits
+ * gone, and single precision only has seven. Computed from the float
+ * coefficients in float, a +6 dB filter reported 0.00 dB at its own centre,
+ * which as a headroom means "this correction costs nothing" about a
+ * correction that clips.
+ *
+ * This runs when a correction changes, a few hundred times, never per
+ * sample — so software-emulated double on the S3 costs nothing that
+ * matters. It is also exactly what the Hub does to draw the predicted
+ * curve, so the headroom the node takes and the correction the Hub promised
+ * come from one piece of arithmetic.
+ */
+static double band_db(const oal_eq_band_t *band, double hz, int sample_rate)
+{
+    double a = pow(10.0, (double)band->gain_db / 40.0);
+    double w = 2.0 * (double)OAL_EQ_PI * (double)band->hz / sample_rate;
+    double alpha = sin(w) / (2.0 * (double)band->q);
+    double cosw = cos(w);
+
+    double b0 = 1.0 + alpha * a, b1 = -2.0 * cosw, b2 = 1.0 - alpha * a;
+    double a0 = 1.0 + alpha / a, a1 = -2.0 * cosw, a2 = 1.0 - alpha / a;
+    b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+
+    double w2 = 2.0 * (double)OAL_EQ_PI * hz / sample_rate;
+    double c1 = cos(w2), c2 = cos(2.0 * w2);
+    double num = b0 * b0 + b1 * b1 + b2 * b2
+               + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
+    double den = 1.0 + a1 * a1 + a2 * a2
+               + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
+
+    if (!(num > 0.0) || !(den > 0.0)) {
+        return 0.0;
+    }
+    return 10.0 * log10(num / den);
+}
+
+float oal_eq_curve_db(const oal_eq_curve_t *curve, float hz, int sample_rate)
+{
+    if (curve == NULL || sample_rate <= 0 || hz <= 0.0f) {
+        return 0.0f;
+    }
+
+    double total = 0.0;
+    for (uint8_t i = 0; i < curve->count && i < OAL_EQ_MAX_BANDS; i++) {
+        total += band_db(&curve->bands[i], (double)hz, sample_rate);
+    }
+    return (float)total;
+}
+
+float oal_eq_headroom(const oal_eq_curve_t *curves, uint8_t count, int sample_rate)
+{
+    if (curves == NULL || count == 0 || sample_rate <= 0) {
+        return 1.0f;
+    }
+
+    /*
+     * Swept across the audible band rather than evaluated at the filters'
+     * own centres. Two bands close together peak BETWEEN them, and a
+     * headroom taken only at the centres would miss it.
+     *
+     * 240 points from 20 Hz to 20 kHz, which is the grid the Hub's
+     * measurement uses — so the two arrive at the same number.
+     */
+    double worst = 0.0;
+    for (int i = 0; i < 240; i++) {
+        double hz = 20.0 * pow(1000.0, (double)i / 239.0);
+        for (uint8_t c = 0; c < count; c++) {
+            double db = 0.0;
+            for (uint8_t b = 0; b < curves[c].count && b < OAL_EQ_MAX_BANDS; b++) {
+                db += band_db(&curves[c].bands[b], hz, sample_rate);
+            }
+            if (db > worst) {
+                worst = db;
+            }
+        }
+    }
+
+    if (worst <= 0.0) {
+        return 1.0f;   /* nothing boosts; nothing to pay for */
+    }
+    /* Up to the next half decibel, the way the Hub reports it. */
+    worst = ceil(worst * 2.0) / 2.0;
+    return (float)pow(10.0, -worst / 20.0);
+}
+
 void oal_eq_chain_run(
     oal_eq_chain_t *chain, int32_t *samples, size_t frames, size_t stride, float gain)
 {

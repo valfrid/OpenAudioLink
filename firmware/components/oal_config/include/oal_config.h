@@ -185,13 +185,6 @@ typedef enum {
 } oal_channel_side_t;
 
 /**
- * The deepest preamp attenuation, in tenths of a decibel. Twenty decibels
- * is far past anything a conservative correction asks for; it is a fence
- * against a typing slip, not a policy.
- */
-#define OAL_EQ_PREAMP_MIN_TENTHS (-200)
-
-/**
  * Reads one channel's vector. An empty string when there is none, which is
  * also how a correction is cleared.
  */
@@ -218,18 +211,6 @@ esp_err_t oal_config_set_eq(oal_channel_side_t side, const char *text);
 bool oal_config_get_eq_enabled(void);
 
 esp_err_t oal_config_set_eq_enabled(bool on);
-
-/**
- * Headroom for the correction's boosts, in tenths of a decibel, negative.
- *
- * One value for the node rather than one per channel, deliberately: it is a
- * broadband gain, so different values left and right would move the stereo
- * image sideways. The Hub works out what each channel needs and sends the
- * deeper of the two.
- */
-int16_t oal_config_get_eq_preamp_tenths(void);
-
-esp_err_t oal_config_set_eq_preamp_tenths(int16_t tenths);
 
 /**
  * Reads the stored correction and hands it to the playout. Called at boot

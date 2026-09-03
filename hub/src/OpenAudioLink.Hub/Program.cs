@@ -991,15 +991,16 @@ app.MapPost("/api/recordings/{file}/correction",
  * Send a fitted correction to a loudspeaker, and close the loop.
  *
  * Takes the measurements rather than coefficients: which recording is the
- * left speaker and which the right. The Hub fits both, works out the one
- * piece that cannot be decided per channel -- the headroom -- and writes
- * the pair in a single request.
+ * left speaker and which the right. The Hub fits both and writes the pair
+ * in a single request, so a node is never left running one channel's
+ * correction against the other's.
  *
- * **The preamp is the deeper of the two.** It is a broadband attenuation,
- * so different values left and right would move the stereo image sideways
- * by the difference. Each channel needs at least its own; the node gets the
- * larger need, and the channel that needed less is simply quieter by the
- * same amount as its partner, which is what keeps the image where it was.
+ * **The headroom is not sent.** It is a function of the filters, so the
+ * node derives it from the vectors it holds -- one figure across both
+ * channels, because it is a broadband attenuation and different values
+ * left and right would move the stereo image sideways. Sending one as well
+ * would be a second opinion about the same arithmetic, and it would be the
+ * wrong one the moment somebody edited a vector by hand.
  *
  * Either side may be omitted -- a mono node has one loudspeaker, and only
  * one may have been measured so far. An omitted side is cleared rather than
@@ -1045,11 +1046,10 @@ app.MapPost("/api/devices/{id}/correction",
                    + $"{f.Q.ToString("0.00", CultureInfo.InvariantCulture)}/"
                    + $"{f.GainDb.ToString("0.0", CultureInfo.InvariantCulture)}"));
 
-    var preamp = Math.Min(fitted["left"]?.PreampDb ?? 0, fitted["right"]?.PreampDb ?? 0);
     var enabled = request.Enabled ?? true;
 
     var ok = await commands.SetCorrectionAsync(
-        device, Vector(fitted["left"]), Vector(fitted["right"]), preamp, enabled, cancellationToken);
+        device, Vector(fitted["left"]), Vector(fitted["right"]), enabled, cancellationToken);
     if (!ok)
     {
         return Results.StatusCode(502);
@@ -1059,7 +1059,10 @@ app.MapPost("/api/devices/{id}/correction",
     {
         device = device.Name,
         enabled,
-        preampDb = preamp,
+        // What the fit expects it to cost. The node computes its own from
+        // the vectors, and /status reports that -- this is the prediction,
+        // and the two should agree.
+        preampDb = Math.Min(fitted["left"]?.PreampDb ?? 0, fitted["right"]?.PreampDb ?? 0),
         left = new { vector = Vector(fitted["left"]), notes = fitted["left"]?.Notes ?? [] },
         right = new { vector = Vector(fitted["right"]), notes = fitted["right"]?.Notes ?? [] },
     });
