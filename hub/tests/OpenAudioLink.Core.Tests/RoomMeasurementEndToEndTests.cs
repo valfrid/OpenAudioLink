@@ -17,7 +17,7 @@ namespace OpenAudioLink.Core.Tests;
 /// </remarks>
 public class RoomMeasurementEndToEndTests
 {
-    /// <summary>A peaking filter standing in for a room mode.</summary>
+    /// <summary>A peaking filter, applied in place.</summary>
     private static void Filter(double[] audio, double frequency, double q, double gainDb, int rate)
     {
         double a = Math.Pow(10.0, gainDb / 40.0);
@@ -117,6 +117,103 @@ public class RoomMeasurementEndToEndTests
         Assert.Equal(240, response.FrequenciesHz.Count);
         Assert.Equal(20.0, response.FrequenciesHz[0], 6);
         Assert.Equal(20000.0, response.FrequenciesHz[^1], 6);
+    }
+
+    /// <summary>
+    /// A room that rings, which is the case the first real measurement
+    /// broke on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other test here uses a room whose response is over in a few
+    /// milliseconds, and all of them passed while the analyser was getting
+    /// a real living room half a second wrong. The coarse alignment looks
+    /// for the quiet part of the cycle, and the room is still ringing when
+    /// the gap starts — so the quietest window is the one shifted past the
+    /// reverberation, and the arrival is reported late by about the decay
+    /// time. Late enough and the direct sound falls *before* the analysis
+    /// window, which is what the warning caught.
+    /// </para>
+    /// <para>
+    /// The room is built as a real impulse response — a direct arrival
+    /// with an exponentially decaying noise tail, coloured by a known
+    /// peaking filter — and applied by convolution, so the recording is
+    /// the periodic steady state the analyser assumes rather than an
+    /// approximation of it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_room_that_rings_for_half_a_second_still_aligns()
+    {
+        var signal = new SweepSignal();
+        int rate = signal.SampleRate;
+        int cycle = signal.CycleFrames;
+
+        // Direct sound 4 ms in, then 0.5 s of decaying noise: a T60 of
+        // about 0.45 s, which is an ordinary furnished room.
+        const int direct = 192;
+        const int tail = 24_000;
+        var room = new double[direct + tail];
+        var random = new Random(9);
+        room[direct] = 1.0;
+        for (int n = 1; n < tail; n++)
+        {
+            room[direct + n] = 0.5 * Math.Exp(-n / 3127.0) * (random.NextDouble() * 2 - 1);
+        }
+        // Below the 200 Hz-2 kHz band the curve is levelled against, so
+        // the levelling cannot absorb part of the very peak being looked
+        // for. A bass mode is the thing this feature exists to find.
+        Filter(room, frequency: 100, q: 3, gainDb: 8, rate: rate);
+
+        // One cycle of the steady-state response, by convolution. The
+        // sweep's own silent gap is longer than the room, so the linear
+        // convolution and the periodic one are the same sequence — which
+        // is the assumption the analyser rests on, made explicit here.
+        int size = Fft.NextPowerOfTwo(cycle);
+        var re = new double[size];
+        var im = new double[size];
+        for (int n = 0; n < cycle; n++)
+        {
+            re[n] = signal.SampleAt(n);
+        }
+        Fft.Forward(re, im);
+
+        var roomRe = new double[size];
+        var roomIm = new double[size];
+        room.CopyTo(roomRe, 0);
+        Fft.Forward(roomRe, roomIm);
+
+        for (int k = 0; k < size; k++)
+        {
+            double productRe = re[k] * roomRe[k] - im[k] * roomIm[k];
+            im[k] = re[k] * roomIm[k] + im[k] * roomRe[k];
+            re[k] = productRe;
+        }
+        Fft.Inverse(re, im);
+
+        // Six cycles of it, starting 3.1 s in, because nobody presses
+        // record on a cycle boundary.
+        const int offset = 150_000;
+        int frames = 6 * cycle;
+        var audio = new double[frames];
+        for (int n = 0; n < frames; n++)
+        {
+            audio[n] = re[(n + offset) % cycle];
+        }
+
+        double loudest = audio.Max(Math.Abs);
+        for (int n = 0; n < frames; n++)
+        {
+            audio[n] *= 0.707 / loudest;
+        }
+
+        var response = SweepAnalyser.Analyse(audio, signal);
+
+        Assert.Empty(response.Warnings);
+        Assert.Equal(0.25, response.ImpulsePeakSeconds, 2);
+        Assert.Equal(8.0, At(response, 100), 2.0);
+        Assert.Equal(0.0, At(response, 500), 2.0);
+        Assert.Equal(0.0, At(response, 5000), 2.0);
     }
 
     private static double At(RoomResponse response, double frequency)

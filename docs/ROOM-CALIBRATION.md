@@ -686,12 +686,13 @@ bookkeeping that makes that division legitimate.
    is folded on the cycle and the cycles are averaged. Noise is
    uncorrelated between them and falls as the square root of their number;
    the sweep is not and does not. This is why the sweep repeats at all.
-2. **Align first.** The recording starts whenever somebody pressed the
+2. **Align, twice.** The recording starts whenever somebody pressed the
    button. Folding at the wrong phase *rotates* the response rather than
    delaying it, and no division undoes a rotation. The phase is found by
    looking for the silence — the gap has an edge, while a logarithmic
    sweep's autocorrelation peak is broad and dominated by its bottom
-   octave.
+   octave. Then it is found again, properly, from the impulse response
+   itself (see below).
 3. **Divide, with a floor.** `H = Y·conj(X) / (|X|² + ε)`. Outside the
    swept band the sweep has no energy at all, and the unregularised
    quotient there is the microphone's own noise multiplied by an
@@ -707,6 +708,36 @@ bookkeeping that makes that division legitimate.
    logarithmically spaced points, then slid so that 200 Hz–2 kHz sits at
    0 dB. The absolute level would be a property of the microphone's
    sensitivity, which is not calibrated; the shape is the measurement.
+
+### Why the alignment needs two passes
+
+The first real measurement taken with this — a living room, eighty seconds,
+six sweeps averaged at 24 dB above the noise — came back with the direct
+sound landing 10.70 s into a 10.92 s buffer instead of at 0.25 s. That is
+not "late": the transform is circular, so it means the direct sound arrived
+0.22 s *before* the analysis window started. The alignment had reported the
+sweep as arriving about half a second later than it did.
+
+The cause is in the method, not in a mistake. Looking for the quiet part of
+the cycle finds the gap, but **the room is still ringing when the gap
+begins**. The quietest window is therefore not the one that starts where
+the sweep ends — it is the one shifted past the reverberation. So the
+search reports the arrival late by roughly the room's decay time, and every
+test written until then used a room that stopped ringing in a few
+milliseconds and so never showed it.
+
+The impulse response has no such bias: it says exactly where the direct
+sound is. So the fold is done a second time with the peak placed on the
+margin where it belongs. It converges in one step, because the correction
+is a measurement rather than an estimate — and the warning stays, for the
+case where re-aligning does not fix it, which now means either the file is
+not a recording of the sweep or the room rings for longer than the gap.
+
+The regression test builds a room as a real impulse response — direct
+arrival plus half a second of exponentially decaying noise, coloured by a
+known peaking filter — and applies it by convolution, so the recording is
+the periodic steady state the analyser assumes rather than an approximation
+of it. With one pass it fails; with two it recovers the mode.
 
 ### Why zero-padding the transform is exact
 

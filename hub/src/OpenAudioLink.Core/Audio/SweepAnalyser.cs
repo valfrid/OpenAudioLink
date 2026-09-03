@@ -131,11 +131,16 @@ public sealed record RoomResponse
 /// and falls as the square root of their number; the sweep does not.
 /// </para>
 /// <para>
-/// <b>Alignment.</b> The recording starts whenever somebody pressed the
-/// button. Folding at the wrong phase would rotate the response rather than
-/// delay it, and a rotation is not something a division can undo — so the
-/// silent part of the cycle is found first, by the direct method of looking
-/// for where the energy is not.
+/// <b>Alignment, twice.</b> The recording starts whenever somebody pressed
+/// the button. Folding at the wrong phase would rotate the response rather
+/// than delay it, and a rotation is not something a division can undo — so
+/// the silent part of the cycle is found first, by the direct method of
+/// looking for where the energy is not. That pass is biased late, because
+/// the room is still ringing when the gap begins and the quietest window is
+/// the one shifted past the reverberation. So the fold is done again, this
+/// time placing the impulse response's own peak where it belongs. The
+/// second pass is a measurement rather than an estimate, so it converges in
+/// one step.
 /// </para>
 /// <para>
 /// <b>Why the padding is exact.</b> Dividing spectra is a circular
@@ -195,50 +200,16 @@ public static class SweepAnalyser
                 + "Lower the microphone gain or the speaker and measure again.");
         }
 
-        int arrival = FindSweepArrival(recording, cycle, sweep);
         // Never more than a quarter of the gap: the margin buys slack in
         // front of the response, and the rest of the gap is what the
         // response itself is allowed to occupy before it wraps.
         int margin = Math.Clamp(
             (int)Math.Round(options.AlignMarginSeconds * rate), 0, Math.Max(1, (cycle - sweep) / 4));
-        int start = ((arrival - margin) % cycle + cycle) % cycle;
-
-        // The first cycle is skipped: the receiver is still filling its
-        // buffer, and a sweep half of which was sent before the recorder
-        // opened its socket would be averaged in as a quieter one.
-        int first = start + cycle;
-        int cycles = (recording.Length - first) / cycle;
-        if (cycles < 1)
-        {
-            first = start;
-            cycles = (recording.Length - first) / cycle;
-            warnings.Add("Only one whole sweep was recorded; there was nothing to average.");
-        }
-
-        var folded = new double[cycle];
-        for (int k = 0; k < cycles; k++)
-        {
-            int at = first + k * cycle;
-            for (int n = 0; n < cycle; n++)
-            {
-                folded[n] += recording[at + n];
-            }
-        }
-        for (int n = 0; n < cycle; n++)
-        {
-            folded[n] /= cycles;
-        }
-
-        double snr = SignalToNoise(folded, margin, sweep, rate);
-        if (snr < 20)
-        {
-            warnings.Add(
-                $"Only {snr:0} dB of sweep above the room's noise. The quiet end of the curve "
-                + "is noise; play it louder, record for longer, or measure in a quieter room.");
-        }
 
         int size = Fft.NextPowerOfTwo(cycle);
 
+        // The reference does not depend on where the fold starts, so it is
+        // transformed once however many times the fold moves.
         var referenceRe = new double[size];
         var referenceIm = new double[size];
         for (int n = 0; n < cycle; n++)
@@ -247,18 +218,13 @@ public static class SweepAnalyser
         }
         Fft.Forward(referenceRe, referenceIm);
 
-        var measuredRe = new double[size];
-        var measuredIm = new double[size];
-        folded.CopyTo(measuredRe, 0);
-        Fft.Forward(measuredRe, measuredIm);
-
         /*
-         * H = Y * conj(X) / (|X|^2 + e), which is the division with a floor
-         * under it. Outside the swept band |X| is nothing at all, and the
-         * unregularised quotient there is the microphone's own noise
-         * multiplied by an arbitrarily large number — a spectacular curve
-         * describing nothing. With the floor it goes quietly to zero, which
-         * is the honest answer for a band that was never excited.
+         * The floor under the division. Outside the swept band |X| is
+         * nothing at all, and the unregularised quotient there is the
+         * microphone's own noise multiplied by an arbitrarily large number
+         * — a spectacular curve describing nothing. With the floor it goes
+         * quietly to zero, which is the honest answer for a band that was
+         * never excited.
          */
         double strongest = 0;
         for (int k = 0; k < size; k++)
@@ -271,44 +237,69 @@ public static class SweepAnalyser
         }
         double floor = strongest * options.Regularisation;
 
-        var responseRe = new double[size];
-        var responseIm = new double[size];
-        for (int k = 0; k < size; k++)
-        {
-            double power = referenceRe[k] * referenceRe[k] + referenceIm[k] * referenceIm[k] + floor;
-            responseRe[k] = (measuredRe[k] * referenceRe[k] + measuredIm[k] * referenceIm[k]) / power;
-            responseIm[k] = (measuredIm[k] * referenceRe[k] - measuredRe[k] * referenceIm[k]) / power;
-        }
+        /*
+         * Two passes, because the energy search is biased and the
+         * deconvolution is not.
+         *
+         * Looking for the quiet part of the cycle finds the gap, but the
+         * room is still ringing when the gap begins — so the quietest
+         * window is not the one that starts where the sweep ends, it is
+         * the one shifted past the reverberation. The search therefore
+         * reports the sweep as arriving late, by about the room's decay
+         * time. Measured in a real room it was half a second out, which
+         * put the direct sound *before* the start of the analysis window
+         * and made the whole curve untrustworthy.
+         *
+         * The impulse response says exactly where the direct sound is, so
+         * the second pass folds again with the peak put on the margin
+         * where it belongs. It converges in one step because the
+         * correction is a measurement rather than an estimate.
+         */
+        int start = ((FindSweepArrival(recording, cycle, sweep) - margin) % cycle + cycle) % cycle;
+        int settled = Math.Max(1, rate / 500);   // 2 ms; below this nothing moves
 
-        Fft.Inverse(responseRe, responseIm);
-
+        double[] folded = [];
+        double[] responseRe = [];
+        int cycles = 0;
         int peakAt = 0;
-        double peakLevel = 0;
-        for (int n = 0; n < size; n++)
+        bool aligned = false;
+
+        for (int pass = 0; pass < 3 && !aligned; pass++)
         {
-            double magnitude = Math.Abs(responseRe[n]);
-            if (magnitude > peakLevel)
+            (folded, cycles) = Fold(recording, cycle, start, warnings, pass == 0);
+            responseRe = Deconvolve(folded, referenceRe, referenceIm, size, floor);
+
+            // Past the halfway point is not a late arrival, it is an early
+            // one: the transform is circular, so index size-1 is the sample
+            // before zero.
+            peakAt = PeakOf(responseRe);
+            if (peakAt > size / 2)
             {
-                peakLevel = magnitude;
-                peakAt = n;
+                peakAt -= size;
+            }
+
+            aligned = Math.Abs(peakAt - margin) <= settled;
+            if (!aligned)
+            {
+                start = ((start + peakAt - margin) % cycle + cycle) % cycle;
             }
         }
 
-        /*
-         * The peak should land on the margin: the fold starts that far
-         * before the arrival, so that is where the direct sound belongs.
-         * Somewhere else means the alignment locked onto the wrong edge —
-         * a room with a long decay, a recording of something that is not
-         * this sweep — and every number after this point is then a
-         * measurement of whatever it did find.
-         */
-        int drift = Math.Abs(peakAt - margin);
-        if (drift > (cycle - sweep) / 2)
+        if (!aligned)
         {
             warnings.Add(
-                $"The direct sound landed {(double)peakAt / rate:0.00} s into the window rather than "
-                + $"near {(double)margin / rate:0.00} s. The alignment did not find the sweep, and the "
-                + "curve is not a measurement of this room.");
+                $"The direct sound settled {(double)peakAt / rate:0.00} s into the window rather than "
+                + $"at {(double)margin / rate:0.00} s, and re-aligning did not fix it. Either this is "
+                + "not a recording of the sweep, or the room rings for longer than the gap between "
+                + "sweeps. The curve is not a measurement of this room.");
+        }
+
+        double snr = SignalToNoise(folded, margin, sweep, rate);
+        if (snr < 20)
+        {
+            warnings.Add(
+                $"Only {snr:0} dB of sweep above the room's noise. The quiet end of the curve "
+                + "is noise; play it louder, record for longer, or measure in a quieter room.");
         }
 
         var impulse = Window(responseRe, peakAt, rate, options);
@@ -338,16 +329,110 @@ public static class SweepAnalyser
     }
 
     /// <summary>
+    /// Averages every whole cycle from <paramref name="start"/> onwards.
+    /// </summary>
+    /// <param name="skipFirst">
+    /// Whether to throw the first cycle away. It is: the receiver is still
+    /// filling its buffer, and a sweep half of which was sent before the
+    /// recorder opened its socket would be averaged in as a quieter one.
+    /// Only warned about on the first pass, so re-aligning does not say it
+    /// twice.
+    /// </param>
+    private static (double[] Folded, int Cycles) Fold(
+        ReadOnlySpan<double> recording, int cycle, int start, List<string> warnings, bool skipFirst)
+    {
+        int first = start + cycle;
+        int cycles = (recording.Length - first) / cycle;
+        if (cycles < 1)
+        {
+            first = start;
+            cycles = (recording.Length - first) / cycle;
+            if (skipFirst)
+            {
+                warnings.Add("Only one whole sweep was recorded; there was nothing to average.");
+            }
+        }
+
+        var folded = new double[cycle];
+        for (int k = 0; k < cycles; k++)
+        {
+            int at = first + k * cycle;
+            for (int n = 0; n < cycle; n++)
+            {
+                folded[n] += recording[at + n];
+            }
+        }
+        for (int n = 0; n < cycle; n++)
+        {
+            folded[n] /= cycles;
+        }
+        return (folded, cycles);
+    }
+
+    /// <summary>
+    /// What came back divided by what went out:
+    /// <c>H = Y·conj(X) / (|X|² + floor)</c>, transformed back to an
+    /// impulse response.
+    /// </summary>
+    private static double[] Deconvolve(
+        double[] folded, double[] referenceRe, double[] referenceIm, int size, double floor)
+    {
+        var measuredRe = new double[size];
+        var measuredIm = new double[size];
+        folded.CopyTo(measuredRe, 0);
+        Fft.Forward(measuredRe, measuredIm);
+
+        var responseRe = new double[size];
+        var responseIm = new double[size];
+        for (int k = 0; k < size; k++)
+        {
+            double power = referenceRe[k] * referenceRe[k] + referenceIm[k] * referenceIm[k] + floor;
+            responseRe[k] = (measuredRe[k] * referenceRe[k] + measuredIm[k] * referenceIm[k]) / power;
+            responseIm[k] = (measuredIm[k] * referenceRe[k] - measuredRe[k] * referenceIm[k]) / power;
+        }
+
+        Fft.Inverse(responseRe, responseIm);
+        return responseRe;
+    }
+
+    /// <summary>Where the direct sound is: the largest excursion, sign ignored.</summary>
+    private static int PeakOf(double[] response)
+    {
+        int at = 0;
+        double level = 0;
+        for (int n = 0; n < response.Length; n++)
+        {
+            double magnitude = Math.Abs(response[n]);
+            if (magnitude > level)
+            {
+                level = magnitude;
+                at = n;
+            }
+        }
+        return at;
+    }
+
+    /// <summary>
     /// The phase within the cycle at which the sweep arrives, found by
     /// looking for the quiet part rather than for the loud one.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Correlating against the sweep would seem more direct and is worse:
     /// a logarithmic sweep's autocorrelation is broad and dominated by its
     /// bottom octave, so the peak is soft and moves with the room. The
     /// silence has an edge. Power is folded onto one cycle first, so every
     /// repetition votes, and a prefix sum makes the search over every
     /// possible phase a single pass.
+    /// </para>
+    /// <para>
+    /// <b>It is biased late and that is expected.</b> The room is still
+    /// ringing when the gap begins, so the quietest window is not the one
+    /// starting where the sweep ends but the one shifted past the
+    /// reverberation — which reports the arrival late by about the decay
+    /// time. This is a coarse pass on purpose; the caller re-folds on the
+    /// impulse response, which has no such bias.
+    /// </para>
     /// </remarks>
     private static int FindSweepArrival(ReadOnlySpan<double> recording, int cycle, int sweep)
     {
