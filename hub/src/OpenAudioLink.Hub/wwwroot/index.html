@@ -508,8 +508,6 @@ and swap supplies between two nodes to find out.">Clock</th>
     <label>Left speaker <select id="rc-left"></select></label>
     <label>Right speaker <select id="rc-right"></select></label>
     <button id="rc-apply">Write correction</button>
-    <button id="rc-on">Correction on</button>
-    <button id="rc-off">Correction off</button>
   </div>
   <p id="rc-status" class="hint">
     Writing sends both vectors, the shared headroom and the switch in one
@@ -520,7 +518,8 @@ and swap supplies between two nodes to find out.">Clock</th>
     <br>
     <strong>Then measure again with the correction on</strong>, name it
     "after", and put the two curves on the chart. That is the only thing
-    that says whether it worked.
+    that says whether it worked. The on/off switch lives beside each
+    speaker in the device table, next to the vectors it applies.
   </p>
   <details id="rr-table-view">
     <summary class="hint">The numbers, at third-octave centres</summary>
@@ -1187,9 +1186,16 @@ and swap supplies between two nodes to find out.">Clock</th>
       const correction = !hasEq
         ? '<p class="hint">This node\'s firmware predates room correction.</p>'
         : cell([
-            ['Correction', s.eqEnabled
-              ? '<strong>on</strong>'
-              : '<span class="muted">off</span>'],
+            // The switch belongs beside the state it changes. It was in the
+            // measurement panel, which meant picking the speaker a second
+            // time to flip something already on screen -- and the point of
+            // the switch is that flipping it is easy enough to actually do
+            // while the music plays.
+            ['Correction',
+              (s.eqEnabled ? '<strong>on</strong>' : '<span class="muted">off</span>')
+              + ` <button data-cmd="eq" data-id="${esc(d.id)}" `
+              + `data-on="${s.eqEnabled ? 'false' : 'true'}">`
+              + `Turn ${s.eqEnabled ? 'off' : 'on'}</button>`],
             ['Headroom', s.eqPreampDb != null ? `${esc(s.eqPreampDb)} dB` : '—'],
           ])
           + `<div class="kv"><span class="muted">Left</span>${eqField('left', s.eqLeft)}</div>`
@@ -2511,6 +2517,21 @@ and swap supplies between two nodes to find out.">Clock</th>
         } else {
           expandedDevices.add(id);
         }
+        refreshDevices();
+        return;
+      }
+      if (button.dataset.cmd === 'eq') {
+        const on = button.dataset.on === 'true';
+        button.disabled = true;
+        const response = await fetch(
+          `/api/devices/${encodeURIComponent(id)}/correction/enabled`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: on }),
+          });
+        say(response.ok
+          ? `Room correction ${on ? 'on' : 'off'}. The coefficients are kept either way.`
+          : 'Could not switch the correction.');
         refreshDevices();
         return;
       }
@@ -4204,29 +4225,7 @@ and swap supplies between two nodes to find out.">Clock</th>
       refreshDevices();
     }
 
-    async function switchCorrection(on) {
-      const status = document.getElementById('rc-status');
-      const device = document.getElementById('rc-device').value;
-      if (!device) {
-        status.textContent = 'Pick a speaker first.';
-        return;
-      }
-      const response = await fetch(
-        `/api/devices/${encodeURIComponent(device)}/correction/enabled`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: on }),
-        });
-      const answer = await response.json().catch(() => ({}));
-      status.textContent = response.ok
-        ? `Correction ${on ? 'on' : 'off'} on ${answer.device}. `
-          + 'The coefficients are kept either way — flip it while music plays.'
-        : `Could not switch it: ${answer.error ?? response.status}`;
-    }
-
     document.getElementById('rc-apply').addEventListener('click', writeCorrection);
-    document.getElementById('rc-on').addEventListener('click', () => switchCorrection(true));
-    document.getElementById('rc-off').addEventListener('click', () => switchCorrection(false));
 
     async function fitCorrection(file) {
       const summary = document.getElementById('rr-summary');
