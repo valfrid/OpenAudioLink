@@ -827,10 +827,121 @@ to invent a colour nothing was validated for. Two of the four fall below
 every curve is in the legend, named in the hover readout, and present in
 the third-octave table under the chart.
 
+## Where the analysis runs, and why it is not in a cloud
+
+**On the Hub. Deterministically, and offline.** This was a real question —
+an assistant reading the curves has been useful all through this feature —
+so the reasoning is written down rather than left as a habit:
+
+1. **Local-first is the project's first principle.** A calibration that
+   needs a network service to finish is a feature that stops working when
+   the internet does, and stops working permanently for anyone who clones
+   this repository. Room correction has to work for a stranger with no
+   account.
+2. **It has to be deterministic.** These coefficients go into a
+   loudspeaker's NVS and change what it sounds like. The same recording
+   must produce the same filters every time, and "why is it different
+   today" must have an answer. A language model is not a function.
+3. **It has to be testable against known answers.** That is how the
+   alignment bias was caught — a synthetic room with the answer written
+   down in advance — and every rule in the fitter has such a test. No such
+   test can be written around a network call.
+4. **It is not hard.** Peak-picking a smoothed curve and fitting peaking
+   biquads is arithmetic, not machine learning.
+5. **It closes the loop**, which is the point: measure, fit, write,
+   re-measure, see that it worked, on one machine.
+
+### What an assistant is actually for here
+
+Not producing coefficients. **Judging measurements.** Everything an
+assistant contributed to this feature was judgement about what a
+measurement *means*: that the rise above 12 kHz is the microphone and must
+not be corrected, that the 100 Hz peak appears on both loudspeakers so it
+is not a loudspeaker, that the bottom octave is noise, that the alignment
+was biased by reverberation. That happens a few times in a project, not
+once per measurement.
+
+And it is answered from data, not from screenshots — those lose the
+precision, lose the metadata, and cannot be diffed against last month's.
+Hence `GET /api/measurements/export`: one file with every curve, every
+microphone position, both channels, the fitted corrections, and the device
+and firmware versions that produced them. Two measurements come to about
+27 kB.
+
+The other place a conversation earns its keep is deciding the **policy**
+once — the band, the limits, what may be touched at all. That is the
+section below. It is encoded in code, not re-decided per room.
+
+## Fitting a correction
+
+`RoomCorrection.Fit` turns a curve into a few peaking biquads and a preamp.
+
+**Do not invert the measurement.** That is the proposal's one instruction
+about this stage and it is the whole design. A response contains things
+that can be fixed — a mode that rings and adds ten decibels of boom at one
+note — and things that cannot: a cancellation where a reflection arrives
+out of phase, which no amount of power fills, because the extra power
+cancels too. Inverting tries to fix both, wastes the amplifier on the
+second, and makes every other seat worse.
+
+| Rule | Default | Why |
+|---|---|---|
+| Band | 30–300 Hz | Above ~300 Hz the measurement is a property of where the microphone stood, not of the room; below 30 Hz it is the noise floor |
+| Max boost | +3 dB | Boost costs excursion, and a deep dip is a cancellation that cannot be filled |
+| Max cut | −9 dB | Cutting is nearly free, and peaks are what people hear as boom |
+| Dip restraint | half | Correct broad peaks strongly, broad dips moderately |
+| Max Q | 8 | Narrower than that and the filter is fitted to the tripod, not the room |
+| Min deviation | 2 dB | Not worth a filter |
+| Max filters | 6 | A long tail of small corrections is where this stops being conservative |
+
+Everything it declines to do is listed in the profile's notes, so a person
+can see what was left alone and why.
+
+### Two details that were wrong first
+
+**The baseline is the median, not the mean.** A correction aims at the
+band's own level, and a mean is dragged up by exactly the thing being
+removed: one +12 dB mode over a fifth of the band lifts the average by two
+decibels, so the fitter aims two decibels high and under-cuts the mode by
+that much. A median is indifferent to a feature occupying a minority of the
+band — which is the definition of a mode worth correcting.
+
+**Narrowness is judged on the unsmoothed curve.** Smoothing is what makes
+the *size* of a correction a property of the room rather than of the
+interference pattern — and it is also exactly what destroys the evidence
+that something is *narrow*. A Q of 20 averaged over a third of an octave
+looks like a Q of 4, and the rule that refuses narrow features then never
+fires. So the size comes from the smoothed curve and the width from the raw
+one.
+
+### Headroom
+
+Every boost is paid for with a preamp attenuation, because the ring holds
+full-scale audio and volume only attenuates — a band boosted on material
+already near full scale overflows, and it presents as distortion on loud
+passages only, which is the worst way to find out.
+
+The attenuation covers **the worst the filters do together at any one
+frequency**, not the sum of their gains. The sum is a bound and a bad one:
+on the right-hand loudspeaker measured here, four boosts at 38, 46, 82 and
+254 Hz summed to 9.2 dB, which would have thrown away most of the
+loudspeaker's output to protect against an overlap that does not exist.
+Filters an octave apart barely reach each other. The combined magnitude
+response is what the audio actually sees, and its peak took that same
+profile to 6 dB.
+
+```
+POST /api/recordings/<file>/correction    fit one, and say what it would do
+GET  /api/measurements/export             everything, for a second opinion
+```
+
+Fitting sends nothing to a loudspeaker. It says what a correction *would*
+be and what it is expected to achieve, so it can be looked at — and refused
+— before anything is applied. The predicted curve is drawn beside the
+measurement it was fitted to.
+
 ## What is still missing
 
-The correction constants. Turning a curve into biquads is the next work,
-and the conservative-correction rules in the proposal above are its
-specification: correct broad peaks strongly, broad dips moderately, leave
-narrow nulls alone, cap the boost at +3 to +4 dB, and pre-attenuate by the
-largest boost so the EQ has somewhere to put it.
+Applying it. The coefficients exist and are checked; carrying them to a
+node, storing them in NVS and running the biquads in `playout_task` ahead
+of the volume stage is the remaining work, and it is what closes the loop.

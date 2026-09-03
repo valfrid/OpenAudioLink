@@ -3971,7 +3971,8 @@ and swap supplies between two nodes to find out.">Clock</th>
                 ? '—' : r.signalToNoiseDb + ' dB'}${warned ? ' ⚠' : ''}</td>
           <td>${r.peakDbFs === null || r.peakDbFs === undefined
                 ? '—' : r.peakDbFs + ' dBFS'}</td>
-          <td><button data-forget="${esc(m.file)}">Delete</button></td>
+          <td><button data-fit="${esc(m.file)}">Fit correction</button>
+              <button data-forget="${esc(m.file)}">Delete</button></td>
         </tr>`;
       }).join('');
 
@@ -4023,6 +4024,12 @@ and swap supplies between two nodes to find out.">Clock</th>
     });
 
     document.getElementById('rr-measurements').addEventListener('click', async event => {
+      const fit = event.target.dataset.fit;
+      if (fit) {
+        await fitCorrection(fit);
+        return;
+      }
+
       const forget = event.target.dataset.forget;
       if (!forget) return;
       // The recording goes too, and it is a hundred megabytes of evidence
@@ -4036,6 +4043,48 @@ and swap supplies between two nodes to find out.">Clock</th>
       refreshMeasurements(true);
       refreshRecordings();
     });
+
+    /*
+     * What a correction WOULD do, drawn beside the measurement it was
+     * fitted to.
+     *
+     * Nothing is sent to a loudspeaker here. Seeing the predicted result
+     * before anything is applied is what makes it possible to refuse one —
+     * and the notes say what the fitter declined to touch and why, which is
+     * the more interesting half of a conservative correction.
+     */
+    async function fitCorrection(file) {
+      const summary = document.getElementById('rr-summary');
+      summary.textContent = 'Fitting…';
+
+      const response = await fetch(
+        `/api/recordings/${encodeURIComponent(file)}/correction`, { method: 'POST' });
+      const profile = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        summary.textContent = `Could not fit ${file}: ${profile.error ?? response.status}`;
+        return;
+      }
+
+      const measurement = measurements.find(m => m.file === file);
+      const name = measurement ? measurementName(measurement) : file;
+
+      // Beside the measurement, not instead of it: the whole value is the
+      // pair. Drawn straight rather than ticked into the table, because a
+      // prediction is not a measurement and should not be filed as one.
+      plotResponses([
+        { name, points: (measurement?.response?.points ?? []).filter(p => p.db !== null) },
+        { name: `${name} — predicted`, points: profile.points },
+      ]);
+
+      const filters = profile.filters.length
+        ? profile.filters.map(f => f.reads).join('; ')
+        : 'nothing worth correcting';
+      settledSummary = `${profile.lowHz}–${profile.highHz} Hz: ${filters}. `
+        + `Preamp ${profile.preampDb} dB. `
+        + `Deviation ${profile.deviationBeforeDb} → ${profile.deviationAfterDb} dB.`
+        + (profile.notes.length ? ' ' + profile.notes.join(' ') : '');
+      summary.textContent = settledSummary;
+    }
 
     async function analyseRecording(file, channel, extra) {
       const summary = document.getElementById('rr-summary');

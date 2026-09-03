@@ -914,6 +914,212 @@ app.MapDelete("/api/recordings/{file}", (string file, RecordingService recorder)
     return Results.Ok(new { deleted = Path.GetFileName(path) });
 });
 
+/*
+ * Fit a correction to a measurement (docs/ROOM-CALIBRATION.md).
+ *
+ * On the Hub, deterministically, and not anywhere else. These coefficients
+ * go into a loudspeaker's NVS and change what it sounds like, so the same
+ * recording has to produce the same filters every time and "why is it
+ * different today" has to have an answer. It is also the only way the rules
+ * can be tested against rooms whose answer was written down in advance,
+ * which is what every one of them has.
+ *
+ * Nothing is sent to a node here. This says what a correction WOULD be and
+ * what it is expected to do, so it can be looked at — and refused — before
+ * anything is applied.
+ */
+app.MapPost("/api/recordings/{file}/correction",
+    (string file, RecordingService recorder, double? lowHz, double? highHz) =>
+{
+    var path = Path.Combine(recorder.DirectoryPath, Path.GetFileName(file));
+    var response = ReadResponse(path);
+    if (response is null)
+    {
+        return Results.NotFound(new { error = "that recording has not been analysed yet" });
+    }
+
+    var rules = new CorrectionRules();
+    if (lowHz is not null) { rules = rules with { LowHz = lowHz.Value }; }
+    if (highHz is not null) { rules = rules with { HighHz = highHz.Value }; }
+
+    CorrectionProfile profile;
+    try
+    {
+        profile = RoomCorrection.Fit(response, rules);
+    }
+    catch (ArgumentOutOfRangeException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    var answer = new
+    {
+        file = Path.GetFileName(path),
+        lowHz = profile.LowHz,
+        highHz = profile.HighHz,
+        preampDb = profile.PreampDb,
+        deviationBeforeDb = Math.Round(profile.DeviationBeforeDb, 2),
+        deviationAfterDb = Math.Round(profile.DeviationAfterDb, 2),
+        filters = profile.Filters.Select(f => new
+        {
+            hz = f.FrequencyHz,
+            q = f.Q,
+            gainDb = f.GainDb,
+            reads = f.ToString(),
+        }).ToList(),
+        notes = profile.Notes,
+        points = profile.FrequenciesHz
+            .Select((hz, i) => new { hz = Math.Round(hz, 2), db = Math.Round(profile.PredictedDb[i], 2) })
+            .ToList(),
+    };
+
+    try
+    {
+        File.WriteAllText(
+            Path.ChangeExtension(path, ".correction.json"),
+            JsonSerializer.Serialize(answer, RoomMeasurementService.Json));
+    }
+    catch (IOException)
+    {
+        // The profile is still the answer.
+    }
+    return Results.Ok(answer);
+});
+
+/*
+ * Everything, in one file.
+ *
+ * The analysis and the fitting happen here and stay here — but judging
+ * whether a measurement is trustworthy is a different job from producing
+ * it, and that one is worth a second pair of eyes. "Is that 100 Hz peak a
+ * room mode or the loudspeaker's port? Is the rise above 12 kHz the room or
+ * the microphone?" are questions about what a measurement MEANS, and they
+ * are answered by looking at several measurements together.
+ *
+ * A screenshot is the wrong thing to answer them from: it loses the
+ * precision, loses the metadata, and cannot be diffed against last month's.
+ * So this is the artefact — every curve, every microphone position, both
+ * channels, the fitted corrections, and the versions that produced them,
+ * in one file that can be handed to anybody.
+ */
+app.MapGet("/api/measurements/export", (RecordingService recorder, DeviceRegistry registry) =>
+{
+    var dir = new DirectoryInfo(recorder.DirectoryPath);
+    var measurements = new List<object>();
+
+    if (dir.Exists)
+    {
+        foreach (var found in dir.EnumerateFiles("*.response.json").OrderBy(f => f.Name))
+        {
+            var recording = found.Name[..^".response.json".Length] + ".wav";
+            var path = Path.Combine(dir.FullName, recording);
+            try
+            {
+                using var response = JsonDocument.Parse(File.ReadAllText(found.FullName));
+                var correction = Path.ChangeExtension(path, ".correction.json");
+                using var fitted = File.Exists(correction)
+                    ? JsonDocument.Parse(File.ReadAllText(correction))
+                    : null;
+                var context = ReadContext(path);
+
+                measurements.Add(new
+                {
+                    file = recording,
+                    context?.Speaker,
+                    context?.Channel,
+                    context?.Microphone,
+                    context?.MeasuredAt,
+                    context?.Label,
+                    response = response.RootElement.Clone(),
+                    correction = fitted?.RootElement.Clone(),
+                });
+            }
+            catch (Exception ex) when (ex is JsonException or IOException)
+            {
+                // One unreadable file must not empty the export.
+            }
+        }
+    }
+
+    return Results.Ok(new
+    {
+        exportedAt = DateTimeOffset.UtcNow,
+        hubVersion = HubInfo.Version,
+        // Which node measured what, and on which firmware — a curve is only
+        // comparable with another taken through the same chain.
+        devices = registry.Snapshot().Select(d => new
+        {
+            d.Id,
+            d.Name,
+            d.Roles,
+            d.HardwareProfile,
+            d.FirmwareVersion,
+            inputStage = d.Status?.InputStage,
+        }).ToList(),
+        signal = new SweepSignal().ToString(),
+        rules = new CorrectionRules(),
+        measurements,
+    });
+});
+
+/// <summary>
+/// The saved analysis of a recording, back as the record the fitter takes.
+/// </summary>
+static RoomResponse? ReadResponse(string recordingPath)
+{
+    var path = Path.ChangeExtension(recordingPath, ".response.json");
+    if (!File.Exists(path))
+    {
+        return null;
+    }
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        var points = root.GetProperty("points");
+
+        var hz = new List<double>();
+        var db = new List<double>();
+        foreach (var point in points.EnumerateArray())
+        {
+            // A point the analyser could not put a number on is not a
+            // measurement of nothing; it is a gap, and it is dropped rather
+            // than fitted to.
+            if (point.GetProperty("db").ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+            hz.Add(point.GetProperty("hz").GetDouble());
+            db.Add(point.GetProperty("db").GetDouble());
+        }
+        if (hz.Count < 8)
+        {
+            return null;
+        }
+
+        return new RoomResponse
+        {
+            FrequenciesHz = hz,
+            MagnitudeDb = db,
+            ImpulseResponse = [],
+            SampleRate = root.TryGetProperty("sampleRate", out var rate) ? rate.GetInt32() : 48000,
+            CyclesAveraged = root.TryGetProperty("cyclesAveraged", out var c) ? c.GetInt32() : 0,
+            SignalToNoiseDb = 0,
+            PeakDbFs = 0,
+            ClippedSamples = 0,
+            ImpulsePeakSeconds = 0,
+            AlignMarginSeconds = 0,
+            Warnings = root.TryGetProperty("warnings", out var w)
+                ? w.EnumerateArray().Select(x => x.GetString() ?? "").ToList()
+                : [],
+        };
+    }
+    catch (Exception ex) when (ex is JsonException or IOException or KeyNotFoundException)
+    {
+        return null;
+    }
+}
+
 /// <summary>The sidecar beside a recording, or null when there is none.</summary>
 static MeasurementContext? ReadContext(string recordingPath)
 {
