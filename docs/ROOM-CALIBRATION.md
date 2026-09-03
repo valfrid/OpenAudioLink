@@ -1063,8 +1063,9 @@ compare on the same chart without ever losing the profile.
 ### Seeing it, and changing it by hand
 
 Expand a speaker in the device table: **Room correction** shows whether it
-is on, the headroom, and both vectors in editable fields. Edit one and
-press Enter to write it.
+is on, the headroom, and both vectors in editable fields with a **Save**
+beside each. Enter saves too, but a keystroke nobody can see is not a
+control — the button is.
 
 ```
 POST /api/devices/<id>/eq  {"left": "104.0/3.78/-9.0 60/1.5/-3"}
@@ -1082,7 +1083,10 @@ comes back in `/status` is the normalised form of what was typed, so
 `104/3.8/-9` is stored and shown as `104.0/3.80/-9.0`.
 
 The device table rebuilds every two seconds and pauses while one of these
-fields has focus, or an edit would be thrown away mid-keystroke.
+controls is in use, or an edit would be thrown away mid-keystroke. Focus
+alone is not enough to detect that: clicking Save blurs the field first,
+and a rebuild landing in that gap replaces the button mid-click so the
+press goes nowhere.
 
 A node on firmware older than 0.46.0 says so rather than showing an empty
 box.

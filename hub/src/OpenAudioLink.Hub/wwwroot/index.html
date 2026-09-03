@@ -84,6 +84,7 @@
         --series-4: #c98500;
       }
     }
+    .eq-edit { display: inline-flex; gap: 0.35rem; align-items: center; }
     .eq-vector { font: inherit; font-size: 0.8rem; font-family: ui-monospace, monospace; }
     .legend {
       display: flex;
@@ -1180,9 +1181,15 @@ and swap supplies between two nodes to find out.">Clock</th>
        * useful thing to say than an empty box.
        */
       const hasEq = s.eqLeft !== undefined && s.eqLeft !== null;
+      // A visible Save, because Enter alone is an affordance nobody can
+      // see. Enter still works for anyone who finds it.
       const eqField = (side, value) =>
-        `<input type="text" class="eq-vector" data-eq="${esc(d.id)}" data-side="${side}" ` +
-        `value="${esc(value ?? '')}" placeholder="104.0/3.78/-9.0 …" size="34">`;
+        `<span class="eq-edit">` +
+        `<input type="text" class="eq-vector" data-eq-control data-eq="${esc(d.id)}" ` +
+        `data-side="${side}" value="${esc(value ?? '')}" ` +
+        `placeholder="104.0/3.78/-9.0 …" size="30">` +
+        `<button data-eq-control data-cmd="eq-save" data-id="${esc(d.id)}" ` +
+        `data-side="${side}">Save</button></span>`;
       const correction = !hasEq
         ? '<p class="hint">This node\'s firmware predates room correction.</p>'
         : cell([
@@ -1201,8 +1208,9 @@ and swap supplies between two nodes to find out.">Clock</th>
           + `<div class="kv"><span class="muted">Left</span>${eqField('left', s.eqLeft)}</div>`
           + `<div class="kv"><span class="muted">Right</span>${eqField('right', s.eqRight)}</div>`
           + `<p class="hint">Frequency / Q / gain, one triple per filter. `
-          + `Edit and press Enter to write it. Up to eight per channel; `
-          + `the Hub fits six, leaving room to add your own.</p>`;
+          + `Up to eight per channel; the Hub fits six, leaving room to add `
+          + `your own. Saving writes it to the speaker at once — turn the `
+          + `correction on above to hear it.</p>`;
 
 
       return `<tr class="detail"><td colspan="12"><div class="panel">` +
@@ -1223,6 +1231,43 @@ and swap supplies between two nodes to find out.">Clock</th>
     }
 
     /*
+     * True while somebody is editing or saving a correction, which pauses
+     * the two-second table rebuild.
+     *
+     * The focus check alone is not enough: clicking Save blurs the field
+     * first, and a rebuild landing in that gap replaces the button
+     * mid-click, so the press goes nowhere. Any pointerdown sets this to
+     * whether it landed on one of these controls, which also clears it when
+     * somebody gives up and clicks elsewhere.
+     */
+    let eqEditing = false;
+    document.addEventListener('pointerdown', event => {
+      eqEditing = !!event.target.closest?.('[data-eq-control]');
+    });
+
+    async function saveEqVector(id, side) {
+      const field = document.querySelector(
+        `.eq-vector[data-eq="${CSS.escape(id)}"][data-side="${side}"]`);
+      if (!field) return;
+
+      const response = await fetch(`/api/devices/${encodeURIComponent(id)}/eq`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [side]: field.value }),
+      });
+      const answer = await response.json().catch(() => ({}));
+      say(response.ok
+        ? `${side} correction written: ${answer.stored || '(cleared)'}`
+        : `Could not write it: ${answer.error ?? response.status}`);
+
+      // Released so the paused refresh resumes and shows what the node
+      // stored, which is the normalised form of what was typed.
+      eqEditing = false;
+      field.blur();
+      refreshDevices();
+    }
+
+    /*
      * A vector edited by hand, written on Enter.
      *
      * Delegated from the document because the device table is rebuilt every
@@ -1236,21 +1281,7 @@ and swap supplies between two nodes to find out.">Clock</th>
         return;
       }
       event.preventDefault();
-
-      const response = await fetch(
-        `/api/devices/${encodeURIComponent(field.dataset.eq)}/eq`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [field.dataset.side]: field.value }),
-        });
-      const answer = await response.json().catch(() => ({}));
-      say(response.ok
-        ? `${field.dataset.side} correction written: ${answer.stored || '(cleared)'}`
-        : `Could not write it: ${answer.error ?? response.status}`);
-      // Blurred so the paused refresh resumes and shows what the node
-      // stored, which is the normalised form of what was typed.
-      field.blur();
-      refreshDevices();
+      await saveEqVector(field.dataset.eq, field.dataset.side);
     });
 
     /*
@@ -1855,7 +1886,7 @@ and swap supplies between two nodes to find out.">Clock</th>
        * cannot be typed into, and the pause ends the moment the field loses
        * focus.
        */
-      if (document.activeElement?.classList?.contains('eq-vector')) {
+      if (eqEditing || document.activeElement?.classList?.contains('eq-vector')) {
         return;
       }
 
@@ -2518,6 +2549,10 @@ and swap supplies between two nodes to find out.">Clock</th>
           expandedDevices.add(id);
         }
         refreshDevices();
+        return;
+      }
+      if (button.dataset.cmd === 'eq-save') {
+        await saveEqVector(id, button.dataset.side);
         return;
       }
       if (button.dataset.cmd === 'eq') {
