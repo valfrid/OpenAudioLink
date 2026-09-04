@@ -460,10 +460,12 @@ and swap supplies between two nodes to find out.">Clock</th>
     recording measures the clipping, and it looks exactly like a real
     measurement.
     <br>
-    Six sweeps takes eighty seconds: two more cycles are recorded than are
-    averaged, because the recording starts at an arbitrary point in one and
-    the first complete one is discarded while the receiver is still filling
-    its buffer.
+    Six sweeps takes eighty seconds. Two more cycles are always recorded
+    than are averaged, because the recording starts at an arbitrary point
+    in one and the first complete one is discarded while the receiver is
+    still filling its buffer — and fewer than four is not worth averaging,
+    so asking for fewer still runs four. The line beside the box says what
+    the number will actually do.
   </p>
   <div class="fw-bar">
     <label>Speaker <select id="rm-speaker"></select></label>
@@ -476,6 +478,7 @@ and swap supplies between two nodes to find out.">Clock</th>
     </label>
     <label>Microphone <select id="rm-mic"></select></label>
     <label>Sweeps <input id="rm-cycles" type="number" value="6" min="4" max="24"></label>
+    <span id="rm-plan" class="muted"></span>
     <button id="rm-start">Measure this room</button>
     <button id="rm-stop" hidden>Stop</button>
   </div>
@@ -4008,6 +4011,30 @@ and swap supplies between two nodes to find out.">Clock</th>
         }
       }
     }
+
+    /*
+     * What the number in the box will actually produce.
+     *
+     * Four is a floor and two more cycles are always recorded, so asking
+     * for one sweep runs for a minute and averages five. That is correct
+     * and it is not guessable: typing 1 and getting six cycles reads as
+     * the field being ignored. Shown rather than explained.
+     */
+    const MEASUREMENT_FLOOR = 4;
+    const CYCLE_SECONDS = 10;
+
+    function describePlan() {
+      const asked = Number(document.getElementById('rm-cycles').value) || 0;
+      const sweeps = Math.max(MEASUREMENT_FLOOR, asked);
+      const seconds = (sweeps + 2) * CYCLE_SECONDS;
+      document.getElementById('rm-plan').textContent =
+        `→ ${sweeps} sweep(s), ${seconds} s`
+        + (asked < MEASUREMENT_FLOOR
+            ? ` — ${MEASUREMENT_FLOOR} is the fewest worth averaging`
+            : '');
+    }
+    document.getElementById('rm-cycles').addEventListener('input', describePlan);
+    describePlan();
 
     document.getElementById('rm-start').addEventListener('click', async () => {
       const body = {
