@@ -37,6 +37,7 @@
       <span>🔊</span>
       <div class="vol-number" id="vol-text">50%</div>
     </div>
+    <div class="eq-knobs" id="room-eq" hidden></div>
     <button class="stop" id="stop">■ Stop</button>
   </section>
 
@@ -139,6 +140,71 @@
       $('volume').value = playing.volume;
       $('vol-text').textContent = OAL.volumeLabel(playing.volume);
     }
+
+    renderRoomEq(playing);
+  }
+
+  /*
+   * Room correction, on the page that is open while music plays.
+   *
+   * The switch lives in the setup page too, beside each speaker's
+   * coefficients — but that is the page for deciding what a correction
+   * should be, and this is the one somebody is holding in the listening
+   * chair. Comparing corrected against uncorrected is the only way to know
+   * whether a correction helped, and it only happens if the control is
+   * where the listening happens.
+   *
+   * One knob per node, not one for the room. A cast point is usually
+   * several ESP32 nodes, each in front of its own loudspeaker with its own
+   * correction fitted from its own measurement — so a single switch would
+   * change several unrelated things at once, and there would be no way to
+   * hear whether the fit for *this* speaker was the good one. Two speakers
+   * of a stereo pair are normally flipped together, and with the knobs side
+   * by side that is two taps rather than something the page decides.
+   */
+  function correctable(playing) {
+    return (playing?.members ?? []).filter(m => m.hasEq && m.online);
+  }
+
+  function renderRoomEq(playing) {
+    const speakers = correctable(playing);
+    const knobs = $('room-eq');
+
+    // Hidden when no speaker in this room has a correction stored. A
+    // switch that would do nothing is worse than no switch.
+    knobs.hidden = speakers.length === 0;
+    if (knobs.hidden) { knobs.innerHTML = ''; return; }
+
+    /*
+     * Rebuilt from the poll every four seconds, so a knob left mid-tap
+     * would lose its press. Skipped while one is in flight -- the click
+     * handler owns the state until its request comes back.
+     */
+    if (knobs.dataset.busy === 'true') return;
+
+    /*
+     * Named by speaker once the room holds more than one, because three
+     * knobs all saying "room correction" are three labels to read and no
+     * information. A room of one has nothing to distinguish, so its knob
+     * says what it does instead.
+     *
+     * Counted over the room's members rather than over the correctable
+     * ones: in a stereo pair with a node offline, the surviving knob is
+     * still one speaker of two, and calling it "room correction" would
+     * claim it does something to the other.
+     */
+    const named = (playing?.members ?? []).length > 1;
+
+    knobs.innerHTML = speakers.map(speaker => {
+      const on = speaker.eqEnabled === true;
+      const label = named ? speaker.name : 'Room correction';
+      return `<button class="eq-knob" data-on="${on}" `
+        + `data-device="${OAL.esc(speaker.id)}" `
+        + `data-label="${OAL.esc(label)}" `
+        + `data-name="${OAL.esc(speaker.name)}" `
+        + `title="Room correction on ${OAL.esc(speaker.name)}">`
+        + `${on ? '✓' : '○'} ${OAL.esc(label)}</button>`;
+    }).join('');
   }
 
   async function refresh() {
@@ -160,6 +226,36 @@
     const percent = Number(event.target.value);
     $('vol-text').textContent = OAL.volumeLabel(percent);
     sendVolume(percent);
+  });
+
+  // Delegated, because the knobs are rebuilt on every poll and a listener
+  // bound to one of them would be attached to a button that no longer
+  // exists four seconds later.
+  $('room-eq').addEventListener('click', async event => {
+    const knob = event.target.closest('.eq-knob');
+    if (!knob) return;
+
+    const id = knob.dataset.device;
+    const wanted = knob.dataset.on !== 'true';
+
+    // Answered immediately rather than at the next poll: a knob that waits
+    // four seconds to look pressed gets pressed twice.
+    knob.dataset.on = String(wanted);
+    knob.textContent = `${wanted ? '✓' : '○'} ${knob.dataset.label}`;
+    $('room-eq').dataset.busy = 'true';
+    knob.disabled = true;
+    try {
+      await OAL.api('POST',
+        `/api/devices/${encodeURIComponent(id)}/correction/enabled`,
+        { enabled: wanted });
+      setHealth(`${knob.dataset.name}: room correction ${wanted ? 'on' : 'off'}`);
+    } catch (error) {
+      setHealth(error.message, true);
+    } finally {
+      $('room-eq').dataset.busy = 'false';
+      knob.disabled = false;
+      await refresh();
+    }
   });
 
   $('stop').addEventListener('click', async () => {

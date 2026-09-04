@@ -1917,8 +1917,19 @@ app.MapGet("/api/castpoints", (CastPointStore store, DeviceRegistry registry,
             {
                 id, name = device.Name, online = device.Online, known = true,
                 volume = device.Status?.Volume,
+                // Enough for the switchboard to offer a room-wide room
+                // correction switch: whether this speaker has one, and
+                // whether it is running. A switch for a speaker with no
+                // correction stored would do nothing and say nothing.
+                eqEnabled = device.Status?.EqEnabled,
+                hasEq = !string.IsNullOrWhiteSpace(device.Status?.EqLeft)
+                    || !string.IsNullOrWhiteSpace(device.Status?.EqRight),
             }
-            : new { id, name = id, online = false, known = false, volume = (int?)null }),
+            : new
+            {
+                id, name = id, online = false, known = false, volume = (int?)null,
+                eqEnabled = (bool?)null, hasEq = false,
+            }),
     }));
 });
 

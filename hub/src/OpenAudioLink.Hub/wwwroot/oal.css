@@ -243,6 +243,31 @@ input[type="range"]:disabled { opacity: .35; cursor: default; }
 .banner .lead { font-size: 19px; font-weight: 700; }
 .banner .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
 
+/*
+ * One room-correction knob per speaker. They wrap onto their own line on a
+ * phone rather than squeezing the volume slider, because a stereo pair is
+ * two of these and a three-node room is three.
+ */
+.eq-knobs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.eq-knob {
+  padding: 9px 13px;
+  font-size: 13px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* On is the lit state, so which speakers are corrected reads at a glance
+ * from across the room rather than by reading three labels. */
+.eq-knob[data-on="true"] {
+  background: var(--accent);
+  color: #07120e;
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.eq-knob[data-on="false"] { opacity: .62; }
+
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; }
   .app { padding: 14px; }

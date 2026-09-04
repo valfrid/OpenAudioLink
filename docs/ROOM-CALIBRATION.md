@@ -1151,6 +1151,34 @@ press goes nowhere.
 A node on firmware older than 0.46.0 says so rather than showing an empty
 box.
 
+### The switch where the listening happens
+
+The setup page is where a correction is decided; `/play.html` is the page
+somebody is holding in the listening chair, so the switch is there too. When
+a cast point is playing, the Playing-now banner grows **one knob per node**
+that has a correction stored and is online — lit when it is on.
+
+One per node, not one for the room. A cast point is usually several ESP32
+nodes, each in front of its own loudspeaker with its own correction fitted
+from its own measurement, and a single switch would change several unrelated
+things at once — leaving no way to hear whether the fit for *this* speaker
+was the good one. Flipping a stereo pair together is then two taps, which is
+a thing a person can decide rather than a thing the page decides for them.
+
+The knobs are named by speaker once the room holds more than one, because
+three knobs all reading "room correction" are three labels and no
+information. That count is over the room's members rather than over the ones
+that can be corrected: in a stereo pair with a node offline, the surviving
+knob is still one speaker of two, and calling it "room correction" would
+claim it does something to the other.
+
+No knob appears for a speaker with nothing stored — a switch that would do
+nothing is worse than no switch — nor for one that is offline, where the
+request would only fail. A knob answers the tap immediately rather than at
+the next poll, and the four-second rebuild is held off while a request is in
+flight; otherwise a knob takes four seconds to look pressed, and gets
+pressed twice.
+
 ### Populating the vectors
 
 From measurements that already exist. Fitting reads the stored analysis, so
