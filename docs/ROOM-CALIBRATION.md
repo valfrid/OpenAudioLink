@@ -245,7 +245,10 @@ measurement node for the length of a sweep. A permanently installed
 microphone node is still worth building later, for the uses that are about
 listening rather than calibrating; it would use the same pins.
 
-**The ICS-43434 this proposal names is now the part in hand.** An earlier
+**The ICS-43434 this proposal names is now the part doing the work** — a
+photograph of it is in
+[`hardware-photos/`](hardware-photos/README.md#the-measurement-microphone),
+and every curve in this document came off it. An earlier
 delivery supplied a PDM board instead — `3V GND SEL CLK DAT`, a 1–3 MHz
 pulse stream needing PDM RX mode — and that entry stood here for a while.
 The board now on the bench has six pads with an `LRCL`, which is ordinary

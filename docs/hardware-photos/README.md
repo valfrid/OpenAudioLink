@@ -40,6 +40,40 @@ setting exists to correct. See [`../TUNING.md`](../TUNING.md).
 | ![PCM1808 ADC board](06-pcm1808-adc.jpg) | **PCM1808 I²S ADC** with its own 24.576 MHz oscillator, which matters: the converter's measured rate came out at 47 999 Hz, 21 ppm from nominal, and a source that drifts is a problem no buffer solves. Line in on the 3.5 mm jack, I²S out on the header. |
 | ![Assembled producer](07-producer-assembled.jpg) | The turntable Producer, wired and working. XIAO on top, ADC below, antenna, USB power, and the line from the record player going into the jack. |
 
+## The measurement microphone
+
+The part that closed the room-correction loop. A node with this on it plays
+a sweep, records the room, and the Hub turns the recording into filters that
+go back into the speaker — see
+[`../ROOM-CALIBRATION.md`](../ROOM-CALIBRATION.md).
+
+| | |
+| --- | --- |
+| ![ICS-43434 I²S MEMS microphone breakout](10-ics43434-mic.jpg) | **ICS-43434 I²S MEMS microphone**, on an Adafruit breakout. The metal can is the microphone itself; everything else on the face is passives and two mounting holes. Unsoldered here, as delivered. |
+
+**Count the holes.** Six in the row along the bottom edge is the whole
+identification test: an I²S board has a word select and a PDM board does
+not, so six pads is I²S and five is PDM, whatever the listing said. The
+labels are silkscreened on the reverse — `SEL LRCL DOUT BCLK GND 3V` — and
+`LRCL` is the one that settles it. Mismarked boards are ordinary at this
+price, and an earlier delivery for this project was a PDM part; the ESP
+reads both, but through different driver modes and different wiring.
+
+`VIN/Logic: 3.3V` on the face is not decoration. It takes **3V3 from the
+XIAO's regulator**, and on a node that also has the PCM1808 ADC fitted it
+must not be fed from the ADC module's supply header — that one carries
+5–12 V, which the ADC regulates down internally and this part does not.
+Three pins: D0, D1 and D5.
+
+It is a good instrument and not a calibrated one — 65 dB SNR, which is a
+different class from a voice-grade PDM part, but its absolute response is
+its own as much as the room's. So the number it produces is trustworthy as
+a *comparison* — this speaker before against after, one position against
+another — and not as an absolute reading of the room. That distinction has
+already earned its keep once here: a droop from 2 to 10 kHz that looked
+like the microphone turned out to belong to the loudspeakers, and it was
+measuring a second, better pair that showed it.
+
 ## Powering a node whose USB port is busy
 
 A Consumer using the USB dongle has a problem the soldered DAC does not:

@@ -425,11 +425,18 @@ speaker that nothing downstream will absorb.
 
 ### The measurement microphone
 
-Status: **settled — the I²S part is in hand.** The board photographed
+Status: **settled, wired, and measuring rooms.** The board
+([`hardware-photos/10-ics43434-mic.jpg`](hardware-photos/10-ics43434-mic.jpg))
 carries six pads, `SEL LRCL DOUT BCLK GND 3V`, with an Adafruit logo and
 `VIN/Logic: 3.3V` on the face. The `LRCL` is the tell, by the pad test
 below: this is an ICS-43434, not the PDM board an earlier delivery
 supplied.
+
+It is no longer a plan. This microphone has produced the measurements the
+whole correction chain is built on — sweep, record, deconvolve, fit, write
+the filters back to the speaker, and measure again to check
+([`ROOM-CALIBRATION.md`](ROOM-CALIBRATION.md)). A real room came back at
+35 dB signal-to-noise from two metres.
 
 That is the fortunate half of the two. `oal_capture` brings up
 **standard I²S RX** — Philips slots, 32 bits, ESP as master — and has no
