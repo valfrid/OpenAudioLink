@@ -103,9 +103,25 @@ typedef struct {
     uint32_t settling_frames;
 
     uint32_t breaks;           /* times the sender's timeline jumped */
+
+    /*
+     * Gaps the caller covered with silence rather than closing up.
+     *
+     * Counted apart from `breaks` because they are a different event with
+     * a different consequence. A break re-seats: the position is withheld
+     * and the delay estimate starts again, because the ring holds audio the
+     * new timeline says nothing about. A filled hole re-seats nothing --
+     * the silence occupies exactly the frames the network lost, so the ring
+     * is still aligned to the sender and every figure here stays valid
+     * straight through it.
+     *
+     * Both counters are per-stream and are cleared by oal_phase_reset.
+     * Anything that has to survive a restart is the caller's to keep.
+     */
+    uint32_t holes;
 } oal_phase_t;
 
-/** Forgets everything. Use when the stream stops or the ring is emptied. */
+/** Forgets everything, counters included. Safe on an uninitialised struct. */
 void oal_phase_reset(oal_phase_t *phase);
 
 /**
@@ -117,10 +133,17 @@ void oal_phase_reset(oal_phase_t *phase);
  * @param now_us        local clock in microseconds, for window rotation
  * @param frames_held   frames already in the ring, needed only to know how
  *                      much pre-break audio a break leaves behind
+ * @param filled_frames  frames of silence the caller has just written to
+ *                      cover a forward gap, or 0 if it closed the gap up
  *
  * @return true if this packet did not continue the timeline -- a stream
- *         restart, a seek, or a hole left by loss. The caller is expected to
- *         count it; the tracker re-seats itself either way.
+ *         restart, a seek, or a hole the caller did not fill. The caller is
+ *         expected to count it; the tracker re-seats itself either way.
+ *
+ * A gap the caller **filled** is not a break: the silence occupies exactly
+ * the frames the network lost, so the ring is still aligned to the sender's
+ * timeline and nothing here needs re-seating. It is counted in `holes`
+ * instead, and false is returned.
  *
  * A break resets the delay estimate as well as the position. It has to: a
  * restart gives the stream a new random timestamp base, so every delay
@@ -129,7 +152,8 @@ void oal_phase_reset(oal_phase_t *phase);
  * for a whole window.
  */
 bool oal_phase_on_packet(oal_phase_t *phase, uint32_t rtp_timestamp, uint32_t frames,
-                         uint32_t arrival_rtp, uint64_t now_us, uint32_t frames_held);
+                         uint32_t arrival_rtp, uint64_t now_us, uint32_t frames_held,
+                         uint32_t filled_frames);
 
 /** Tells the tracker frames have left the ring, so a break can settle. */
 void oal_phase_on_played(oal_phase_t *phase, uint32_t frames);

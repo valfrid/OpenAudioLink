@@ -523,6 +523,34 @@ The creep rates near home are deliberately unchanged. That is what stops the
 loop dithering, and 0.34.0 is the record of what happens when it is
 disturbed.
 
+### Loss no longer moves the sound
+
+From 0.53.0 a gap in the sender's timeline is **filled with silence**, not
+closed up.
+
+Payloads used to be written end to end, so a packet the network lost simply
+vanished and everything after it moved earlier by its length. The node then
+played *ahead* of the sender for as long as the servo took to walk it back —
+and that walk is the slow one, because a speaker that is early cannot be
+stepped: winding the ring backwards replays audio already handed to the
+sink.
+
+2026-09-05, 07:42 local. Speakers lost 23 packets in one window; Stereo
+lost none. Its depth fell 218 → 136 ms and its phase read **−84.6 ms**, the
+two agreeing exactly, and it took about twenty seconds at 4.2 ms/s to creep
+home. Twenty seconds of one speaker eighty milliseconds ahead of the other
+is a slap echo; 115 ms of silence is a dropout heard once.
+
+Filling the hole removes the error rather than correcting it — the ring
+stays aligned to the sender and the servo has nothing to do. Bounded by the
+target: past that the node would have run dry anyway, and re-priming fills
+from real audio rather than from a lengthening silence.
+
+**`filledHoles` in the log and in `/status` counts them, and it is still
+loss.** A node collecting them has a link problem that the buffer is now
+hiding, which is exactly why it is counted separately from `timelineBreaks`
+— a break re-seats the node, a filled hole does not.
+
 **The fill loop is still there** and runs whenever the phase is not known —
 before the ring primes, and for one buffer's worth after the sender's
 timeline breaks. It is a fallback, not a rival: the two never act in the

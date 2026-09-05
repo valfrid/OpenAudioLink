@@ -1137,7 +1137,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        /* Times the sender's timeline jumped under this ring
                         * — a restart, a seek, a hole left by loss. The one
                         * event that invalidates the two figures above. */
-                       "\"timelineBreaks\":%u,"
+                       "\"timelineBreaks\":%u,\"filledHoles\":%u,"
                        /* The low- and high-water marks of the last trace
                         * window. bufferedFrames is one instant, and a poll
                         * every fifteen seconds samples one moment in three
@@ -1201,6 +1201,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        audio.phase_known ? "true" : "false",
                        (int)audio.phase_min_frames, (int)audio.phase_max_frames,
                        (unsigned)audio.timeline_breaks,
+                       (unsigned)audio.filled_holes,
                        (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
                        (unsigned long long)audio.packets_submitted,
                        (unsigned)audio.late_packets, (unsigned)audio.tight_packets,

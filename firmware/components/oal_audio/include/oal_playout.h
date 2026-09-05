@@ -324,6 +324,25 @@ typedef struct {
      */
     uint32_t timeline_breaks;
 
+    /*
+     * Gaps covered with silence instead of being closed up.
+     *
+     * Loss used to vanish: payloads were written end to end, so a packet the
+     * network dropped moved every sample after it earlier by its length, and
+     * the node then played ahead of the sender until the servo walked it
+     * back -- slowly, because a speaker that is early cannot be stepped. On
+     * 2026-09-05 twenty-three lost packets on one node cost eighty
+     * milliseconds of offset and twenty seconds to recover.
+     *
+     * Filling the gap keeps the ring aligned to the sender, so there is no
+     * offset to recover from. The audible result is a dropout heard once
+     * rather than a slap echo for twenty seconds.
+     *
+     * Counted because it is still loss. A node collecting these has a link
+     * problem, however well the buffer now hides it.
+     */
+    uint32_t filled_holes;
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;

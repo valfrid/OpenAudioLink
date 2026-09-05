@@ -49,7 +49,7 @@ public sealed record NodeReading(
     long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges,
     long Reprimes, IReadOnlyList<long> GapBuckets,
     long PhaseErrorFrames, bool PhaseKnown, long TimelineBreaks,
-    long PhaseMinFrames, long PhaseMaxFrames);
+    long PhaseMinFrames, long PhaseMaxFrames, long FilledHoles);
 
 /// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
@@ -293,7 +293,8 @@ public sealed class NodeClockService : BackgroundService
                     stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0,
                     playout.Reprimes, stats?.GapBuckets ?? [],
                     playout.PhaseErrorFrames, playout.PhaseKnown, playout.TimelineBreaks,
-                    playout.PhaseMinFrames, playout.PhaseMaxFrames);
+                    playout.PhaseMinFrames, playout.PhaseMaxFrames,
+                    playout.FilledHoles);
             }
 
             if (!playout.Playing)
@@ -510,6 +511,19 @@ public sealed class NodeClockService : BackgroundService
         /// invalidates the position and the phase together.
         /// </summary>
         [JsonPropertyName("timelineBreaks")] public long TimelineBreaks { get; init; }
+
+        /// <summary>
+        /// Gaps the node covered with silence instead of closing up.
+        /// </summary>
+        /// <remarks>
+        /// Loss used to vanish: payloads were written end to end, so a lost
+        /// packet moved everything after it earlier and the node played
+        /// ahead of the sender until the servo crept it back. Filling the
+        /// gap keeps the ring aligned, so there is nothing to recover from —
+        /// but it is still loss, and a node collecting these has a link
+        /// problem the buffer is now hiding.
+        /// </remarks>
+        [JsonPropertyName("filledHoles")] public long FilledHoles { get; init; }
 
         /// <summary>
         /// The phase's swing across the node's last trace window, the twins

@@ -673,6 +673,47 @@ uint8_t oal_playout_volume(void)
     return s_volume;
 }
 
+/**
+ * Writes @p frames of silence into the ring, walked down from the last
+ * thing written so the edge is a ramp rather than a step.
+ *
+ * Called with the lock held and after room has been made.
+ */
+static void write_hole(size_t frames)
+{
+    /* Where the audio before the hole ended, so the ramp has somewhere to
+     * start. The ring is circular, so the previous frame may be at the far
+     * end of it. */
+    int32_t from[OAL_RTP_CHANNELS];
+    size_t back = (s_write + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
+    for (unsigned c = 0; c < OAL_RTP_CHANNELS; c++) {
+        from[c] = s_available >= OAL_RTP_CHANNELS ? s_ring[(back + c) % s_capacity] : 0;
+    }
+
+    while (frames > 0) {
+        size_t take = frames < CHUNK_FRAMES ? frames : CHUNK_FRAMES;
+        size_t take_samples = take * OAL_RTP_CHANNELS;
+
+        memset(s_scratch, 0, take_samples * sizeof(int32_t));
+        /* Only the first chunk carries the ramp; after that it is already
+         * at silence and there is nothing left to walk down from. */
+        oal_fade_to_silence(s_scratch, take, from, OAL_RTP_CHANNELS);
+        memset(from, 0, sizeof(from));
+
+        size_t first = s_capacity - s_write;
+        if (first > take_samples) {
+            first = take_samples;
+        }
+        memcpy(&s_ring[s_write], s_scratch, first * sizeof(int32_t));
+        if (first < take_samples) {
+            memcpy(&s_ring[0], &s_scratch[first], (take_samples - first) * sizeof(int32_t));
+        }
+        s_write = (s_write + take_samples) % s_capacity;
+        s_available += take_samples;
+        frames -= take;
+    }
+}
+
 void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp)
 {
     if (!s_state.running || payload == NULL || frames == 0 || s_lock == NULL) {
@@ -796,9 +837,60 @@ void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp)
      * withholds the position until the pre-break audio has been played
      * rather than reporting one that is wrong by the size of the jump.
      */
+    /*
+     * How much of the sender's timeline is missing, worked out before the
+     * tracker is told and therefore before it re-seats.
+     */
+    int32_t gap_frames = s_phase.write_rtp_known
+        ? (int32_t)(rtp_timestamp - s_phase.write_rtp) : 0;
+
+
+    /*
+     * A hole is filled with silence, not closed up. **This is a correction
+     * to how loss has always been handled here, and the fault it caused is
+     * on the record.**
+     *
+     * Payloads were written end to end, so a packet the network lost simply
+     * vanished and the audio after it moved earlier by its length. The node
+     * then played ahead of the sender's timeline for as long as the servo
+     * took to walk it back -- and the walk is the slow one, because a
+     * speaker that is *early* cannot be stepped: winding the ring backwards
+     * replays audio already handed to the sink.
+     *
+     * On 2026-09-05 at 07:42 local, Speakers lost 23 packets in one window
+     * with Stereo losing none. Its depth fell 218 -> 136 ms and its phase
+     * read -84.6 ms, the two agreeing exactly, and it took about twenty
+     * seconds at 4.2 ms/s to creep back. Twenty seconds of one speaker
+     * eighty milliseconds ahead of the other is a slap echo; 115 ms of
+     * silence is a dropout heard once. Only one of those is worth having,
+     * and the second is what the sender's timeline actually says happened.
+     *
+     * It also removes the error rather than correcting it: with the hole
+     * kept, the ring stays aligned to the sender and the servo has nothing
+     * to do.
+     *
+     * Bounded by the target, because past that the node would have run dry
+     * anyway and re-priming -- which fills from real audio rather than from
+     * a lengthening silence -- is the better recovery. A negative gap is a
+     * reordered or restarted stream and is left to the re-seat above.
+     */
+    size_t hole_samples = 0;
+    if (gap_frames > 0
+            && (size_t)gap_frames * OAL_RTP_CHANNELS <= s_target_samples) {
+        hole_samples = (size_t)gap_frames * OAL_RTP_CHANNELS;
+    }
+
+    /* Told after the decision, so a filled hole is not mistaken for a jump
+     * the ring cannot account for. */
+    /* Accumulated here rather than copied from the tracker, whose counters
+     * are per-stream: a copy would step backwards every time the ring was
+     * restarted, which is the one thing a counter may never do. */
     if (oal_phase_on_packet(&s_phase, rtp_timestamp, (uint32_t)frames, arrival,
-                            arrival_us, (uint32_t)(s_available / OAL_RTP_CHANNELS))) {
-        s_state.timeline_breaks = s_phase.breaks;
+                            arrival_us, (uint32_t)(s_available / OAL_RTP_CHANNELS),
+                            (uint32_t)(hole_samples / OAL_RTP_CHANNELS))) {
+        s_state.timeline_breaks++;
+    } else if (hole_samples > 0) {
+        s_state.filled_holes++;
     }
 
     /*
@@ -807,8 +899,8 @@ void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp)
      * glitch, while dropping what just arrived costs the same glitch and
      * leaves the delay permanently longer.
      */
-    if (s_available + samples > s_capacity) {
-        size_t overflow = s_available + samples - s_capacity;
+    if (s_available + hole_samples + samples > s_capacity) {
+        size_t overflow = s_available + hole_samples + samples - s_capacity;
         s_read = (s_read + overflow) % s_capacity;
         s_available -= overflow;
         s_state.dropped_frames += (uint32_t)(overflow / OAL_RTP_CHANNELS);
@@ -832,6 +924,15 @@ void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp)
             ESP_LOGW(TAG, "ring full, oldest frames dropped; %" PRIu32
                           " s of audio lost so far", lost_seconds);
         }
+    }
+
+    if (hole_samples > 0) {
+        write_hole(hole_samples / OAL_RTP_CHANNELS);
+        s_state.silence_frames += (uint32_t)(hole_samples / OAL_RTP_CHANNELS);
+        /* The payload after the hole starts from silence, so walk into it
+         * rather than stepping. */
+        oal_fade_from(s_scratch, frames, (const int32_t[OAL_RTP_CHANNELS]){ 0 },
+                      OAL_RTP_CHANNELS);
     }
 
     size_t first = s_capacity - s_write;

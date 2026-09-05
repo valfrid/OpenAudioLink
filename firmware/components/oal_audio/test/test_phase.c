@@ -75,8 +75,23 @@ static bool arrive(rig_t *r, uint32_t delay)
     uint32_t ts = r->sender_rtp;
     r->sender_rtp += PACKET;
     bool broke = oal_phase_on_packet(&r->phase, ts, PACKET,
-                                     ts + r->epoch + delay, r->node_us, r->held);
+                                     ts + r->epoch + delay, r->node_us, r->held, 0);
     r->held += PACKET;
+    return broke;
+}
+
+/**
+ * A packet arriving after `lost` packets went missing, with the caller
+ * having written the hole as silence — what oal_playout_submit now does.
+ */
+static bool arrive_filling(rig_t *r, unsigned lost)
+{
+    uint32_t hole = lost * PACKET;
+    uint32_t ts = r->sender_rtp;
+    bool broke = oal_phase_on_packet(&r->phase, ts, PACKET,
+                                     ts + r->epoch, r->node_us, r->held, hole);
+    r->sender_rtp += PACKET;
+    r->held += hole + PACKET;      /* the silence and then the payload */
     return broke;
 }
 
@@ -420,7 +435,7 @@ static void Clock_drift_is_reported_once(void)
     for (unsigned i = 0; i < TARGET / PACKET; i++) {
         uint32_t node_at_arrival = epoch + (uint32_t)((double)real * rate);
         oal_phase_on_packet(&phase, sender, PACKET, node_at_arrival,
-                            (uint64_t)real * 1000000ull / RATE, held);
+                            (uint64_t)real * 1000000ull / RATE, held, 0);
         sender += PACKET;
         held += PACKET;
         real += PACKET;
@@ -429,7 +444,7 @@ static void Clock_drift_is_reported_once(void)
     for (unsigned i = 0; i < 300 * RATE / PACKET; i++) {
         uint32_t node_at_arrival = epoch + (uint32_t)((double)real * rate);
         oal_phase_on_packet(&phase, sender, PACKET, node_at_arrival,
-                            (uint64_t)real * 1000000ull / RATE, held);
+                            (uint64_t)real * 1000000ull / RATE, held, 0);
         sender += PACKET;
         held += PACKET;
 
@@ -589,6 +604,85 @@ static void The_extremes_do_not_trip_it_up(void)
           "the most positive error should step back");
 }
 
+/**
+ * Loss, handled the two ways.
+ *
+ * Closing a hole up moves every sample after it earlier by the hole's
+ * length, so the node plays ahead of the sender — and it can only creep
+ * back, because a speaker that is early cannot be stepped. Twenty-three
+ * lost packets on 2026-09-05 cost eighty milliseconds of offset and twenty
+ * seconds of slap echo. Filling the hole leaves nothing to recover from.
+ */
+static void A_hole_closed_up_makes_the_speaker_early(void)
+{
+    rig_t r;
+    rig_init(&r, 88000u, 4321u);
+    for (unsigned i = 0; i < TARGET / PACKET; i++) { arrive(&r, 0); tick(&r, PACKET); }
+    settle(&r, 0, 20);
+
+    /* 23 packets lost, the gap closed up: the sender's stamps jump, the
+     * ring's content does not. */
+    r.sender_rtp += 23 * PACKET;
+    arrive(&r, 0);
+    play(&r, PACKET);
+    tick(&r, PACKET);
+    /* Play out the pre-break audio so the position is trusted again. */
+    for (unsigned i = 0; i < TARGET / PACKET + 2; i++) {
+        arrive(&r, 0); play(&r, PACKET); tick(&r, PACKET);
+    }
+
+    int32_t error = 0;
+    CHECK(oal_phase_error(&r.phase, r.held, r.node_rtp, TARGET, &error), "no reading");
+    CHECK(error < -4000,
+          "23 packets closed up should leave the node about 115 ms early, not %d frames",
+          error);
+}
+
+static void A_hole_filled_with_silence_leaves_no_error(void)
+{
+    rig_t r;
+    rig_init(&r, 88000u, 4321u);
+    for (unsigned i = 0; i < TARGET / PACKET; i++) { arrive(&r, 0); tick(&r, PACKET); }
+    settle(&r, 0, 20);
+
+    uint32_t breaks_before = r.phase.breaks;
+
+    /* The same 23 packets, with the caller writing 23 packets of silence. */
+    r.sender_rtp += 23 * PACKET;
+    CHECK(!arrive_filling(&r, 23),
+          "a filled hole is not a break -- nothing needs re-seating");
+    CHECK(r.phase.breaks == breaks_before, "it must not be counted as a break");
+    CHECK(r.phase.holes == 1, "it must be counted as a hole");
+
+    /* The position is still trustworthy immediately: no settling. */
+    uint32_t position = 0;
+    CHECK(oal_phase_position(&r.phase, r.held, &position),
+          "a filled hole must not withhold the position");
+
+    /* The ring now holds the hole as well, so play it out. */
+    for (unsigned i = 0; i < 24; i++) { play(&r, PACKET); tick(&r, PACKET); }
+
+    int32_t error = 0;
+    CHECK(oal_phase_error(&r.phase, r.held, r.node_rtp, TARGET, &error), "no reading");
+    CHECK(error > -200 && error < 200,
+          "a filled hole should leave nothing to correct, not %d frames", error);
+}
+
+/** A partial fill is short by the remainder, which is a break by any name. */
+static void A_partly_filled_hole_is_still_a_break(void)
+{
+    rig_t r;
+    rig_init(&r, 5000u, 11u);
+    for (unsigned i = 0; i < TARGET / PACKET; i++) { arrive(&r, 0); tick(&r, PACKET); }
+    settle(&r, 0, 15);
+
+    r.sender_rtp += 10 * PACKET;
+    uint32_t ts = r.sender_rtp;
+    CHECK(oal_phase_on_packet(&r.phase, ts, PACKET, ts + r.epoch, r.node_us,
+                              r.held, 4 * PACKET),
+          "filling four packets of a ten-packet hole is not a fill");
+}
+
 int main(void)
 {
     A_link_at_the_target_reads_zero();
@@ -608,6 +702,9 @@ int main(void)
     A_hundred_milliseconds_late_is_stepped_back();
     A_small_error_is_never_stepped();
     The_extremes_do_not_trip_it_up();
+    A_hole_closed_up_makes_the_speaker_early();
+    A_hole_filled_with_silence_leaves_no_error();
+    A_partly_filled_hole_is_still_a_break();
 
     if (failures != 0) {
         printf("%d check(s) failed\n", failures);

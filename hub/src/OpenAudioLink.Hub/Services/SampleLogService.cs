@@ -165,6 +165,9 @@ public sealed class SampleLogService : BackgroundService
         // before the next poll, so the instants alone can only catch it by
         // luck.
         "phaseMinMs", "phaseMaxMs",
+        // Gaps covered with silence rather than closed up. Still loss:
+        // the buffer hides it now, the counter must not.
+        "filledHoles",
         // The link.
         "received", "expected", "lost", "jitterMs", "lossEvents", "longestGap",
         "arrivalGaps", "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
@@ -265,6 +268,7 @@ public sealed class SampleLogService : BackgroundService
                 N(r.PhaseErrorFrames / 48.0, 1), r.PhaseKnown ? "1" : "0",
                 L(r.TimelineBreaks),
                 N(r.PhaseMinFrames / 48.0, 1), N(r.PhaseMaxFrames / 48.0, 1),
+                L(r.FilledHoles),
                 L(r.Received), L(r.Expected), L(r.Lost),
                 // Jitter and gaps arrive in RTP ticks; milliseconds are
                 // what a buffer is sized in and what a reader thinks in.

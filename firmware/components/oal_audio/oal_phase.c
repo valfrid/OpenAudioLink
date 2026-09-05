@@ -7,11 +7,17 @@ void oal_phase_reset(oal_phase_t *phase)
     if (phase == NULL) {
         return;
     }
-    uint32_t breaks = phase->breaks;
+    /*
+     * Everything, including the counters.
+     *
+     * They used to be carried across, so a reset would not hide the events
+     * that caused it -- and that read two fields out of a struct the caller
+     * may never have initialised. A static is zeroed and survived it; a
+     * local did not, and the first test to use one saw 32 697 breaks and
+     * four billion holes. Lifetime counting belongs to the caller, which
+     * has somewhere durable to keep it; this struct is per-stream.
+     */
     memset(phase, 0, sizeof(*phase));
-    /* Kept across a reset: it counts what the link has done to this stream,
-     * and zeroing it here would hide the very events that caused the reset. */
-    phase->breaks = breaks;
 }
 
 /** Starts a fresh pair of delay windows, forgetting both. */
@@ -27,7 +33,8 @@ static void restart_delay(oal_phase_t *phase, uint32_t delay, uint64_t now_us)
 }
 
 bool oal_phase_on_packet(oal_phase_t *phase, uint32_t rtp_timestamp, uint32_t frames,
-                         uint32_t arrival_rtp, uint64_t now_us, uint32_t frames_held)
+                         uint32_t arrival_rtp, uint64_t now_us, uint32_t frames_held,
+                         uint32_t filled_frames)
 {
     if (phase == NULL || frames == 0) {
         return false;
@@ -45,16 +52,34 @@ bool oal_phase_on_packet(oal_phase_t *phase, uint32_t rtp_timestamp, uint32_t fr
      * milliseconds — which is the whole quantity being measured.
      */
     bool broke = false;
+    bool filled = false;
     if (phase->write_rtp_known && rtp_timestamp != phase->write_rtp) {
-        broke = true;
-        phase->breaks++;
         /*
-         * The ring still holds audio from before the jump, and the new
-         * timeline says nothing about where that audio sits. Withhold the
-         * position until it has all been played rather than publish a
-         * number that is wrong by the size of the break.
+         * A forward gap the caller covered with silence is not a break.
+         * The silence occupies exactly the frames the network lost, so what
+         * the ring holds still lines up with the sender's timeline and
+         * nothing below needs re-seating: the position stays valid and the
+         * delay windows keep the samples they have earned.
+         *
+         * Exact equality with the gap, because a partial fill leaves the
+         * ring short by the remainder and that is a break by any other
+         * name.
          */
-        phase->settling_frames = frames_held;
+        uint32_t gap = rtp_timestamp - phase->write_rtp;
+        if (filled_frames != 0 && filled_frames == gap) {
+            filled = true;
+            phase->holes++;
+        } else {
+            broke = true;
+            phase->breaks++;
+            /*
+             * The ring still holds audio from before the jump, and the new
+             * timeline says nothing about where that audio sits. Withhold
+             * the position until it has all been played rather than publish
+             * a number that is wrong by the size of the break.
+             */
+            phase->settling_frames = frames_held;
+        }
     }
 
     phase->write_rtp = rtp_timestamp + frames;
@@ -68,7 +93,7 @@ bool oal_phase_on_packet(oal_phase_t *phase, uint32_t rtp_timestamp, uint32_t fr
      */
     uint32_t delay = arrival_rtp - rtp_timestamp;
 
-    if (broke || !phase->delay_base_known) {
+    if ((broke && !filled) || !phase->delay_base_known) {
         /* A restart hands the stream a new random timestamp base, so every
          * sample taken against the old one describes a timeline that no
          * longer exists. Keeping them would hold the estimate at an
