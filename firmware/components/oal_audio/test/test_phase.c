@@ -18,6 +18,7 @@
 #include "oal_phase.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 
 #define RATE 48000u
@@ -493,6 +494,101 @@ static void The_timeline_survives_its_own_wrap(void)
     }
 }
 
+/* ---------------- the servo's policy ---------------- */
+
+/** How many frames a second of this decision moves, given a fixed error. */
+static double rate_ms_per_second(int32_t error)
+{
+    unsigned moved = 0;
+    for (uint32_t tick = 0; tick < 200; tick++) {          /* one second */
+        oal_phase_action_t a = oal_phase_act(error, 0, tick);
+        if (a == OAL_PHASE_TRIM || a == OAL_PHASE_PAD) { moved++; }
+    }
+    return (double)moved / 48.0;
+}
+
+/** Inside the slack nothing happens, which is what stops it dithering. */
+static void Small_errors_are_left_alone(void)
+{
+    for (int32_t e = -OAL_PHASE_SLACK_FRAMES; e <= OAL_PHASE_SLACK_FRAMES; e++) {
+        for (uint32_t tick = 0; tick < 8; tick++) {
+            CHECK(oal_phase_act(e, 0, tick) == OAL_PHASE_HOLD,
+                  "%d frames should be inside the slack", e);
+        }
+    }
+}
+
+/** Late trims, early pads. Getting this backwards doubles the error. */
+static void The_direction_is_not_a_coin_toss(void)
+{
+    bool trimmed = false, padded = false;
+    for (uint32_t tick = 0; tick < 8; tick++) {
+        if (oal_phase_act(+5000, 0, tick) == OAL_PHASE_TRIM) { trimmed = true; }
+        if (oal_phase_act(-5000, 0, tick) == OAL_PHASE_PAD) { padded = true; }
+        CHECK(oal_phase_act(+5000, 0, tick) != OAL_PHASE_PAD, "late must not pad");
+        CHECK(oal_phase_act(-5000, 0, tick) != OAL_PHASE_TRIM, "early must not trim");
+    }
+    CHECK(trimmed && padded, "neither direction did anything");
+}
+
+/**
+ * The rate ladder. Near home it must stay slow -- that is what stops the
+ * loop dithering, and 0.34.0 is the record of what happens when it does not.
+ */
+static void The_rate_rises_with_the_error_and_not_before(void)
+{
+    double near = rate_ms_per_second(OAL_PHASE_SLACK_FRAMES + 48);   /* 3 ms out */
+    double mid  = rate_ms_per_second(OAL_PHASE_MEDIUM_FRAMES + 48);  /* 11 ms */
+    double far  = rate_ms_per_second(OAL_PHASE_FAST_FRAMES + 48);    /* 26 ms */
+
+    CHECK(near > 0.9 && near < 1.2, "near home should creep at ~1 ms/s, not %.2f", near);
+    CHECK(mid > 1.9 && mid < 2.3, "past 10 ms should be ~2 ms/s, not %.2f", mid);
+    CHECK(far > 3.9 && far < 4.4, "past 25 ms should be ~4.2 ms/s, not %.2f", far);
+    CHECK(near < mid && mid < far, "the ladder must rise");
+}
+
+/**
+ * The fault of 2026-09-04, in the arithmetic.
+ *
+ * A speaker 100 ms late. The fill loop could not see it -- the fill sat at
+ * 329 ms, sixteen milliseconds inside the step-back threshold -- and the
+ * creep needed longer than the gap between disturbances. The phase loop
+ * steps back after a second.
+ */
+static void A_hundred_milliseconds_late_is_stepped_back(void)
+{
+    const int32_t late = 4800;                      /* 100 ms */
+
+    CHECK(oal_phase_act(late, 0, 0) != OAL_PHASE_STEP_BACK,
+          "one chunk out is not a reason to step; a burst would qualify");
+    CHECK(oal_phase_act(late, OAL_PHASE_STEP_CHUNKS - 1, 0) != OAL_PHASE_STEP_BACK,
+          "just under a second held should still be walking");
+    CHECK(oal_phase_act(late, OAL_PHASE_STEP_CHUNKS, 0) == OAL_PHASE_STEP_BACK,
+          "a second at 100 ms late should step back");
+
+    /* And it is one-directional, for the reason the fill's step is: winding
+     * the ring backwards replays audio already given to the sink. */
+    CHECK(oal_phase_act(-late, OAL_PHASE_STEP_CHUNKS * 10, 0) != OAL_PHASE_STEP_BACK,
+          "a speaker that is early must be walked back, never stepped");
+}
+
+/** Below the step threshold it walks, however long it has been out. */
+static void A_small_error_is_never_stepped(void)
+{
+    CHECK(oal_phase_act(OAL_PHASE_STEP_FRAMES, OAL_PHASE_STEP_CHUNKS * 100, 0)
+              != OAL_PHASE_STEP_BACK,
+          "the threshold is exclusive; 40 ms exactly should still walk");
+}
+
+/** INT32_MIN has no positive counterpart; negating it is undefined. */
+static void The_extremes_do_not_trip_it_up(void)
+{
+    CHECK(oal_phase_act(INT32_MIN, 0, 0) == OAL_PHASE_PAD,
+          "the most negative error should still read as early");
+    CHECK(oal_phase_act(INT32_MAX, OAL_PHASE_STEP_CHUNKS, 0) == OAL_PHASE_STEP_BACK,
+          "the most positive error should step back");
+}
+
 int main(void)
 {
     A_link_at_the_target_reads_zero();
@@ -506,6 +602,12 @@ int main(void)
     Clock_drift_is_reported_once();
     Nothing_is_reported_before_the_first_packet();
     The_timeline_survives_its_own_wrap();
+    Small_errors_are_left_alone();
+    The_direction_is_not_a_coin_toss();
+    The_rate_rises_with_the_error_and_not_before();
+    A_hundred_milliseconds_late_is_stepped_back();
+    A_small_error_is_never_stepped();
+    The_extremes_do_not_trip_it_up();
 
     if (failures != 0) {
         printf("%d check(s) failed\n", failures);

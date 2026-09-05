@@ -169,3 +169,33 @@ bool oal_phase_error(const oal_phase_t *phase, uint32_t frames_held, uint32_t no
     *out = (int32_t)(behind - least - target_frames);
     return true;
 }
+
+oal_phase_action_t oal_phase_act(int32_t error_frames, uint32_t held_chunks, uint32_t tick)
+{
+    /*
+     * The step first, because it supersedes the rest: nudging shaves one
+     * frame at a time towards a threshold, and the point at this distance
+     * is that shaving is too slow to be worth doing. A click on one speaker
+     * beats a slap echo for the minute it would take to walk back, and only
+     * one of those is a choice anybody would make twice.
+     */
+    if (error_frames > OAL_PHASE_STEP_FRAMES && held_chunks >= OAL_PHASE_STEP_CHUNKS) {
+        return OAL_PHASE_STEP_BACK;
+    }
+
+    /* Not abs(): error_frames can be INT32_MIN, where negating is undefined. */
+    uint32_t magnitude = error_frames < 0
+        ? (uint32_t)(-(int64_t)error_frames) : (uint32_t)error_frames;
+
+    if (magnitude <= OAL_PHASE_SLACK_FRAMES) {
+        return OAL_PHASE_HOLD;
+    }
+
+    uint32_t mask = magnitude > OAL_PHASE_FAST_FRAMES ? 0u
+                  : magnitude > OAL_PHASE_MEDIUM_FRAMES ? 1u : 3u;
+    if ((tick & mask) != 0u) {
+        return OAL_PHASE_HOLD;
+    }
+
+    return error_frames > 0 ? OAL_PHASE_TRIM : OAL_PHASE_PAD;
+}

@@ -160,6 +160,75 @@ bool oal_phase_position(const oal_phase_t *phase, uint32_t frames_held, uint32_t
 bool oal_phase_error(const oal_phase_t *phase, uint32_t frames_held, uint32_t now_rtp,
                      uint32_t target_frames, int32_t *out);
 
+/*
+ * What to do about a phase error, and the numbers that decide it.
+ *
+ * **These are much tighter than the fill's, and the measurement is why.**
+ * The fill's tolerances are wide because the fill swings: a sender waking
+ * on a 15.6 ms timer delivers in clumps, and one 206 ms arrival gap on
+ * 2026-09-05 took a node's fill from 225 ms down to 17 in a single window.
+ * A loop steering on that must ignore a hundred milliseconds of movement to
+ * avoid spending a frame on every burst -- and a hundred milliseconds of
+ * blindness is a slap echo nobody can hear their way out of.
+ *
+ * Measured over eight minutes of that same evening, per five-second window:
+ *
+ *     fill span   median  36 ms, worst 208 ms
+ *     phase span  median 1.0 ms, worst 6.0 ms
+ *
+ * The window where the fill moved 208 ms is the one that settles it: the
+ * phase moved 4.1 ms. Nothing happened to the sound, and only one of the
+ * two observables knew that.
+ */
+
+/** Inside this, nothing is done, so the loop settles instead of dithering. */
+#define OAL_PHASE_SLACK_FRAMES 96        /* 2 ms */
+
+/** Above these, one frame per chunk and per two chunks; below, per four. */
+#define OAL_PHASE_FAST_FRAMES 1200       /* 25 ms */
+#define OAL_PHASE_MEDIUM_FRAMES 480      /* 10 ms */
+
+/**
+ * Past this, late, a speaker stops walking back and steps.
+ *
+ * 40 ms rather than the fill loop's 120 because this quantity does not
+ * move when a burst arrives, so the threshold no longer has to clear the
+ * sender's catch-up lump. That number was the whole reason a node could sit
+ * a hundred milliseconds behind its partner with every counter healthy.
+ *
+ * One direction only, as the fill's step is: a node that is *early* has to
+ * be walked back by padding, because winding the ring backwards replays
+ * audio already handed to the sink.
+ */
+#define OAL_PHASE_STEP_FRAMES 1920       /* 40 ms */
+
+/** Chunks the error must stay out before a step. A second, as the fill's. */
+#define OAL_PHASE_STEP_CHUNKS 200
+
+typedef enum {
+    OAL_PHASE_HOLD = 0,    /**< within slack, or not this chunk's turn */
+    OAL_PHASE_TRIM,        /**< late: drop one frame */
+    OAL_PHASE_PAD,         /**< early: insert one frame */
+    OAL_PHASE_STEP_BACK,   /**< late enough that walking would take too long */
+} oal_phase_action_t;
+
+/**
+ * The servo's decision for one chunk.
+ *
+ * @param error_frames from oal_phase_error; positive is late
+ * @param held_chunks  consecutive chunks the error has exceeded
+ *                     OAL_PHASE_STEP_FRAMES, which the caller counts
+ * @param tick         a chunk counter, used to rate-limit the nudges
+ *
+ * Pure, so the policy can be tested without a DAC. The rates it produces
+ * are one frame in one, two or four chunks — 4.2, 2.1 and 1.0 ms per
+ * second — which is the same ladder the fill loop used and for the same
+ * reason: a frame in four chunks is a tenth of a percent, under two cents
+ * of pitch, and running flat out for minutes is what a listener reported as
+ * the speaker sounding like it was speeding up to catch up.
+ */
+oal_phase_action_t oal_phase_act(int32_t error_frames, uint32_t held_chunks, uint32_t tick);
+
 #ifdef __cplusplus
 }
 #endif

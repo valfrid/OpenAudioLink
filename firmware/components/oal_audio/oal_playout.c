@@ -310,6 +310,11 @@ static int32_t s_phase_min;
 static int32_t s_phase_max;
 static bool s_phase_span_seen;
 
+/* Consecutive chunks the phase error has been past the step threshold. A
+ * second of it is what separates a speaker genuinely out of step from one
+ * moment of weather. */
+static uint32_t s_phase_held;
+
 /** The local clock in RTP units, the same conversion the consumer uses. */
 static uint32_t local_rtp_now(void)
 {
@@ -1048,6 +1053,71 @@ static size_t take_chunk(int32_t *chunk)
         s_fill_avg += (int64_t)s_available - (s_fill_avg >> AVG_SHIFT);
     }
 
+    /*
+     * Where this speaker is, published once per chunk while the ring is
+     * still locked so the depth and the clock describe one instant.
+     *
+     * Taken before the servo below rather than after, so the loop acts on
+     * this chunk's reading instead of the last one's — and before the copy,
+     * because the question is which sample is about to leave rather than
+     * which one just did.
+     *
+     * Read here rather than assembled in the status handler, which is how
+     * `playingTimestamp` came to be reported by subtracting one snapshot
+     * from another taken at a different moment. That produced readings of
+     * over a second, twenty-four times in one day, on nodes whose buffers
+     * had not moved at all.
+     *
+     * The one thing it is briefly wrong about is a step-back, which moves
+     * the position by tens of milliseconds after this has been read. The
+     * next chunk corrects it five milliseconds later, which is far inside
+     * a poll.
+     */
+    {
+        uint32_t held_frames = (uint32_t)(s_available / OAL_RTP_CHANNELS);
+        uint32_t now = local_rtp_now();
+        /* Initialised because both are written only through a pointer the
+         * callee may decline to use, and this file is built with -Werror. */
+        uint32_t position = 0;
+        int32_t error = 0;
+
+        s_state.play_timestamp_known =
+            s_primed && oal_phase_position(&s_phase, held_frames, &position);
+        if (s_state.play_timestamp_known) {
+            s_state.play_timestamp = position;
+        }
+        /*
+         * Against the steering line, not the target.
+         *
+         * The first hardware reading caught this. The target is 200 ms but
+         * the loop rests the fill at `s_steer_to` -- the centre of the
+         * quiet band, 225 ms -- so measuring from the target reports a
+         * node sitting exactly where the design wants it as 25 ms late,
+         * for ever. Harmless when two nodes are compared, since the bias
+         * is common and subtracts out, and not harmless at all the moment
+         * anything steers on it: driving this to zero would haul the fill
+         * to 200 ms against a loop holding it at 225, and the two would
+         * push against each other indefinitely.
+         *
+         * `steerFrames` is what `/status` publishes as the line both
+         * speakers aim at, so this is the same number the rest of the
+         * system already calls the setpoint.
+         */
+        s_state.phase_known = s_primed
+            && oal_phase_error(&s_phase, held_frames, now,
+                               (uint32_t)(s_steer_to / OAL_RTP_CHANNELS), &error);
+        if (s_state.phase_known) {
+            s_state.phase_error_frames = error;
+            if (!s_phase_span_seen || error < s_phase_min) {
+                s_phase_min = error;
+            }
+            if (!s_phase_span_seen || error > s_phase_max) {
+                s_phase_max = error;
+            }
+            s_phase_span_seen = true;
+        }
+    }
+
     bool acted = false;
 
     /*
@@ -1083,6 +1153,16 @@ static size_t take_chunk(int32_t *chunk)
                 s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
                 oal_phase_on_played(&s_phase, (uint32_t)(excess / OAL_RTP_CHANNELS));
                 s_state.resyncs++;
+                /*
+                 * Missed when this path was written. The file's own rule is
+                 * that no edge is a step any more -- an overflow, an
+                 * underrun and a re-prime are all walked -- and a step-back
+                 * jumps the read pointer by a fifth of a second of unrelated
+                 * samples, which is the largest discontinuity here and was
+                 * the only one still going out as a click. The phase path
+                 * below sets it too.
+                 */
+                s_splice_pending = true;
                 acted = true;
             }
             /*
@@ -1192,7 +1272,92 @@ static size_t take_chunk(int32_t *chunk)
      * a frame, and every spent frame is a phase shift -- which is precisely
      * how 0.34.0 made two speakers worse instead of better.
      */
-    if (!acted && s_steer_to > 0) {
+    /*
+     * On the phase, when the phase is known, and this is the change the
+     * whole observable was built for.
+     *
+     * The fill loop below still runs whenever it is not -- before the ring
+     * has primed, and for one buffer's worth after the sender's timeline
+     * breaks. It is a fallback rather than a rival: the two never act in
+     * the same chunk.
+     *
+     * **Why the tolerances here are a twentieth of the fill's.** The fill
+     * swings, and the fill loop's numbers are sized around that swing: 5 ms
+     * of slack, and a step-back only past 120 ms because a sender's
+     * catch-up lump lifts every speaker at once and stepping on that would
+     * click both of them to fix nothing. Measured over eight minutes on
+     * 2026-09-05, per five-second window, the fill's span ran to a median
+     * of 36 ms and once to 208 -- one 206 ms arrival gap took a node from
+     * 225 ms of fill down to 17 -- while the phase's span stayed at a
+     * median of 1.0 ms and never passed 6.0. In that 208 ms window the
+     * phase moved 4.1 ms: nothing had happened to the sound, and only one
+     * of the two observables knew it.
+     *
+     * So the step-back can be 40 ms instead of 120, which is the number
+     * that let a speaker sit a hundred milliseconds behind its partner for
+     * twelve minutes on 2026-09-04 with every counter healthy.
+     */
+    if (!acted && s_state.phase_known) {
+        /* Counted here rather than in the policy so the policy stays pure
+         * and testable; the threshold is its constant either way. */
+        if (s_state.phase_error_frames > OAL_PHASE_STEP_FRAMES) {
+            s_phase_held++;
+        } else {
+            s_phase_held = 0;
+        }
+
+        switch (oal_phase_act(s_state.phase_error_frames, s_phase_held, s_steer_phase++)) {
+        case OAL_PHASE_STEP_BACK: {
+            /*
+             * Discard the lateness in one operation, but never below the
+             * pad line: a speaker that steps itself into an underrun has
+             * traded a slap echo for a dropout, and the re-prime that
+             * follows would put the phase somewhere else again anyway.
+             */
+            size_t excess = (size_t)s_state.phase_error_frames * OAL_RTP_CHANNELS;
+            size_t floor_at = s_pad_below;
+            if (s_available > floor_at && excess > s_available - floor_at) {
+                excess = s_available - floor_at;
+            } else if (s_available <= floor_at) {
+                excess = 0;
+            }
+            excess -= excess % OAL_RTP_CHANNELS;
+            if (excess > 0) {
+                s_read = (s_read + excess) % s_capacity;
+                s_available -= excess;
+                s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
+                oal_phase_on_played(&s_phase, (uint32_t)(excess / OAL_RTP_CHANNELS));
+                s_state.resyncs++;
+                s_splice_pending = true;
+                acted = true;
+            }
+            s_phase_held = 0;
+            /* The average describes a fill that no longer exists. */
+            s_fill_avg = (int64_t)s_available << AVG_SHIFT;
+            break;
+        }
+        case OAL_PHASE_TRIM:
+            if (s_available >= OAL_RTP_CHANNELS) {
+                s_read = (s_read + OAL_RTP_CHANNELS) % s_capacity;
+                s_available -= OAL_RTP_CHANNELS;
+                s_state.trimmed_frames++;
+                acted = true;
+            }
+            break;
+        case OAL_PHASE_PAD:
+            if (s_available + OAL_RTP_CHANNELS <= s_capacity) {
+                s_read = (s_read + s_capacity - OAL_RTP_CHANNELS) % s_capacity;
+                s_available += OAL_RTP_CHANNELS;
+                s_state.padded_frames++;
+                acted = true;
+            }
+            break;
+        case OAL_PHASE_HOLD:
+            break;
+        }
+    }
+
+    if (!acted && !s_state.phase_known && s_steer_to > 0) {
         size_t avg = (size_t)(s_fill_avg >> AVG_SHIFT);
         bool low = avg + s_steer_slack < s_steer_to;
         bool high = avg > s_steer_to + s_steer_slack;
@@ -1226,63 +1391,6 @@ static size_t take_chunk(int32_t *chunk)
                 s_available -= OAL_RTP_CHANNELS;
                 s_state.trimmed_frames++;
             }
-        }
-    }
-
-    /*
-     * Where this speaker is, published once per chunk while the ring is
-     * still locked so the depth and the clock describe one instant.
-     *
-     * Taken *before* the copy below, because the question is which sample
-     * is about to leave rather than which one just did — and read here
-     * rather than assembled in the status handler, which is how
-     * `playingTimestamp` came to be reported by subtracting one snapshot
-     * from another taken at a different moment. That produced readings of
-     * over a second, twenty-four times in one day, on nodes whose buffers
-     * had not moved at all.
-     */
-    {
-        uint32_t held_frames = (uint32_t)(s_available / OAL_RTP_CHANNELS);
-        uint32_t now = local_rtp_now();
-        /* Initialised because both are written only through a pointer the
-         * callee may decline to use, and this file is built with -Werror. */
-        uint32_t position = 0;
-        int32_t error = 0;
-
-        s_state.play_timestamp_known =
-            s_primed && oal_phase_position(&s_phase, held_frames, &position);
-        if (s_state.play_timestamp_known) {
-            s_state.play_timestamp = position;
-        }
-        /*
-         * Against the steering line, not the target.
-         *
-         * The first hardware reading caught this. The target is 200 ms but
-         * the loop rests the fill at `s_steer_to` -- the centre of the
-         * quiet band, 225 ms -- so measuring from the target reports a
-         * node sitting exactly where the design wants it as 25 ms late,
-         * for ever. Harmless when two nodes are compared, since the bias
-         * is common and subtracts out, and not harmless at all the moment
-         * anything steers on it: driving this to zero would haul the fill
-         * to 200 ms against a loop holding it at 225, and the two would
-         * push against each other indefinitely.
-         *
-         * `steerFrames` is what `/status` publishes as the line both
-         * speakers aim at, so this is the same number the rest of the
-         * system already calls the setpoint.
-         */
-        s_state.phase_known = s_primed
-            && oal_phase_error(&s_phase, held_frames, now,
-                               (uint32_t)(s_steer_to / OAL_RTP_CHANNELS), &error);
-        if (s_state.phase_known) {
-            s_state.phase_error_frames = error;
-            if (!s_phase_span_seen || error < s_phase_min) {
-                s_phase_min = error;
-            }
-            if (!s_phase_span_seen || error > s_phase_max) {
-                s_phase_max = error;
-            }
-            s_phase_span_seen = true;
         }
     }
 
@@ -1625,6 +1733,7 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     s_phase_span_seen = false;
     s_phase_min = 0;
     s_phase_max = 0;
+    s_phase_held = 0;
 
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment

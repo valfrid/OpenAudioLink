@@ -487,10 +487,46 @@ typical arrival by roughly the jitter spread, and that difference shows up
 in the phase. It is common to both nodes only as far as their jitter is,
 which is the noise floor on comparing two of them.
 
-**Nothing steers on it yet.** The node computes and publishes it and the
-fill loop is untouched, deliberately: the argument for a narrow tolerance
-is that this observable does not swing, and an argument is not a hardware
-evening. The loop moves onto it once a night's log shows the two agreeing.
+**From firmware 0.52.0 the loop steers on it.** The evening of 2026-09-05
+is the measurement that allowed it — eight minutes, both nodes,
+thirty-four windows:
+
+| per five-second window | median | worst |
+| --- | --- | --- |
+| `fillMaxMs − fillMinMs` | 36 ms | **208 ms** |
+| `phaseMaxMs − phaseMinMs` | **1.0 ms** | 6.0 ms |
+
+The 208 ms window is the one that settles it. A 206 ms arrival gap took one
+node's fill from 225 ms down to **17**, a hair from silence — and its phase
+moved **4.1 ms**. Nothing had happened to the sound. A depth-based loop sees
+208 ms below setpoint and pads hard, which *would* have moved the sound; the
+phase loop correctly reads it as a cushion problem and leaves the timing
+alone.
+
+So the tolerances shrink by roughly twenty:
+
+| | fill loop | phase loop |
+| --- | --- | --- |
+| dead band | 5 ms | **2 ms** |
+| step back past | 120 ms | **40 ms** |
+| creep rates | 1 / 2 / 4.2 ms per second | unchanged |
+
+**The step-back threshold is the fix for the echo.** 120 ms had to clear the
+sender's catch-up lump, because that lump lifts every speaker's fill at once
+and stepping on it would click both to fix nothing. The phase does not move
+when the lump arrives, so the threshold no longer has to clear it — and 120
+was precisely the number that let a speaker sit at 329 ms of fill, sixteen
+milliseconds short of stepping, a hundred milliseconds behind its partner,
+for twelve minutes.
+
+The creep rates near home are deliberately unchanged. That is what stops the
+loop dithering, and 0.34.0 is the record of what happens when it is
+disturbed.
+
+**The fill loop is still there** and runs whenever the phase is not known —
+before the ring primes, and for one buffer's worth after the sender's
+timeline breaks. It is a fallback, not a rival: the two never act in the
+same chunk.
 
 ## The sample log: reading a run instead of photographing it
 
