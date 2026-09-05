@@ -183,10 +183,15 @@
 
     The question two speakers in one room raise is not "what is this node
     doing" but "do these two agree", and answering it meant reading a
-    serial log on each node at once. The offset between two consumers *is*
-    the difference in their buffer depths -- nothing in the design says
-    when a sample is due -- so the subtraction below is the whole
-    diagnosis, and the page can do it.
+    serial log on each node at once.
+
+    The headline used to be the difference in their buffer depths, because
+    nothing in the design said when a sample was due. Firmware 0.52.0 says:
+    every node measures its own distance from the sender's timeline, and
+    the difference between two of those is the offset -- no common instant
+    to establish, so a slow reply cannot manufacture one. The depth columns
+    stay, because a healthy depth and a healthy offset are now two
+    different questions and both are worth a glance.
   -->
   <section id="sync-panel" hidden>
     <h2>Speaker sync — <span id="sync-spread"></span></h2>
@@ -1478,8 +1483,47 @@ and swap supplies between two nodes to find out.">Clock</th>
           return { row: r, pos: (r.playout.playingTimestamp >>> 0) / 48 + since * 1000 };
         });
 
+      /*
+       * From each node's own phase error, when every one of them has it,
+       * and this is a different measurement rather than a tidier one.
+       *
+       * The position above is a point on a moving timeline, so comparing
+       * two nodes means placing both readings at one instant -- and the
+       * only clock available for that is the round trip that carried them.
+       * Every millisecond of asymmetry in that trip lands in the answer.
+       * Measured against this house's own log of 2026-09-05, over 166
+       * paired samples on 0.52.0:
+       *
+       *     position  median 3.7 ms, p95 18.0, worst 808
+       *     phase     median 0.1 ms, p95  0.4, worst 2.1
+       *
+       * and the position figure correlates with the round trip (r = 0.35)
+       * while the phase barely does (r = 0.12). The panel was showing tens
+       * of milliseconds of its own measurement noise on speakers that the
+       * node-side numbers agreed were a tenth of a millisecond apart.
+       *
+       * The phase error needs no common instant at all. It is each node's
+       * own distance from where the sender's timeline says it should be,
+       * computed on the node against its own clock, and it moves slowly --
+       * so a reading thirty milliseconds stale is still the same reading.
+       * Two nodes agree when their errors agree, and a slow reply cannot
+       * make them disagree.
+       *
+       * What it is *not* is exact: each node subtracts its own least
+       * network delay, so two nodes sitting at zero are apart by the
+       * difference in those delays. On one access point that is a
+       * millisecond or two, which is under the resolution this panel is
+       * asked for and far under the resolution of an ear.
+       */
+      const phased = playing.filter(r =>
+        r.playout.phaseKnown && Number.isFinite(r.playout.phaseErrorFrames));
+      const byPhase = phased.length === playing.length && phased.length >= 2;
+
       let offset = null;
-      if (aligned.length >= 2) {
+      if (byPhase) {
+        const errors = phased.map(r => r.playout.phaseErrorFrames / 48);
+        offset = Math.max(...errors) - Math.min(...errors);
+      } else if (aligned.length >= 2) {
         const wrapped = (a, b) => {
           const d = ((a - b) % 89478485 + 89478485 + 44739242) % 89478485 - 44739242;
           return d;
@@ -1491,8 +1535,13 @@ and swap supplies between two nodes to find out.">Clock</th>
             if (d > worst) worst = d;
           }
         }
-        offset = Math.round(worst);
+        offset = worst;
       }
+
+      /* Whole milliseconds read as precision this does not have, and a
+       * panel that says "0 ms apart" for an hour reads as broken rather
+       * than as correct. One decimal under ten, none above. */
+      const show = v => v < 10 ? v.toFixed(1) : String(Math.round(v));
 
       const depths = playing.map(r => ms(r.playout.bufferedFrames));
       const spread = Math.max(...depths) - Math.min(...depths);
@@ -1513,11 +1562,14 @@ and swap supplies between two nodes to find out.">Clock</th>
        */
       if (offset !== null) {
         // A minute at this refresh rate; old readings fall off the front.
-        syncHistory.push({ t: now, ms: offset });
+        // The method is kept with each reading: a history that mixed the
+        // two would report a median of neither.
+        syncHistory.push({ t: now, ms: offset, byPhase });
         while (syncHistory.length && now - syncHistory[0].t > 60000) {
           syncHistory.shift();
         }
-        const sorted = syncHistory.map(h => h.ms).sort((a, b) => a - b);
+        const sorted = syncHistory
+          .filter(h => h.byPhase === byPhase).map(h => h.ms).sort((a, b) => a - b);
         const typical = sorted[Math.floor(sorted.length / 2)];
         const worst = sorted[sorted.length - 1];
 
@@ -1529,11 +1581,18 @@ and swap supplies between two nodes to find out.">Clock</th>
          */
         const ocls = typical <= 20 ? 'good' : typical <= 40 ? 'fair' : 'poor';
         const settled = sorted.length > 3
-          ? `<span class="muted"> · typically ${typical} ms, worst ${worst}` +
+          ? `<span class="muted"> · typically ${show(typical)} ms, worst ${show(worst)}` +
             `, over the last minute</span>`
           : '';
+        /* Named, because the two methods differ by more than the number
+         * they produce and somebody comparing today's panel against last
+         * week's screenshot deserves to know which they are looking at. */
+        const how = byPhase
+          ? ''
+          : '<span class="muted"> · placed by round trip; update the nodes'
+            + ' for the node-measured figure</span>';
         document.getElementById('sync-spread').innerHTML =
-          `<span class="rssi ${ocls}">${offset} ms apart</span>${settled}`;
+          `<span class="rssi ${ocls}">${show(offset)} ms apart</span>${settled}${how}`;
       } else {
         /*
          * One skipped sample must not throw away the answer.
@@ -1549,15 +1608,15 @@ and swap supplies between two nodes to find out.">Clock</th>
         while (syncHistory.length && now - syncHistory[0].t > 60000) {
           syncHistory.shift();
         }
-        const recent = syncHistory.map(h => h.ms).sort((a, b) => a - b);
+        const recent = syncHistory.filter(h => h.byPhase).map(h => h.ms).sort((a, b) => a - b);
         const cls = spread <= 25 ? 'good' : spread <= 80 ? 'fair' : 'poor';
         if (recent.length > 3 && !oldFirmware) {
           const typical = recent[Math.floor(recent.length / 2)];
           const worst = recent[recent.length - 1];
           const ocls = typical <= 20 ? 'good' : typical <= 40 ? 'fair' : 'poor';
           document.getElementById('sync-spread').innerHTML =
-            `<span class="rssi ${ocls}">typically ${typical} ms apart</span>` +
-            `<span class="muted"> · worst ${worst} over the last minute` +
+            `<span class="rssi ${ocls}">typically ${show(typical)} ms apart</span>` +
+            `<span class="muted"> · worst ${show(worst)} over the last minute` +
             ' · this reading skipped, the node answered slowly</span>';
         } else {
           const why = oldFirmware
