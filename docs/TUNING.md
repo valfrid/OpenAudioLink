@@ -546,10 +546,29 @@ stays aligned to the sender and the servo has nothing to do. Bounded by the
 target: past that the node would have run dry anyway, and re-priming fills
 from real audio rather than from a lengthening silence.
 
+**Confirmed the next morning, on the same failure.** 2026-09-05, 08:08
+local: Speakers lost 14 packets in one window, covered as 11 holes. Its
+phase read **−2.0 ms** with a span of 0.7 ms across the window, and the
+delta against Stereo never moved. The same event the evening before, with
+the gap closed up, cost 84.6 ms and twenty seconds. The offset now does not
+happen rather than being corrected quickly.
+
 **`filledHoles` in the log and in `/status` counts them, and it is still
 loss.** A node collecting them has a link problem that the buffer is now
 hiding, which is exactly why it is counted separately from `timelineBreaks`
 — a break re-seats the node, a filled hole does not.
+
+**Sixty-nine minutes on 0.53.0**, both speakers, as the state of things:
+
+| | median | p95 | worst |
+| --- | --- | --- | --- |
+| fill span per window | 35 ms | 110 ms | 216 ms |
+| phase span per window | **0.9 ms** | 1.4 ms | 5.4 ms |
+| **delta between the two speakers** | **0.1 ms** | 2.0 ms | **3.6 ms** |
+
+No sample over 5 ms apart. What is left in that hour is the network and
+not the timing: one 535 ms arrival gap on the weaker node, which underran
+and stepped back, and one stream restart that moved both nodes together.
 
 **The fill loop is still there** and runs whenever the phase is not known —
 before the ring primes, and for one buffer's worth after the sender's
