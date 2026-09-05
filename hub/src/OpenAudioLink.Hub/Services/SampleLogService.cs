@@ -152,6 +152,13 @@ public sealed class SampleLogService : BackgroundService
         // The playing position, so an offset between two nodes can be
         // computed afterwards rather than trusted from a live panel.
         "playingTimestamp", "playingKnown",
+        // How far from where it should be, in milliseconds, and positive is
+        // late. Beside the depth on purpose: on 2026-09-04 the two agreed at
+        // r = 0.949, which is what said the echo *was* the depth difference —
+        // but the depth also swings with every burst, and this does not. Two
+        // columns are how the next evening decides whether the loop can move
+        // onto the quieter one.
+        "phaseErrorMs", "phaseKnown", "timelineBreaks",
         // The link.
         "received", "expected", "lost", "jitterMs", "lossEvents", "longestGap",
         "arrivalGaps", "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
@@ -247,6 +254,8 @@ public sealed class SampleLogService : BackgroundService
                 Ms(r.DroppedFrames), Ms(r.SilenceFrames),
                 L(r.LatePackets), L(r.TightPackets), L(r.WriteErrors),
                 L(r.PlayingTimestamp), r.PlayingKnown ? "1" : "0",
+                N(r.PhaseErrorFrames / 48.0, 1), r.PhaseKnown ? "1" : "0",
+                L(r.TimelineBreaks),
                 L(r.Received), L(r.Expected), L(r.Lost),
                 // Jitter and gaps arrive in RTP ticks; milliseconds are
                 // what a buffer is sized in and what a reader thinks in.

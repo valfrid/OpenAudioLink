@@ -4,6 +4,7 @@ idf_component_register(
          "oal_input.c"
          "oal_output.c"
          "oal_pcm.c"
+         "oal_phase.c"
          "oal_playout.c"
          "oal_sink.c"
          "oal_sink_i2s.c"

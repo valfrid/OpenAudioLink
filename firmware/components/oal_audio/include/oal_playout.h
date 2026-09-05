@@ -247,6 +247,62 @@ typedef struct {
      */
     uint32_t margin_buckets[5];
 
+    /*
+     * Where this speaker is on the sender's timeline, and how far that is
+     * from where it should be.
+     *
+     * **This is the observable the buffer depth was standing in for, and
+     * the reason it is a separate number is that depth answers a different
+     * question.** Depth mixes what has arrived with what is playing: a
+     * burst of packets raises it by 60 ms without moving the sound at all,
+     * and a steering loop reading depth has to tolerate that swing. Which
+     * is exactly why the tolerance is 120 ms wide, and exactly why a
+     * speaker can sit 100 ms behind its partner with every counter healthy
+     * and nothing able to see it. The log of 2026-09-04 has twelve minutes
+     * of it: offset and depth difference agreeing at r = 0.949, and no
+     * correction path with a trigger that could fire.
+     *
+     * `phase_error_frames` cannot swing with a burst. It is
+     *
+     *     (local clock - position being played) - (least delay seen + target)
+     *
+     * and a burst moves the newest sample and the depth by the same amount,
+     * so the two cancel exactly. What is left moves only when the sound
+     * moves. See the host test that asserts precisely this.
+     *
+     * Signed, and the sign is the useful part: **positive means this
+     * speaker is late** -- playing audio older than it should be, the state
+     * that produces a slap echo against a partner that is not. Negative is
+     * early. Frames, so 4800 is 100 ms.
+     *
+     * The comparison it makes possible is between *nodes*, and it needs no
+     * coordinator to make it: every consumer of one stream measures against
+     * the same sender's clock, so two of them agree when their phase errors
+     * agree, whether the sender is a Hub or another ESP with a turntable on
+     * it, and whether or not anything else is on the network.
+     *
+     * `play_timestamp` is the raw position, published because it is what
+     * makes two nodes comparable directly rather than through this
+     * derived figure.
+     */
+    uint32_t play_timestamp;      /* RTP stamp of the sample being played */
+    bool     play_timestamp_known;
+    int32_t  phase_error_frames;  /* + is late; valid only when known */
+    bool     phase_known;
+
+    /*
+     * Times the sender's timeline stopped being continuous with what the
+     * ring holds -- a stream restart, a seek, enough loss to leave a hole.
+     *
+     * Counted rather than hidden because it is the one event that
+     * invalidates the anchor: the position and the delay estimate are both
+     * measured against a timeline that just moved, so both are re-seated
+     * and the figures above mean nothing across the boundary. A node
+     * showing many of these has a link that keeps breaking the stream, not
+     * a sync problem.
+     */
+    uint32_t timeline_breaks;
+
     oal_channel_t channel;
     uint8_t volume;           /* 0-100, as last set */
 } oal_playout_state_t;
@@ -267,10 +323,20 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config);
  *                channel profile. The consumer has already verified it by
  *                the time this is called.
  * @param frames  frames, not bytes.
+ * @param rtp_timestamp the sender's stamp for the first frame of @p payload.
+ *
+ * The timestamp is what lets this ring know *where* the audio it holds sits
+ * on the sender's timeline, rather than only how much of it there is. Two
+ * speakers fed by one sender can then be compared without either of them
+ * being told anything by anybody — see `phase_error_frames`.
+ *
+ * A stamp that is not contiguous with what the ring already holds is a
+ * timeline break: the stream restarted, or seeked, or lost enough to leave
+ * a hole. The ring re-seats onto the new timeline and counts it.
  *
  * Safe to call before the DAC has been started; it does nothing.
  */
-void oal_playout_submit(uint8_t *payload, size_t frames);
+void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp);
 
 void oal_playout_get(oal_playout_state_t *out);
 

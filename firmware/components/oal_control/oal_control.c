@@ -299,8 +299,17 @@ static char s_ota[176];
  * because a /status that does not fit is a 500, and from outside a node
  * that answers 500 looks exactly like one that has stopped answering --
  * which this project has now shipped twice.
+ *
+ * And past 2048 by the three phase fields — this time measured rather than
+ * estimated, which is what the comment above says to do and what neither of
+ * the previous two raises actually did. The consumer status is the longest
+ * of the four bodies that share this buffer: every counter at its 32- or
+ * 64-bit maximum, both booleans long, and a full 512-byte stats blob comes
+ * to **1526 bytes** (OAL_RTP_STATS_JSON_MAX is 512). 2560 leaves two
+ * thirds of that spare, which is the room the room-correction vectors and
+ * the next set of counters will want.
  */
-static char s_body[2048];
+static char s_body[2560];
 
 /* ---------- GET / ---------- */
 
@@ -1099,6 +1108,28 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * the wrap takes care of itself.
                         */
                        "\"playingTimestamp\":%" PRIu32 ",\"playingKnown\":%s,"
+                       /*
+                        * How far from where it should be, in frames, and
+                        * **positive means late** — playing older audio than
+                        * it should, which against a partner that is not is
+                        * a slap echo.
+                        *
+                        * Unlike the depth, this cannot swing with a burst:
+                        * a burst moves the newest sample held and the depth
+                        * by the same amount and the position is the
+                        * difference, so they cancel. That is what makes it
+                        * worth a separate figure, and what will eventually
+                        * let the correction tolerate a few milliseconds
+                        * where the depth needs a hundred and twenty.
+                        *
+                        * Measured, not yet steered on. Nothing on the node
+                        * acts on this number today.
+                        */
+                       "\"phaseErrorFrames\":%d,\"phaseKnown\":%s,"
+                       /* Times the sender's timeline jumped under this ring
+                        * — a restart, a seek, a hole left by loss. The one
+                        * event that invalidates the two figures above. */
+                       "\"timelineBreaks\":%u,"
                        /* The low- and high-water marks of the last trace
                         * window. bufferedFrames is one instant, and a poll
                         * every fifteen seconds samples one moment in three
@@ -1139,11 +1170,28 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        (unsigned)audio.primed_frames,
                        (unsigned)audio.prime_discarded_frames,
                        (unsigned)audio.steer_frames,
-                       /* Newest accepted, less what is still waiting. Both
-                        * read within microseconds of each other here, which
-                        * is far inside one frame. */
-                       c.newest_timestamp - (uint32_t)audio.buffered_frames,
-                       (c.have_newest && audio.playing) ? "true" : "false",
+                       /*
+                        * Taken by the playout, from one instant under the
+                        * ring's own lock.
+                        *
+                        * It used to be assembled here, as the consumer's
+                        * newest timestamp less the playout's depth — two
+                        * snapshots from two components read one after the
+                        * other, with the note that they were "within
+                        * microseconds of each other". They were not: the
+                        * depth is refreshed only when oal_playout_get wins
+                        * the lock, and it gives up after 20 ms and returns
+                        * the previous value unchanged. The 2026-09-04 log
+                        * has twenty-four readings over a second wrong, on
+                        * nodes whose buffers had not moved at all. A figure
+                        * a correction loop will act on cannot be built out
+                        * of two moments.
+                        */
+                       audio.play_timestamp,
+                       audio.play_timestamp_known ? "true" : "false",
+                       (int)audio.phase_error_frames,
+                       audio.phase_known ? "true" : "false",
+                       (unsigned)audio.timeline_breaks,
                        (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
                        (unsigned long long)audio.packets_submitted,
                        (unsigned)audio.late_packets, (unsigned)audio.tight_packets,

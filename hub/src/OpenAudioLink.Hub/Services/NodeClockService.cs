@@ -47,7 +47,8 @@ public sealed record NodeReading(
     long Received, long Expected, long Lost, long JitterTicks,
     long LossEvents, long LongestGap, long ArrivalGaps,
     long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges,
-    long Reprimes, IReadOnlyList<long> GapBuckets);
+    long Reprimes, IReadOnlyList<long> GapBuckets,
+    long PhaseErrorFrames, bool PhaseKnown, long TimelineBreaks);
 
 /// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
@@ -289,7 +290,8 @@ public sealed class NodeClockService : BackgroundService
                     stats?.LongestGap ?? 0, stats?.ArrivalGaps ?? 0,
                     stats?.MaxArrivalGapTicks ?? 0, stats?.Duplicates ?? 0,
                     stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0,
-                    playout.Reprimes, stats?.GapBuckets ?? []);
+                    playout.Reprimes, stats?.GapBuckets ?? [],
+                    playout.PhaseErrorFrames, playout.PhaseKnown, playout.TimelineBreaks);
             }
 
             if (!playout.Playing)
@@ -481,6 +483,31 @@ public sealed class NodeClockService : BackgroundService
         [JsonPropertyName("writeErrors")] public long WriteErrors { get; init; }
         [JsonPropertyName("playingTimestamp")] public long PlayingTimestamp { get; init; }
         [JsonPropertyName("playingKnown")] public bool PlayingKnown { get; init; }
+
+        /// <summary>
+        /// How far this speaker is from where it should be, in frames, and
+        /// <b>positive means late</b> — playing older audio than it should,
+        /// which against a partner that is not is a slap echo.
+        /// </summary>
+        /// <remarks>
+        /// Unlike the buffer depth, this cannot swing with a burst: a burst
+        /// moves the newest sample held and the depth by the same amount and
+        /// the position is the difference between them, so they cancel. That
+        /// is the whole reason it is worth carrying a second number.
+        ///
+        /// The node measures it and does not yet act on it. Logged so a
+        /// night's listening can say whether it tracks what a listener hears
+        /// before anything is allowed to steer on it.
+        /// </remarks>
+        [JsonPropertyName("phaseErrorFrames")] public long PhaseErrorFrames { get; init; }
+        [JsonPropertyName("phaseKnown")] public bool PhaseKnown { get; init; }
+
+        /// <summary>
+        /// Times the sender's timeline jumped under this node's ring — a
+        /// restart, a seek, a hole left by loss. The one event that
+        /// invalidates the position and the phase together.
+        /// </summary>
+        [JsonPropertyName("timelineBreaks")] public long TimelineBreaks { get; init; }
     }
 
     private sealed record StatsResponse

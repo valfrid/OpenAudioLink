@@ -357,7 +357,9 @@ them back together.
 Fill difference *is* phase difference. Both speakers receive the same
 packets, so `newest received` is the same for both, and
 `playing = newest − buffered`. Two nodes at 198 ms and 319 ms of fill are
-121 ms apart in what you hear, exactly.
+121 ms apart in what you hear, exactly. Measured on 2026-09-04 across 748
+samples the two agree at r = 0.949 — but see the gap below, because *is*
+does not mean *is watched*.
 
 **What used to make that last minutes.** The steering creep moves phase at
 one frame in four chunks — about **1 ms per second** — and the rate was the
@@ -401,6 +403,69 @@ the target, so at 650 ms of delay it takes whichever is larger.
 **If step-backs keep appearing**, the fault is not the one this fixes. A
 node collecting them is a node whose link keeps knocking it out of step,
 and the loss shape and Wi-Fi drop counters are where that shows.
+
+### The gap all of the above leaves, and the way out of it
+
+Everything above is a loop watching the **fill**, and the fill has a hole
+in the middle of it. The quiet band runs from 150 to 300 ms, the step-back
+fires only outside 105–345, and between those two a speaker can sit
+anywhere with nothing acting on it but the 1–4 ms/s creep.
+
+The evening of 2026-09-04 is what that costs. From 18:33 to 18:45 local one
+speaker's fill sat at 260–330 ms against its partner's 220 — up to 110 ms
+of echo, peaking at **329 ms, sixteen milliseconds short of the step-back
+threshold**, with disturbances arriving every 30–90 seconds, faster than
+the creep could close them. Every counter on both nodes read healthy
+throughout. The offset and the fill difference agreed at **r = 0.949**
+across 748 samples, which is the measurement that says the echo *was* the
+fill difference.
+
+The 100 ms is not bad luck. **120 ms is the widest disagreement the design
+will sit on without stepping**, so just under it is the worst sustained
+echo the fill loop can produce, and that is the number a listener finds.
+
+**Why the band cannot just be narrowed.** It is wide because the fill
+swings with every burst: a Windows sender releases up to 100 ms in one
+lump, which lifts every speaker's fill together and moves no sound at all.
+A tolerance narrower than that swing spends a frame on every burst, and a
+spent frame is a phase shift — 0.34.0 tried exactly that and made two
+speakers worse rather than better.
+
+**So the observable has to change, not the tolerance.** From firmware
+0.49.0 each node also measures where it is on the *sender's* timeline:
+
+```
+phase error = (local clock − position playing) − (least delay seen + target)
+```
+
+A burst advances the newest sample held and the fill by the same number of
+frames, and the position is the difference between them — so the two
+cancel exactly and the phase does not move. That is the property the whole
+thing rests on, and `Bursts_do_not_move_the_phase` in
+`firmware/components/oal_audio/test/test_phase.c` asserts it on the
+arithmetic rather than leaving it as an argument. Reverting the file to a
+fill-based position makes that test fail, which is how it is known to bite.
+
+**Positive means late** — playing older audio than it should, which against
+a partner that is not late is the echo. It appears in `/status` as
+`phaseErrorFrames` and in the sample log as **`phaseErrorMs`**, beside
+`bufferedMs` on purpose: two columns is how the next evening's listening
+decides whether the quiet one tracks what the ear hears.
+
+Two things it does not need, and this is the point of choosing the
+sender's timeline over anything else: **no coordinator and no Hub.** Every
+consumer of a stream sees the same sender's timestamps, so two speakers
+agree when their phase errors agree — whether the sender is the Hub, or an
+ESP with a turntable on it, or a party-mode node running its own access
+point with nothing else on the network. Decision 4 says standalone is the
+test that no hidden dependency on the Hub survived; a correction that lived
+on the Hub would have been exactly that dependency, and would have been
+absent in the case sync matters most.
+
+**Nothing steers on it yet.** The node computes and publishes it and the
+fill loop is untouched, deliberately: the argument for a narrow tolerance
+is that this observable does not swing, and an argument is not a hardware
+evening. The loop moves onto it once a night's log shows the two agreeing.
 
 ## The sample log: reading a run instead of photographing it
 

@@ -145,12 +145,25 @@ esp_err_t oal_stream_consumer_start(uint16_t port);
  * @param payload L24 big-endian stereo, which the sink may modify in place
  *                — the statistics and the pattern check are already done.
  * @param frames  frames, not bytes.
+ * @param rtp_timestamp the sender's timestamp for the first frame here.
+ *
+ * The timestamp is passed rather than left to be inferred, and that is the
+ * whole point of it. A ring's depth mixes what has *arrived* with what is
+ * *playing*, so it swings with every burst while the sound does not move at
+ * all — and a playout steering on depth cannot tell the two apart. The
+ * sender's timeline can: it is one clock, stamped on every packet, shared
+ * by every consumer of this stream without anybody coordinating them.
+ *
+ * It comes from whoever is sending — a Hub, or another ESP with a turntable
+ * on it — so nothing here needs a Hub to be present. That is deliberate:
+ * decision 4 says standalone mode is the test that no hidden dependency on
+ * the Hub survived, and a sync loop that needed one would be exactly that.
  *
  * Called from the receive task, so it must not block for long: this task
  * is the only thing emptying the socket, and a slow sink shows up later as
  * packet loss that the network did not cause.
  */
-typedef void (*oal_stream_sink_t)(uint8_t *payload, size_t frames);
+typedef void (*oal_stream_sink_t)(uint8_t *payload, size_t frames, uint32_t rtp_timestamp);
 
 /**
  * Attaches an audio sink, or NULL to detach.

@@ -244,6 +244,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o threshold-tests test/test_thresholds.c &&
           ./threshold-tests
+      - name: Playout phase tracker
+        working-directory: firmware/components/oal_audio
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o phase-tests oal_phase.c test/test_phase.c &&
+          ./phase-tests
       - name: Room-correction filters
         working-directory: firmware/components/oal_audio
         run: >

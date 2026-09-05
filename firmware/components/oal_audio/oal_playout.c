@@ -15,6 +15,7 @@
 #include "oal_eq.h"
 #include "oal_fade.h"
 #include "oal_pcm.h"
+#include "oal_phase.h"
 #include "oal_rtp.h"
 
 static const char *TAG = "oal_playout";
@@ -269,6 +270,34 @@ static uint32_t s_resync_held;  /* consecutive chunks the fill has been out */
 /* 8192 chunks of 5 ms is about 41 seconds. Long against the worst stall
  * measured here (3 s) and short against a listener's patience. */
 #define AVG_SHIFT 13
+
+/*
+ * Where this speaker is on the sender's timeline (oal_phase.h).
+ *
+ * **Measured, and not yet steered on.** Everything below still decides on
+ * the fill, exactly as it did, and this changes no audio at all. That is
+ * deliberate: the fill loop's tolerances are the way they are because
+ * 0.34.0 tightened them on an observable that swings with every burst and
+ * made two speakers worse rather than better, and the whole argument for
+ * this observable is that it does not swing. An argument is not a hardware
+ * evening. So the number is computed, published and logged first, and the
+ * loop moves onto it once a night's listening says the two agree.
+ *
+ * What it is *for* is the fault of 2026-09-04: a speaker sitting 100 ms
+ * behind its partner with a fill of 260-330 ms, inside the quiet band where
+ * neither trim nor pad fires and 16 ms short of the resync threshold, for
+ * twelve minutes. Nothing in this file could see it, because everything in
+ * this file was looking at how much audio was held rather than at which
+ * audio it was.
+ */
+static oal_phase_t s_phase;
+
+/** The local clock in RTP units, the same conversion the consumer uses. */
+static uint32_t local_rtp_now(void)
+{
+    int64_t us = esp_timer_get_time();
+    return (uint32_t)((us * OAL_RTP_SAMPLE_RATE) / 1000000);
+}
 
 /*
  * How far out of step a speaker may be before it stops walking back and
@@ -621,7 +650,7 @@ uint8_t oal_playout_volume(void)
     return s_volume;
 }
 
-void oal_playout_submit(uint8_t *payload, size_t frames)
+void oal_playout_submit(uint8_t *payload, size_t frames, uint32_t rtp_timestamp)
 {
     if (!s_state.running || payload == NULL || frames == 0 || s_lock == NULL) {
         return;
@@ -629,6 +658,18 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
     if (frames > CHUNK_FRAMES) {
         frames = CHUNK_FRAMES;
     }
+
+    /*
+     * Arrival, read before the conversion and before the lock.
+     *
+     * Both of those would put work between the packet landing and the clock
+     * being read, and the delay estimate is a minimum over a window — so a
+     * reading inflated by a lock wait does not average out, it simply never
+     * becomes the minimum, and the estimate quietly describes the moments
+     * this task happened to be idle rather than the network.
+     */
+    uint32_t arrival = local_rtp_now();
+    uint64_t arrival_us = (uint64_t)esp_timer_get_time();
 
     /* Applied before conversion, on the L24 payload the tested code
      * expects. Stereo leaves it untouched. */
@@ -723,6 +764,21 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
     }
 
     /*
+     * Where this packet sits on the sender's timeline, before anything
+     * below moves the ring around.
+     *
+     * A break here — a restart, a seek, a hole left by loss — is counted
+     * and nothing else. The ring's *content* is still contiguous; it is
+     * only the sender's numbering of it that jumped, and the tracker
+     * withholds the position until the pre-break audio has been played
+     * rather than reporting one that is wrong by the size of the jump.
+     */
+    if (oal_phase_on_packet(&s_phase, rtp_timestamp, (uint32_t)frames, arrival,
+                            arrival_us, (uint32_t)(s_available / OAL_RTP_CHANNELS))) {
+        s_state.timeline_breaks = s_phase.breaks;
+    }
+
+    /*
      * A full ring drops its oldest frames, not its newest. Live audio
      * should stay current: dropping what is about to be played costs one
      * glitch, while dropping what just arrived costs the same glitch and
@@ -733,6 +789,7 @@ void oal_playout_submit(uint8_t *payload, size_t frames)
         s_read = (s_read + overflow) % s_capacity;
         s_available -= overflow;
         s_state.dropped_frames += (uint32_t)(overflow / OAL_RTP_CHANNELS);
+        oal_phase_on_played(&s_phase, (uint32_t)(overflow / OAL_RTP_CHANNELS));
         /* The next chunk starts somewhere unrelated to the last sample the
          * speaker saw. Glide into it rather than stepping. */
         s_splice_pending = true;
@@ -838,6 +895,7 @@ static size_t take_chunk(int32_t *chunk)
                 s_read = (s_read + excess) % s_capacity;
                 s_available -= excess;
                 s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
+                oal_phase_on_played(&s_phase, (uint32_t)(excess / OAL_RTP_CHANNELS));
             }
             s_primed = true;
             s_starved_chunks = 0;
@@ -1005,6 +1063,7 @@ static size_t take_chunk(int32_t *chunk)
                 s_read = (s_read + excess) % s_capacity;
                 s_available -= excess;
                 s_state.trimmed_frames += (uint32_t)(excess / OAL_RTP_CHANNELS);
+                oal_phase_on_played(&s_phase, (uint32_t)(excess / OAL_RTP_CHANNELS));
                 s_state.resyncs++;
                 acted = true;
             }
@@ -1152,6 +1211,39 @@ static size_t take_chunk(int32_t *chunk)
         }
     }
 
+    /*
+     * Where this speaker is, published once per chunk while the ring is
+     * still locked so the depth and the clock describe one instant.
+     *
+     * Taken *before* the copy below, because the question is which sample
+     * is about to leave rather than which one just did — and read here
+     * rather than assembled in the status handler, which is how
+     * `playingTimestamp` came to be reported by subtracting one snapshot
+     * from another taken at a different moment. That produced readings of
+     * over a second, twenty-four times in one day, on nodes whose buffers
+     * had not moved at all.
+     */
+    {
+        uint32_t held_frames = (uint32_t)(s_available / OAL_RTP_CHANNELS);
+        uint32_t now = local_rtp_now();
+        /* Initialised because both are written only through a pointer the
+         * callee may decline to use, and this file is built with -Werror. */
+        uint32_t position = 0;
+        int32_t error = 0;
+
+        s_state.play_timestamp_known =
+            s_primed && oal_phase_position(&s_phase, held_frames, &position);
+        if (s_state.play_timestamp_known) {
+            s_state.play_timestamp = position;
+        }
+        s_state.phase_known = s_primed
+            && oal_phase_error(&s_phase, held_frames, now,
+                               (uint32_t)(s_target_samples / OAL_RTP_CHANNELS), &error);
+        if (s_state.phase_known) {
+            s_state.phase_error_frames = error;
+        }
+    }
+
     copied = s_available < CHUNK_SAMPLES ? s_available : CHUNK_SAMPLES;
 
     size_t first = s_capacity - s_read;
@@ -1164,6 +1256,9 @@ static size_t take_chunk(int32_t *chunk)
     }
     s_read = (s_read + copied) % s_capacity;
     s_available -= copied;
+    /* Lets a timeline break settle: the position comes back once the audio
+     * from before the jump has all been played. */
+    oal_phase_on_played(&s_phase, (uint32_t)(copied / OAL_RTP_CHANNELS));
 
     /*
      * Into the audio, if the last thing the speaker heard does not join on
@@ -1471,6 +1566,11 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     s_steer_phase = 0;
     s_fill_avg = 0;
     s_fill_avg_known = false;
+    /* The ring is empty and the clocks mean nothing yet; the break count
+     * survives, because it describes the link rather than this ring. */
+    oal_phase_reset(&s_phase);
+    s_state.play_timestamp_known = false;
+    s_state.phase_known = false;
 
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment

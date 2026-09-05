@@ -138,7 +138,7 @@ static void consumer_task(void *arg)
             if (sink != NULL) {
                 uint32_t frames = oal_rtp_frames_in((size_t)len);
                 if (frames > 0) {
-                    sink(packet + OAL_RTP_HEADER_BYTES, frames);
+                    sink(packet + OAL_RTP_HEADER_BYTES, frames, header.timestamp);
                     /*
                      * One past the newest sample handed to the playout, on
                      * the sender's timeline.
