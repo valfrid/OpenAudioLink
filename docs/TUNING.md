@@ -462,6 +462,18 @@ test that no hidden dependency on the Hub survived; a correction that lived
 on the Hub would have been exactly that dependency, and would have been
 absent in the case sync matters most.
 
+**Reading the column.** It is measured against `steerMs` (225 ms with the
+default target), not against `targetMs` — the loop rests the fill at the
+centre of the quiet band, so measuring from the target would report a node
+sitting exactly where the design wants it as 25 ms late for ever. The first
+hardware reading is what caught that.
+
+Expect it to sit a few milliseconds above `bufferedMs − steerMs`. The delay
+term is a *minimum* over ten to twenty seconds, so it lands below the
+typical arrival by roughly the jitter spread, and that difference shows up
+in the phase. It is common to both nodes only as far as their jitter is,
+which is the noise floor on comparing two of them.
+
 **Nothing steers on it yet.** The node computes and publishes it and the
 fill loop is untouched, deliberately: the argument for a narrow tolerance
 is that this observable does not swing, and an argument is not a hardware

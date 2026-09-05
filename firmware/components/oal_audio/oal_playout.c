@@ -1236,9 +1236,26 @@ static size_t take_chunk(int32_t *chunk)
         if (s_state.play_timestamp_known) {
             s_state.play_timestamp = position;
         }
+        /*
+         * Against the steering line, not the target.
+         *
+         * The first hardware reading caught this. The target is 200 ms but
+         * the loop rests the fill at `s_steer_to` -- the centre of the
+         * quiet band, 225 ms -- so measuring from the target reports a
+         * node sitting exactly where the design wants it as 25 ms late,
+         * for ever. Harmless when two nodes are compared, since the bias
+         * is common and subtracts out, and not harmless at all the moment
+         * anything steers on it: driving this to zero would haul the fill
+         * to 200 ms against a loop holding it at 225, and the two would
+         * push against each other indefinitely.
+         *
+         * `steerFrames` is what `/status` publishes as the line both
+         * speakers aim at, so this is the same number the rest of the
+         * system already calls the setpoint.
+         */
         s_state.phase_known = s_primed
             && oal_phase_error(&s_phase, held_frames, now,
-                               (uint32_t)(s_target_samples / OAL_RTP_CHANNELS), &error);
+                               (uint32_t)(s_steer_to / OAL_RTP_CHANNELS), &error);
         if (s_state.phase_known) {
             s_state.phase_error_frames = error;
         }

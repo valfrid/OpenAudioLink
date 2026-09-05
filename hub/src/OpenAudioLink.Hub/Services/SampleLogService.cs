@@ -218,8 +218,10 @@ public sealed class SampleLogService : BackgroundService
         var hub = _streamer.Status;
         var now = DateTimeOffset.UtcNow;
 
-        var path = Path.Combine(
-            _directory, $"oal-{now:yyyy-MM-dd}.csv");
+        // See NextFreePath: today's file is only appended to if its header is
+        // the one this build writes.
+
+        var path = NextFreePath(now);
         var isNew = !File.Exists(path);
 
         var text = new StringBuilder();
@@ -310,6 +312,76 @@ public sealed class SampleLogService : BackgroundService
         }
 
         File.AppendAllText(path, text.ToString());
+    }
+
+    /// <summary>
+    /// Today's file, unless it was written by a build with different
+    /// columns — in which case the next free <c>-2</c>, <c>-3</c>… beside it.
+    /// </summary>
+    /// <remarks>
+    /// A day's file was opened once and appended to for the rest of the day,
+    /// and the header was written only when the file did not yet exist. So
+    /// upgrading the Hub mid-day appended rows in the new shape under the
+    /// old header, and every column after the insertion point silently
+    /// meant something else. That is exactly what happened on 2026-09-05:
+    /// 224 rows of 62 fields and 6 of 65, under a 62-field header, with
+    /// <c>rssi</c> reading +13 because it was actually holding
+    /// <c>phaseErrorMs</c>. A log that misreads without complaining is worse
+    /// than one that is missing, because the numbers still look like numbers.
+    ///
+    /// Rolling to a new file rather than rewriting the old one: the existing
+    /// rows are correct under the header they were written with, and
+    /// rewriting a header over them would turn a self-consistent file into a
+    /// wrong one. Each file stays readable on its own terms.
+    /// </remarks>
+    private string NextFreePath(DateTimeOffset now) =>
+        NextFreePath(_directory, now, string.Join(',', Columns));
+
+    /// <summary>
+    /// The same, with its inputs given rather than taken from the instance.
+    /// </summary>
+    /// <remarks>
+    /// Public only so the tests can reach it. The alternative was an
+    /// <c>InternalsVisibleTo</c>, which this solution does not use anywhere
+    /// else, and one attribute of ceremony to hide a pure function that
+    /// decides which file a day's rows go into is not worth the precedent.
+    /// </remarks>
+    public static string NextFreePath(string directory, DateTimeOffset now, string header)
+    {
+        var stem = Path.Combine(directory, $"oal-{now:yyyy-MM-dd}");
+
+        for (int suffix = 1; ; suffix++)
+        {
+            var path = suffix == 1 ? $"{stem}.csv" : $"{stem}-{suffix}.csv";
+            if (!File.Exists(path))
+            {
+                return path;
+            }
+
+            string? first;
+            try
+            {
+                using var reader = new StreamReader(path);
+                first = reader.ReadLine();
+            }
+            catch (IOException)
+            {
+                // Unreadable for the moment — appending is the old behaviour
+                // and no worse than it was.
+                return path;
+            }
+
+            if (first is null || first == header)
+            {
+                return path;
+            }
+            // Bounded only by how many times a Hub is upgraded in one day,
+            // but a runaway loop writing files is worse than a lost log.
+            if (suffix >= 50)
+            {
+                return path;
+            }
+        }
     }
 
     private static string L(long value) => value.ToString(CultureInfo.InvariantCulture);
