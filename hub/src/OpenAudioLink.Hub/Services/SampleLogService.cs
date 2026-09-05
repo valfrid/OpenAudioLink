@@ -159,6 +159,12 @@ public sealed class SampleLogService : BackgroundService
         // columns are how the next evening decides whether the loop can move
         // onto the quieter one.
         "phaseErrorMs", "phaseKnown", "timelineBreaks",
+        // The phase's swing across the node's trace window, beside fillMin/
+        // fillMax which are the ring's. Compare the two spans on one row:
+        // a burst moves the fill and not the sound, and it is over long
+        // before the next poll, so the instants alone can only catch it by
+        // luck.
+        "phaseMinMs", "phaseMaxMs",
         // The link.
         "received", "expected", "lost", "jitterMs", "lossEvents", "longestGap",
         "arrivalGaps", "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
@@ -258,6 +264,7 @@ public sealed class SampleLogService : BackgroundService
                 L(r.PlayingTimestamp), r.PlayingKnown ? "1" : "0",
                 N(r.PhaseErrorFrames / 48.0, 1), r.PhaseKnown ? "1" : "0",
                 L(r.TimelineBreaks),
+                N(r.PhaseMinFrames / 48.0, 1), N(r.PhaseMaxFrames / 48.0, 1),
                 L(r.Received), L(r.Expected), L(r.Lost),
                 // Jitter and gaps arrive in RTP ticks; milliseconds are
                 // what a buffer is sized in and what a reader thinks in.

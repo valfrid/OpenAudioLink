@@ -292,6 +292,24 @@ static uint32_t s_resync_held;  /* consecutive chunks the fill has been out */
  */
 static oal_phase_t s_phase;
 
+/*
+ * The phase's swing across a trace window, the twins of s_fill_min/max.
+ *
+ * They exist to settle one question with a single row instead of luck in
+ * the sampling. The claim this whole observable rests on is that a burst
+ * moves the fill and does not move the sound; a poll every thirty seconds
+ * can only catch that by chance, because the burst is over in
+ * milliseconds. Min and max over the window catch it every time: a row
+ * showing the fill swinging 137 ms while the phase swings 5 is the
+ * property, demonstrated, from one line.
+ *
+ * Signed, so no sentinel is available above every real value the way
+ * s_fill_min uses one -- hence the separate flag.
+ */
+static int32_t s_phase_min;
+static int32_t s_phase_max;
+static bool s_phase_span_seen;
+
 /** The local clock in RTP units, the same conversion the consumer uses. */
 static uint32_t local_rtp_now(void)
 {
@@ -1258,6 +1276,13 @@ static size_t take_chunk(int32_t *chunk)
                                (uint32_t)(s_steer_to / OAL_RTP_CHANNELS), &error);
         if (s_state.phase_known) {
             s_state.phase_error_frames = error;
+            if (!s_phase_span_seen || error < s_phase_min) {
+                s_phase_min = error;
+            }
+            if (!s_phase_span_seen || error > s_phase_max) {
+                s_phase_max = error;
+            }
+            s_phase_span_seen = true;
         }
     }
 
@@ -1330,12 +1355,19 @@ static void trace(void)
     }
 
     size_t fill_min, fill_max, fill_now, margin_min;
+    int32_t phase_min, phase_max;
     uint64_t submitted;
     if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) != pdTRUE) {
         return;
     }
     fill_min = s_fill_min > s_capacity ? s_available : s_fill_min;
     fill_max = s_fill_max;
+    /* Same fallback as the fill's: a window with no reading reports the
+     * value now rather than the previous window's, which is the stale
+     * lifetime counter this whole log format exists to avoid. */
+    phase_min = s_phase_span_seen ? s_phase_min : s_state.phase_error_frames;
+    phase_max = s_phase_span_seen ? s_phase_max : s_state.phase_error_frames;
+    s_phase_span_seen = false;
     /* No packet arrived this window, so the honest answer is the fill
      * rather than the re-armed sentinel. */
     margin_min = s_margin_min > s_capacity ? s_available : s_margin_min;
@@ -1353,6 +1385,8 @@ static void trace(void)
     s_state.fill_min_frames = (uint32_t)(fill_min / OAL_RTP_CHANNELS);
     s_state.fill_max_frames = (uint32_t)(fill_max / OAL_RTP_CHANNELS);
     s_state.margin_min_frames = (uint32_t)(margin_min / OAL_RTP_CHANNELS);
+    s_state.phase_min_frames = phase_min;
+    s_state.phase_max_frames = phase_max;
 
     uint64_t elapsed_us = now - s_trace_at_us;
     uint64_t played = s_state.frames_played - s_trace_played;
@@ -1588,6 +1622,9 @@ esp_err_t oal_playout_start(const oal_playout_config_t *config)
     oal_phase_reset(&s_phase);
     s_state.play_timestamp_known = false;
     s_state.phase_known = false;
+    s_phase_span_seen = false;
+    s_phase_min = 0;
+    s_phase_max = 0;
 
     /* Before the task exists, so the first chunk out of the DAC is already
      * at the stored level. Coming up at full scale and correcting a moment

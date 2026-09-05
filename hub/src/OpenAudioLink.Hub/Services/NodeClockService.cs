@@ -48,7 +48,8 @@ public sealed record NodeReading(
     long LossEvents, long LongestGap, long ArrivalGaps,
     long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges,
     long Reprimes, IReadOnlyList<long> GapBuckets,
-    long PhaseErrorFrames, bool PhaseKnown, long TimelineBreaks);
+    long PhaseErrorFrames, bool PhaseKnown, long TimelineBreaks,
+    long PhaseMinFrames, long PhaseMaxFrames);
 
 /// <summary>
 /// Measures every consumer's playback crystal against the Hub's own clock.
@@ -291,7 +292,8 @@ public sealed class NodeClockService : BackgroundService
                     stats?.MaxArrivalGapTicks ?? 0, stats?.Duplicates ?? 0,
                     stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0,
                     playout.Reprimes, stats?.GapBuckets ?? [],
-                    playout.PhaseErrorFrames, playout.PhaseKnown, playout.TimelineBreaks);
+                    playout.PhaseErrorFrames, playout.PhaseKnown, playout.TimelineBreaks,
+                    playout.PhaseMinFrames, playout.PhaseMaxFrames);
             }
 
             if (!playout.Playing)
@@ -508,6 +510,21 @@ public sealed class NodeClockService : BackgroundService
         /// invalidates the position and the phase together.
         /// </summary>
         [JsonPropertyName("timelineBreaks")] public long TimelineBreaks { get; init; }
+
+        /// <summary>
+        /// The phase's swing across the node's last trace window, the twins
+        /// of <see cref="FillMinFrames"/> and <see cref="FillMaxFrames"/>.
+        /// </summary>
+        /// <remarks>
+        /// These are what settle the burst question from a single row. A
+        /// burst raises the buffer and moves no sound, but it is over in
+        /// milliseconds — a reading every thirty seconds catches one only by
+        /// luck, and two clean minutes on 2026-09-05 contained no usable
+        /// instance. A row where the fill swung 137 ms and the phase swung 5
+        /// is the property demonstrated rather than argued.
+        /// </remarks>
+        [JsonPropertyName("phaseMinFrames")] public long PhaseMinFrames { get; init; }
+        [JsonPropertyName("phaseMaxFrames")] public long PhaseMaxFrames { get; init; }
     }
 
     private sealed record StatsResponse

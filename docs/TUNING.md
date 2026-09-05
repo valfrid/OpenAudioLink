@@ -462,6 +462,19 @@ test that no hidden dependency on the Hub survived; a correction that lived
 on the Hub would have been exactly that dependency, and would have been
 absent in the case sync matters most.
 
+**Two columns, not one.** `phaseErrorMs` is an instant; `phaseMinMs` and
+`phaseMaxMs` are its swing across the node's five-second trace window, the
+twins of `fillMinMs`/`fillMaxMs`. **Compare the two spans on one row** —
+that is the burst-immunity claim, demonstrated rather than argued, without
+having to catch a burst at the moment of a poll. A sender waking on a
+15.6 ms timer delivers in clumps of three, so the fill saws all window
+while nothing happens to the sound; the host test measures 10.0 ms of fill
+swing against 0.0 ms of phase swing on exactly that pattern.
+
+If a row ever shows the two spans *equal*, the phase has stopped being a
+separate observable and the whole argument for narrowing the tolerance is
+gone. That is precisely what the mutation test produces.
+
 **Reading the column.** It is measured against `steerMs` (225 ms with the
 default target), not against `targetMs` — the loop rests the fill at the
 centre of the quiet band, so measuring from the target would report a node

@@ -162,6 +162,66 @@ static void Bursts_do_not_move_the_phase(void)
 }
 
 /**
+ * The same property in the shape the sample log reports it: min and max
+ * across a window, of the fill and of the phase side by side.
+ *
+ * This is the row a reader will actually be looking at. A Windows sender
+ * cannot wake every 5 ms — the system timer runs at 15.6 ms — so packets
+ * arrive in clumps of three and the fill saws up and down all window while
+ * nothing happens to the sound. The two spans on one line say that without
+ * anybody having to catch a burst at the instant of a poll, which two clean
+ * minutes of hardware on 2026-09-05 failed to do.
+ */
+static void A_windows_span_separates_the_two(void)
+{
+    rig_t r;
+    rig_init(&r, 640000u, 24680u);
+    for (unsigned i = 0; i < TARGET / PACKET; i++) { arrive(&r, 0); tick(&r, PACKET); }
+    settle(&r, 0, 20);
+
+    uint32_t fill_min = 0xFFFFFFFFu, fill_max = 0;
+    int32_t phase_min = 0, phase_max = 0;
+    bool seen = false;
+
+    /* Five seconds, which is the node's trace window. */
+    for (unsigned chunk = 0; chunk < 5 * RATE / PACKET; chunk++) {
+        /* Three packets every third chunk: the clump, oldest first. */
+        if (chunk % 3 == 0) {
+            for (unsigned k = 0; k < 3; k++) {
+                arrive(&r, (2u - k) * PACKET);
+            }
+        }
+
+        /* What the playout does once per chunk, in the same order. */
+        if (r.held < fill_min) { fill_min = r.held; }
+        if (r.held > fill_max) { fill_max = r.held; }
+
+        int32_t error = 0;
+        if (oal_phase_error(&r.phase, r.held, r.node_rtp, TARGET, &error)) {
+            if (!seen || error < phase_min) { phase_min = error; }
+            if (!seen || error > phase_max) { phase_max = error; }
+            seen = true;
+        }
+
+        play(&r, PACKET);
+        tick(&r, PACKET);
+    }
+
+    CHECK(seen, "no phase readings across the window");
+
+    double fill_span = (double)(fill_max - fill_min) / 48.0;
+    double phase_span = (double)(phase_max - phase_min) / 48.0;
+
+    printf("  window span: fill %.1f ms, phase %.1f ms\n", fill_span, phase_span);
+    CHECK(fill_span > 8.0,
+          "a clumped sender should swing the fill; it moved only %.1f ms", fill_span);
+    CHECK(phase_span < 1.0,
+          "the fill swung %.1f ms and the phase swung %.1f ms — the phase span "
+          "is what a log row uses to show a burst moved no sound",
+          fill_span, phase_span);
+}
+
+/**
  * A speaker holding more than the target is playing older audio, and that
  * is what a listener hears as an echo against a partner that is not.
  * Positive must mean late.
@@ -437,6 +497,7 @@ int main(void)
 {
     A_link_at_the_target_reads_zero();
     Bursts_do_not_move_the_phase();
+    A_windows_span_separates_the_two();
     Holding_extra_audio_reads_as_late();
     Holding_less_audio_reads_as_early();
     Two_nodes_agree_without_talking_to_each_other();

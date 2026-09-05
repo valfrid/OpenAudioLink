@@ -305,9 +305,10 @@ static char s_ota[176];
  * the previous two raises actually did. The consumer status is the longest
  * of the four bodies that share this buffer: every counter at its 32- or
  * 64-bit maximum, both booleans long, and a full 512-byte stats blob comes
- * to **1526 bytes** (OAL_RTP_STATS_JSON_MAX is 512). 2560 leaves two
- * thirds of that spare, which is the room the room-correction vectors and
- * the next set of counters will want.
+ * to **1584 bytes** (OAL_RTP_STATS_JSON_MAX is 512). 2560 leaves room for
+ * the room-correction vectors and the next set of counters. Re-measured
+ * whenever a field is added, which is the whole point of the number being
+ * here.
  */
 static char s_body[2560];
 
@@ -1126,6 +1127,13 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                         * acts on this number today.
                         */
                        "\"phaseErrorFrames\":%d,\"phaseKnown\":%s,"
+                       /* Its swing across the last trace window, the twins
+                        * of fillMinFrames/fillMaxFrames. One row showing
+                        * the fill swinging a hundred milliseconds while
+                        * this swings five is the burst-immunity claim
+                        * demonstrated rather than argued -- a reading every
+                        * thirty seconds catches a burst only by luck. */
+                       "\"phaseMinFrames\":%d,\"phaseMaxFrames\":%d,"
                        /* Times the sender's timeline jumped under this ring
                         * — a restart, a seek, a hole left by loss. The one
                         * event that invalidates the two figures above. */
@@ -1191,6 +1199,7 @@ static esp_err_t stream_get_handler(httpd_req_t *req)
                        audio.play_timestamp_known ? "true" : "false",
                        (int)audio.phase_error_frames,
                        audio.phase_known ? "true" : "false",
+                       (int)audio.phase_min_frames, (int)audio.phase_max_frames,
                        (unsigned)audio.timeline_breaks,
                        (unsigned)audio.fill_min_frames, (unsigned)audio.fill_max_frames,
                        (unsigned long long)audio.packets_submitted,

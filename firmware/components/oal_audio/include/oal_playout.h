@@ -291,6 +291,27 @@ typedef struct {
     bool     phase_known;
 
     /*
+     * The phase's swing across the last completed trace window, exactly as
+     * fill_min_frames and fill_max_frames are the ring's.
+     *
+     * **These are what settle the argument in one row.** The claim the
+     * whole observable rests on is that a burst moves the fill and does not
+     * move the sound. A reading every thirty seconds can only catch that by
+     * luck, because the burst is over in milliseconds and the fill is back
+     * before anybody looks — two minutes of clean hardware on 2026-09-05
+     * contained no usable instance. Minimum and maximum over the window
+     * catch it every time: a row showing the fill swinging 137 ms while the
+     * phase swings 5 is the property demonstrated, not argued.
+     *
+     * A window with no reading reports the phase now rather than the last
+     * window's, for the reason the whole sample log exists — a stale
+     * counter that still looks like a number is the failure this format was
+     * built to stop.
+     */
+    int32_t  phase_min_frames;
+    int32_t  phase_max_frames;
+
+    /*
      * Times the sender's timeline stopped being continuous with what the
      * ring holds -- a stream restart, a seek, enough loss to leave a hole.
      *
