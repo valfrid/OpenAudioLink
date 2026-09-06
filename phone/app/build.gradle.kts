@@ -1,15 +1,11 @@
 /*
- * The Android half. Built only where an SDK exists — see settings.gradle.kts.
- *
- * The plugin versions are declared here rather than in the root build file
- * because the root is configured on machines that have a JDK and no
- * Android SDK, and a plugin declared there is resolved whether or not any
- * module applies it.
+ * The Android half. Built only where an SDK exists — see settings.gradle.kts,
+ * which is also where these plugins' versions are pinned.
  */
 plugins {
-    id("com.android.application") version "8.7.2"
-    id("org.jetbrains.kotlin.android") version "2.0.21"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {

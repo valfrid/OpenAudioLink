@@ -18,6 +18,26 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+
+    /*
+     * Every plugin version, in one place and applied nowhere.
+     *
+     * Not in the root build file. A `plugins { … apply false }` block there
+     * puts the plugin on the classpath of every project, and the Kotlin JVM
+     * and Kotlin Android plugins ship in the same artefact — so `:app`
+     * asking for `org.jetbrains.kotlin.android` at a version was refused
+     * with "already on the classpath with an unknown version". Declaring
+     * versions here sets a default for each id and resolves nothing until a
+     * project actually applies it, which is what lets `:core` build on a
+     * machine that cannot reach Google's Maven at all.
+     */
+    plugins {
+        id("org.jetbrains.kotlin.jvm") version "2.0.21"
+        id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21"
+        id("com.android.application") version "8.7.2"
+        id("org.jetbrains.kotlin.android") version "2.0.21"
+        id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    }
 }
 
 dependencyResolutionManagement {
@@ -32,14 +52,20 @@ rootProject.name = "openaudiolink-phone"
 include(":core")
 
 /*
- * The Android module joins the build only where an SDK exists. Without
- * this, `gradle :core:test` on a machine with a JDK and nothing else fails
- * on the Android plugin rather than running the tests it could — which
- * would make the whole point of splitting the modules moot.
+ * The Android module joins the build only where an SDK exists, so that
+ * `gradle :core:test` on a machine with a JDK and nothing else runs the
+ * tests it can rather than failing on the Android plugin.
+ *
+ * `OAL_CORE_ONLY` forces it out even where an SDK is present. CI's hosted
+ * runners set ANDROID_HOME for every job, so without this the core job
+ * would quietly configure the Android module — and the claim that these
+ * tests need no SDK would stop being checked by anything.
  */
-if (System.getenv("ANDROID_HOME") != null ||
+val coreOnly = System.getenv("OAL_CORE_ONLY") != null
+val haveSdk = System.getenv("ANDROID_HOME") != null ||
     System.getenv("ANDROID_SDK_ROOT") != null ||
     file("local.properties").exists()
-) {
+
+if (!coreOnly && haveSdk) {
     include(":app")
 }

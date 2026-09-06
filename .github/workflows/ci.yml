@@ -32,6 +32,12 @@ jobs:
       - name: Wire format, pacing, discovery and control
         run: ./gradlew :core:test
         working-directory: phone
+        env:
+          # Hosted runners set ANDROID_HOME for every job, so without this
+          # the core module's build would quietly configure the Android one
+          # and the claim that these tests need no SDK would stop being
+          # checked by anything.
+          OAL_CORE_ONLY: "1"
 
   # The APK itself. Separate from phone-core because it needs an Android
   # SDK and the core deliberately does not -- and because this is the job
