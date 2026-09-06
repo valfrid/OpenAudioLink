@@ -165,13 +165,29 @@ byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, discovery parsing, the peer table's liveness, and every control
 request body.
 
-`app` is **built by CI, not by hand.** The container it was written in
-cannot reach `dl.google.com` — the egress policy denies it — so neither the
-Android SDK nor AndroidX and Media3 (which are published only to Google's
-Maven, not Maven Central) could be fetched there. The `phone-app` job on a
-GitHub runner has all of them, and the APK it produces is downloadable
-from the run: there is no store listing and there will not be one, so that
-artefact is how this app reaches a phone.
+`app` **compiles, and CI produces the APK.** An 11 MB
+`openaudiolink-phone-debug` artefact is attached to every run, beside the
+node firmware and the Hub built from the same commit — there is no store
+listing and there will not be one, so that artefact is how this app
+reaches a phone.
+
+It is **built by CI rather than by hand** because the container it was
+written in cannot reach `dl.google.com`: the egress policy denies it, so
+neither the Android SDK nor AndroidX and Media3 (published only to
+Google's Maven, not Maven Central) could be fetched there.
+
+Two things the first builds caught, both worth knowing about:
+
+- `android:Theme.Material.DayNight` is not a platform theme. The DayNight
+  variants are `DeviceDefault` and arrived in API 29; this app supports
+  26, so it is light in `values` and dark in `values-night`.
+- Plugin versions live in `settings.gradle.kts` under `pluginManagement`,
+  not in the root build file. The Kotlin JVM and Kotlin Android plugins
+  ship in one artefact, so a root `apply false` put it on every project's
+  classpath and `:app` asking for its own version was refused. Declaring
+  versions in `pluginManagement` resolves nothing until a project applies
+  the plugin, which is what lets `:core` build where Google's Maven is
+  unreachable at all.
 
 Every Media3 API used was checked against the 1.4.1 sources rather than
 recalled — `TeeAudioProcessor(AudioBufferSink)` and its two callbacks,
@@ -183,7 +199,11 @@ One detail that matters and is easy to get backwards: a
 its own silence-skipping and speed adjustment, so the tap sees audio that
 has already been resampled to 48 kHz.
 
-**Nothing in `app` has run against real hardware.**
+**Compiling is not working.** Nothing in `app` has run on a phone or
+against a speaker, and every runtime behaviour it describes — discovery
+finding anything, the tap producing 48 kHz audio, the pacing surviving a
+locked screen — is so far only an argument. The checks below are the ones
+that turn it into a result.
 
 The first things to check on a real device, in order:
 
