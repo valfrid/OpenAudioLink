@@ -4,6 +4,11 @@
         A bare theme. The UI is Compose Material 3 and paints itself; this
         exists so the window has a sane background before the first frame
         rather than flashing white on a dark phone.
+
+        Light here and dark in values-night, rather than one DayNight
+        parent: the platform's DayNight themes are DeviceDefault and
+        arrived in API 29, and this app supports 26. Two files is the
+        version that actually resolves.
     -->
-    <style name="Theme.OpenAudioLink" parent="android:Theme.Material.DayNight.NoActionBar" />
+    <style name="Theme.OpenAudioLink" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

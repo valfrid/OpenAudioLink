@@ -42,13 +42,26 @@ class DiscoveryClient(
         running = true
 
         val group = InetAddress.getByName(Discovery.GROUP)
+
+        /*
+         * Held in a local, and it matters.
+         *
+         * `MulticastSocket` has a `networkInterface` property of its own,
+         * so inside the `apply` below the bare name resolves to the
+         * socket's, not to this class's constructor parameter — the test
+         * would ask the socket what it was already bound to and the
+         * assignment would be a no-op against itself. Naming it separately
+         * is the only way the two cannot be confused.
+         */
+        val chosen = networkInterface
+
         val opened = MulticastSocket(Discovery.PORT).apply {
             reuseAddress = true
             // TTL 1: OpenAudioLink is link-local by design.
             timeToLive = 1
-            if (networkInterface != null) {
-                this.networkInterface = networkInterface
-                joinGroup(InetSocketAddress(group, Discovery.PORT), networkInterface)
+            if (chosen != null) {
+                networkInterface = chosen
+                joinGroup(InetSocketAddress(group, Discovery.PORT), chosen)
             } else {
                 @Suppress("DEPRECATION")
                 joinGroup(group)
