@@ -413,3 +413,8 @@ Priority is intentionally not fixed:
   Raspberry Pi Consumer (see decision 8)
 - a wall control surface — the web app half is built (`/play`); tags and
   the panel are still open, see `CONTROL-SURFACE.md`
+- an Android Producer — the phone originates the stream and carries just
+  enough control to start one, so a party needs no PC at all. Scope, the
+  one-access-point rule and the librespot position are in decision 19;
+  note the limitation recorded there, that a speaker must have met a Hub
+  once before it will follow a phone

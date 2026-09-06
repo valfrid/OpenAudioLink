@@ -1789,3 +1789,209 @@ firmware-only milestone. The move then is one project version —
 their own internal numbers and the release carrying the pair. That is a
 change to the workflow's version gate and little else; it is not worth
 doing before the annoyance is real.
+
+---
+
+## 19. The phone is a Producer with a control surface, not a second Hub
+
+**Date:** 2026-09-06
+**Status:** accepted (direction); nothing implemented
+**Extends:** decision 1 (the Hub is optional), decision 3 (where a source
+lives is a capability question) and decision 4 (standalone mode)
+
+### Decision
+
+An Android application may take the **Producer** role: it originates
+RTP/UDP streams to OpenAudioLink consumers directly, in the wire format
+of decision 13, with no Hub anywhere in the path.
+
+It carries **only enough Controller to get a stream running** — find the
+nodes, choose which ones play, start and stop, set volume, turn room
+correction on and off. Nothing else moves to the phone. In particular
+**OTA, the sample log, and room measurement stay Hub-only**, and so does
+provisioning.
+
+Its sources are modules behind one PCM interface: Spotify Connect
+(librespot), internet radio (mp3/AAC/FLAC), the phone's local library, and
+the microphone. A source is written once against that interface and knows
+nothing about RTP.
+
+### Why now, and not six months ago
+
+Because the consumer stopped needing help. Until the phase servo landed
+(decision 12's line of work, finished 2026-09-05) a Producer had to be a
+well-behaved, lightly-loaded machine with a steady send cadence, because
+anything it did wrong showed up as drift the receivers could not
+distinguish from their own. It now measures its offset against **the
+sender's RTP timeline**, so a Producer's only obligations are to stamp
+consistently and to keep sending; jitter, bursts and a short stall are the
+consumer's problem and it demonstrably handles them (11.7 hours, 1372
+paired readings, median inter-node delta 0.1 ms, p99 2.9 ms).
+
+That is what makes a phone — a device with an aggressive scheduler and a
+radio it does not fully control — an acceptable source rather than a
+reckless one.
+
+The other reason is scope. A phone that is a Producer plus four buttons is
+a few thousand lines. A phone that is a Hub is a port of the cast-point
+registry, librespot supervision, the OTA server, the log pipeline and the
+measurement UI onto a device that is asleep most of the day. The first is
+worth building; the second is a second system to maintain.
+
+### The topology, with exactly one access point
+
+Nodes are provisioned with **two** networks and try them in that order
+(`oal_wifi_start`): the home network they were set up on, then the group's
+party network. There are now two things that can hold the party AP:
+
+| Who holds the AP | When | Nodes reach it by |
+| --- | --- | --- |
+| nobody — a router does | at home | the home credentials |
+| the vinyl/producer node | a party with no usable network | the party pair |
+| the phone's hotspot | the same, but the source is the phone | the party pair |
+
+**The working assumption is that only one of the two is active at a time**,
+and it is recorded here as an assumption rather than a guarantee, because
+nothing enforces it. If both come up on the same SSID the failure is not
+obvious: with different passphrases the nodes split by whichever beacon is
+stronger and half the speakers vanish; with the *same* passphrase it is
+worse, because two APs then hand out addresses from two DHCP servers on
+two separate layer-2 segments, discovery multicast does not cross between
+them, and the system looks like it is working while playing to a subset.
+Detecting that is future work; for now it is a rule for the operator, and
+the app should say plainly which AP it expects to be present.
+
+**The phone's hotspot must be configured with the party SSID and
+passphrase the Hub generated** — Android lets the hotspot name and
+password be set, so this is a settings entry, not a code problem. It does
+mean the honest limitation below.
+
+### The limitation, stated up front
+
+**The phone cannot provision.** A node reaches the party network only
+because a Hub pushed that pair into its NVS beforehand. So "bring your
+hub" is really "bring your hub, having once met mine": every speaker needs
+one prior Hub session before it will ever follow a phone. The alternative
+— letting the phone write Wi-Fi credentials into other people's speakers —
+is a considerably larger security question than this feature is worth, and
+it is not being opened.
+
+A node that has never been provisioned still opens its own setup portal,
+which the phone's browser can reach. That is the existing escape hatch and
+it is enough.
+
+### Native sender, web control surface
+
+The sender must be native: a browser cannot open a raw UDP socket, and
+WebRTC is a different protocol with its own timing model, not a way to
+emit AES67. The control surface has no such constraint, so it is a local
+page served by the app — the same shape as the node's own UI, and able to
+reuse `play.html` rather than growing a second design.
+
+Whether that page is dressed as an app screen or shown in a WebView is a
+presentation choice and is deliberately not decided here.
+
+### Four controls, all of them endpoints that already exist
+
+Nothing on the node changes for any of this. The app speaks the same HTTP
+surface the Hub's web UI already exercises:
+
+- `POST /stream/destinations` — which speakers this stream feeds
+- `POST /stream/start` and `/stream/stop`
+- `POST /volume`
+- `POST /config` with `eqEnabled` — room correction on or off
+- `GET /status` — what is playing, and the phase figures
+
+Two consequences follow from that list. **Adding or removing a speaker
+mid-song is a destinations edit**, not a teardown, so it costs nothing.
+And **vinyl works with the phone as Controller, not Producer**: the
+turntable node is already a Producer, so the phone simply tells it where
+to send. The phone's own sources and the vinyl node's are the same
+operation from the app's point of view, which is why they can share one
+screen.
+
+### Volume stays per-node
+
+Volume is a Consumer property (decision 14) and that does not change
+because the source moved. A phone that wants Spotify quieter than the
+record player remembers a per-source set of node volumes and applies it
+when the source is selected. That is entirely inside the app, and costs
+the firmware nothing.
+
+Room correction is per-node in the same way, and it lives in the node's
+NVS — so a speaker carries its correction to the party and the phone never
+has to know the measurement existed.
+
+### librespot on Android, and the public repository
+
+librespot is a Rust library and cross-compiles to `aarch64-linux-android`;
+it does not need a Spotify SDK and it is MIT. The position taken in
+decision 18 for Windows carries over unchanged and for the same reason:
+
+- the repository stays **public**, and the librespot-backed source is
+  **source-only** — no built APK containing it, no Play listing;
+- **no Spotify branding**, no logo, no name in the app title;
+- whether running a reimplementation of somebody's streaming protocol is
+  permitted *with that service* is the operator's decision, and packaging
+  it for them makes that decision for them.
+
+Containment is the reason sources are modules: the librespot flavour can
+be omitted at build time and the app is still a radio, library and
+microphone producer.
+
+**The signing keystore must never be committed.** Android sideloading
+requires a signed APK, a self-signed debug or release key is enough, and
+that key is the same class of secret as the Wi-Fi credentials this project
+already keeps out of the tree — it is not "just a build file". A key in a
+public repository lets anyone publish an update that a phone will install
+over this one without warning.
+
+### What Android will make us do, and it is not optional
+
+- **A foreground service with a notification.** Without it the scheduler
+  will freeze the sender the moment the screen goes off, and 5 ms packets
+  do not survive Doze.
+- **A high-performance Wi-Fi lock.** Station power-save batches frames
+  into beacon intervals; the consumer's servo absorbs that, but it turns a
+  quiet link into a bursty one for no benefit.
+- **Explicit interface binding.** This is the Android form of the lesson
+  in decision 15: announcements and RTP go out on the Wi-Fi interface, and
+  a Spotify fetch may perfectly well use cellular. On a phone the two are
+  up at once, which is convenient at a venue — the hotspot serves the
+  speakers while the music arrives over mobile data — and silently wrong if
+  the sockets are left to pick for themselves.
+
+### The guest-network case is a friend's Wi-Fi
+
+"Bring your hub" mostly means someone else's house, not a hotel or an
+airport, and on a home router everything works: the nodes are joined to
+the same SSID as the phone, discovery multicast is delivered, and the
+system behaves as it does at home.
+
+Client isolation — an AP that forwards to the internet but not between
+stations — is therefore an **edge case, not the headline risk**. It is
+worth naming because it is silent and it is *detectable*: the node's own
+announcements go out, nothing ever answers, and no peer appears. An app
+that says "this network does not allow devices to talk to each other — use
+the party network instead" turns a mystery into a one-line instruction,
+and the party network is right there as the answer.
+
+### Rejected
+
+- **Port the Hub to Android.** Rejected above: it is the larger half of
+  the system, on the device least able to be always-on.
+- **A pure web app.** No raw UDP from a browser, so the one thing that
+  actually has to be on the phone is the one thing it cannot do.
+- **Make the phone a provisioner.** Rejected for the security question,
+  not the effort.
+- **Per-source volume in the firmware.** Rejected: it puts the app's
+  memory in the node, where a second controller would immediately
+  disagree with it.
+
+### When to revisit
+
+If the "one AP at a time" assumption is ever violated in practice — the
+symptom is speakers splitting into two groups that each look healthy. The
+move then is for a node holding a party AP to stand down when it sees
+another beaconing the same SSID, which needs a tie-break rule and is not
+worth designing before it has happened once.
