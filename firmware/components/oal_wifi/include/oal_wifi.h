@@ -19,11 +19,17 @@ typedef enum {
  * Brings the network up. Credentials are read from NVS; when NVS has none,
  * the fallback build-time credentials are used if non-empty.
  *
+ * The node scans once and then works through the candidates that scan
+ * actually found — the provisioned network, the group's party network, a
+ * phone's hotspot, any other access point offering the group — in the
+ * fixed order `oal_netpick.h` sets out, and finally the provisioned
+ * network blind in case it is hidden.
+ *
  * Returns OAL_WIFI_STA once the station has an IP address. When no
- * credentials exist, or the network cannot be joined after repeated
- * attempts, the device opens an unprotected setup access point named
- * "OpenAudioLink-XXXXXX" with a provisioning page at http://192.168.4.1/
- * and returns OAL_WIFI_PORTAL. Saving credentials there reboots the device.
+ * credentials exist, or none of the candidates will have us, the device
+ * opens an unprotected setup access point named "OpenAudioLink-XXXXXX"
+ * with a provisioning page at http://192.168.4.1/ and returns
+ * OAL_WIFI_PORTAL. Saving credentials there reboots the device.
  */
 oal_wifi_result_t oal_wifi_start(const char *fallback_ssid, const char *fallback_password);
 
@@ -33,13 +39,17 @@ esp_err_t oal_wifi_set_credentials(const char *ssid, const char *password);
 /**
  * Persists the group's party network — decision 4's standalone mode.
  *
- * Every node in a group holds the same pair, and a node tries it only
- * after the network it was provisioned onto has failed. That ordering is
- * the entire design: at home the fallback never runs because the first
- * attempt succeeds, and at a venue the first cannot succeed, so the same
+ * Every node in a group holds the same pair, and a node reaches for it
+ * only after the network it was provisioned onto. That ordering is the
+ * entire design: at home the fallback never runs because the first attempt
+ * succeeds, and at a venue the first cannot succeed, so the same
  * unconditional rule does the right thing in both places. A consumer
  * therefore holds no mode, needs nothing set before an event and nothing
  * cleared after one.
+ *
+ * The passphrase does more work than the name. It is what a node offers to
+ * any access point calling itself "oal-something", so it — not the SSID —
+ * is what makes a device a member of this group. See `oal_netpick.h`.
  *
  * An empty @p ssid forgets it, which is how a node leaves a group.
  *

@@ -274,6 +274,12 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Iinclude
           -o election-tests oal_election.c test/test_election.c &&
           ./election-tests
+      - name: Network choice
+        working-directory: firmware/components/oal_wifi
+        run: >
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude
+          -o netpick-tests oal_netpick.c test/test_netpick.c &&
+          ./netpick-tests
 
   firmware:
     name: Firmware testnode (${{ matrix.target }})

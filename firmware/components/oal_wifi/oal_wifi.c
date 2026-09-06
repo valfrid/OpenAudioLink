@@ -1,6 +1,7 @@
 #include "oal_wifi.h"
 
 #include "oal_config.h"
+#include "oal_netpick.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,20 @@ static const char *TAG = "oal_wifi";
  * question.
  */
 #define MAX_STA_RETRIES 10
+
+/*
+ * Fewer, for a network the scan just saw.
+ *
+ * The boot ceiling above is sized for "is the router even up yet", which
+ * is a question about time. A candidate that came out of a scan is
+ * demonstrably in the room and beaconing, so a refusal is a wrong
+ * passphrase — and ten more attempts will not discover a different one.
+ * Spending them would only make the next candidate in the plan wait.
+ */
+#define SEEN_STA_RETRIES 3
+
+/** How many access points to carry out of a scan; a house has fewer. */
+#define SCAN_MAX 12
 
 #define CONNECTED_BIT BIT0
 #define FAILED_BIT BIT1
@@ -74,6 +89,20 @@ static const char *TAG = "oal_wifi";
 
 static EventGroupHandle_t s_events;
 static int s_retries;
+
+/** The ceiling in force for the join being attempted. */
+static int s_max_retries = MAX_STA_RETRIES;
+
+/*
+ * Whether the station coming up means "connect".
+ *
+ * The driver has to be started before it will scan, and starting it raises
+ * STA_START — which is the signal this file has always used to begin
+ * joining. During the boot scan there is nothing to join yet and no
+ * configuration to join it with, so the handler would call connect with an
+ * empty SSID and spend the scan handling its own failures.
+ */
+static bool s_join_on_start;
 
 /*
  * Link events, counted rather than only logged.
@@ -296,7 +325,9 @@ static void schedule_join(void)
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, void *data)
 {
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        request_join();
+        if (s_join_on_start) {
+            request_join();
+        }
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_retries++;
         s_disconnects++;
@@ -314,7 +345,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, vo
          * would take a working speaker off the network to ask a question
          * that has already been answered.
          */
-        if (!s_was_connected && s_retries > MAX_STA_RETRIES) {
+        if (!s_was_connected && s_retries > s_max_retries) {
             xEventGroupSetBits(s_events, FAILED_BIT);
             return;
         }
@@ -359,7 +390,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t event_id, vo
     }
 }
 
-static bool try_station(const char *ssid, const char *password)
+static bool try_station(const char *ssid, const char *password, int max_retries)
 {
     wifi_config_t config = { 0 };
     strlcpy((char *)config.sta.ssid, ssid, sizeof(config.sta.ssid));
@@ -386,6 +417,8 @@ static bool try_station(const char *ssid, const char *password)
     config.sta.threshold.rssi = -127;
 
     s_retries = 0;
+    s_max_retries = max_retries;
+    s_join_on_start = true;
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -416,8 +449,73 @@ static bool try_station(const char *ssid, const char *password)
     }
 
     ESP_LOGE(TAG, "could not join \"%s\"", ssid);
+    s_join_on_start = false;
     ESP_ERROR_CHECK(esp_wifi_stop());
     return false;
+}
+
+/**
+ * Looks once, so the plan is built from what is actually in the room.
+ *
+ * This costs a second or two at every boot, and it is worth stating what
+ * it buys because the naive reading is that it only adds time. A join
+ * already scans internally — `WIFI_ALL_CHANNEL_SCAN` above — so the extra
+ * cost at home is one scan, paid once. What it removes is the case that
+ * actually hurt: a node carried to a venue used to spend its whole retry
+ * ceiling failing to reach a network that is miles away, because trying
+ * was the only way to find out it was absent. Now it is simply not in the
+ * plan.
+ *
+ * Returns how many access points were carried over. Zero is not an error;
+ * it means the plan falls back to trying the provisioned network blind.
+ */
+static size_t scan_for_plan(oal_netpick_ap_t *out, size_t out_max)
+{
+    s_join_on_start = false;
+
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err == ESP_OK) {
+        err = esp_wifi_start();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "could not start the radio to scan: %s", esp_err_to_name(err));
+        return 0;
+    }
+
+    size_t taken = 0;
+    wifi_scan_config_t scan = { .show_hidden = false };
+    if (esp_wifi_scan_start(&scan, true) == ESP_OK) {
+        uint16_t found = 0;
+        if (esp_wifi_scan_get_ap_num(&found) == ESP_OK && found > 0) {
+            if (found > SCAN_MAX) {
+                found = SCAN_MAX;
+            }
+            wifi_ap_record_t *records = calloc(found, sizeof(*records));
+            if (records == NULL) {
+                /* Drain, or the next scan refuses to start. */
+                esp_wifi_scan_get_ap_num(&found);
+            } else {
+                if (esp_wifi_scan_get_ap_records(&found, records) == ESP_OK) {
+                    for (uint16_t i = 0; i < found && taken < out_max; i++) {
+                        const char *ssid = (const char *)records[i].ssid;
+                        if (ssid[0] == '\0') {
+                            continue;   /* a hidden network names itself later */
+                        }
+                        strlcpy(out[taken].ssid, ssid, sizeof(out[taken].ssid));
+                        out[taken].rssi = records[i].rssi;
+                        out[taken].open = records[i].authmode == WIFI_AUTH_OPEN;
+                        taken++;
+                    }
+                }
+                free(records);
+            }
+        }
+    } else {
+        ESP_LOGW(TAG, "the boot scan failed; falling back to trying what is stored");
+    }
+
+    esp_wifi_stop();
+    return taken;
 }
 
 uint32_t oal_wifi_roams(void)
@@ -973,26 +1071,47 @@ oal_wifi_result_t oal_wifi_start(const char *fallback_ssid, const char *fallback
     strlcpy(s_ssid, ssid[0] != '\0' ? ssid : party_ssid, sizeof(s_ssid));
 
     /*
-     * Home first, then the party network. Order is the whole design.
+     * Look first, then choose. `oal_netpick_plan` holds the rules and the
+     * reasoning; what is left here is carrying them out.
      *
-     * At home the second attempt never happens, because the first
-     * succeeds. At a venue the first cannot succeed — the house network is
-     * miles away — so the node spends its thirty seconds failing and then
-     * finds the island. Same rule in both places, which is why a consumer
-     * needs no mode, no flag, and nothing done to it before an event or
-     * after one.
-     *
-     * The thirty seconds are the price, paid once at power-up at the venue
-     * and never at home. Cheaper than a state a person has to remember to
-     * set and remember to unset.
+     * The order is still "home, then the group", which is why a consumer
+     * holds no mode and needs nothing done to it before an event or after
+     * one — the same unconditional rule does the right thing in a living
+     * room and at a venue. What changed is that the node now knows which
+     * of them are in the room before it spends time on any of them, and
+     * that a group network can be offered by more than one thing.
      */
-    if (ssid[0] != '\0' && try_station(ssid, password)) {
-        return OAL_WIFI_STA;
-    }
+    /* On the stack, unlike the driver's records in `scan_for_plan`: this
+     * is a name, a signal and a flag per access point, so twelve of them
+     * are a few hundred bytes rather than the kilobyte a `wifi_ap_record_t`
+     * array would be. */
+    oal_netpick_ap_t seen[SCAN_MAX];
+    size_t seen_count = scan_for_plan(seen, SCAN_MAX);
 
-    if (party_ssid[0] != '\0') {
-        ESP_LOGW(TAG, "falling back to the party network \"%s\"", party_ssid);
-        if (try_station(party_ssid, party_password)) {
+    oal_netpick_step_t plan[OAL_NETPICK_MAX_PLAN];
+    size_t steps = oal_netpick_plan(seen, seen_count, ssid, party_ssid,
+                                    party_ssid[0] != '\0',
+                                    plan, OAL_NETPICK_MAX_PLAN);
+
+    ESP_LOGI(TAG, "%u access point(s) in range, %u worth trying",
+             (unsigned)seen_count, (unsigned)steps);
+
+    for (size_t i = 0; i < steps; i++) {
+        bool group = oal_netpick_uses_party_key(plan[i].kind);
+
+        /* The passphrase never appears here. The name and the reason do,
+         * because "joined oal-phone as a phone hotspot" is the one line
+         * that explains a node's whole evening. */
+        ESP_LOGI(TAG, "trying \"%s\" — %s", plan[i].ssid,
+                 oal_netpick_kind_name(plan[i].kind));
+
+        /* A network the scan saw fails fast or not at all; only the blind
+         * attempt at a possibly-hidden network needs the full ceiling. */
+        int ceiling = plan[i].kind == OAL_NETPICK_HOME_UNSEEN
+            ? MAX_STA_RETRIES : SEEN_STA_RETRIES;
+
+        if (try_station(plan[i].ssid, group ? party_password : password, ceiling)) {
+            strlcpy(s_ssid, plan[i].ssid, sizeof(s_ssid));
             return OAL_WIFI_STA;
         }
     }

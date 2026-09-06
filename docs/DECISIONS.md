@@ -1798,6 +1798,11 @@ doing before the annoyance is real.
 **Status:** accepted (direction); nothing implemented
 **Extends:** decision 1 (the Hub is optional), decision 3 (where a source
 lives is a capability question) and decision 4 (standalone mode)
+**Amended the same day by decision 20:** the "only one access point at a
+time" assumption below is no longer an operator's rule. Nodes walk a fixed
+list, so a phone and a node both beaconing is a preference rather than a
+split. The paragraph is left as written because the failure it describes
+is why the list exists.
 
 ### Decision
 
@@ -1995,3 +2000,141 @@ symptom is speakers splitting into two groups that each look healthy. The
 move then is for a node holding a party AP to stand down when it sees
 another beaconing the same SSID, which needs a tie-break rule and is not
 worth designing before it has happened once.
+
+---
+
+## 20. A node picks its network from one scan, and the key is the membership
+
+**Date:** 2026-09-06
+**Status:** accepted and implemented in firmware 0.54.0
+**Answers:** the open question left in decision 4, "how a receiver picks
+its network"
+**Supersedes:** decision 19's "only one access point is active at a time",
+which was an operator's rule with nothing enforcing it
+
+### Decision
+
+A node scans once at boot and then tries only what the scan found, in this
+order:
+
+1. the network it was **provisioned onto**
+2. the group's **party network**, under the exact name the Hub stored
+3. a **phone's hotspot**, under the well-known name `oal-phone`
+4. **any other access point offering the group** — `oal-*` — strongest first
+5. the provisioned network again, **blind**, in case it is hidden
+
+and the provisioning portal if none of them will have it.
+
+Steps 2 to 4 all join with the one party passphrase every node in the
+group holds. **The name finds the network; the key decides membership.**
+
+### Why an order beats a signal
+
+Decision 19 recorded, one day before this one, that two things could hold
+the party access point — a vinyl node or a phone — and that the system
+assumed only one would be up at a time, with nothing enforcing it. The
+failure was described there: with different passphrases the speakers split
+by whichever beacon is stronger; with the same one they split across two
+DHCP servers on two layer-2 segments while every node looks healthy.
+
+A fixed order removes the assumption instead of documenting it. Every node
+walks the same list, so two access points being up is a **preference, not
+a split** — and the stronger signal does not get a vote. That is why
+`oal-phone` is a well-known name at step 3 rather than one more `oal-*` at
+step 4: a convention everyone shares is what makes the outcome the same in
+every corner of the room.
+
+It also hands the vinyl node the stand-down rule decision 19 said was not
+worth designing yet. A node about to host scans first like any other, and
+if something higher in the list is already beaconing it joins as a station
+rather than starting a second access point.
+
+### Two things a passphrase cannot refuse
+
+Matching a *prefix* is only safe because a wrong key ends the matter: a
+stranger's access point called `oal-anything` costs one refused
+association. Two cases escape that, and both are refused by name instead.
+
+**An open access point is never the group.** With no encryption there is
+nothing to refuse with, so the name would become the credential and
+anybody within radio range could take a room's speakers by naming a
+hotspot. This holds even for an access point using the group's exact
+stored name.
+
+**A node's own setup portal is never joined.** It is open by design —
+a person has to reach it to type credentials in — so it is the one place
+where the argument above fails completely. Two unprovisioned nodes finding
+each other would produce a network with a settings page at one end and a
+speaker at the other, reachable from nothing, while occupying one of the
+four association slots the portal keeps for a person. Today's portal name,
+`OpenAudioLink-XXXXXX`, cannot match `oal-` anyway; the check exists for
+the day somebody renames it, and there is a test that fails if they do.
+
+### The scan pays for itself
+
+The naive reading is that looking first only adds time. At home it does:
+one scan, a second or two, once per boot — and a join was already scanning
+internally, so it is one scan added, not two.
+
+What it removes is the case that actually hurt. A node carried to a venue
+used to spend its **whole retry ceiling failing to reach a network miles
+away**, because trying was the only way to discover it was absent. That
+was a deliberate price — "thirty seconds, paid once at power-up at the
+venue" — and it is now simply not paid: a network nobody is beaconing is
+not in the plan.
+
+The retry ceiling splits accordingly. A candidate the scan saw is
+demonstrably in the room, so a refusal is a wrong passphrase and ten more
+attempts will not discover a different one: three tries, then the next
+candidate. Only the blind attempt at a possibly-hidden network keeps the
+full ten, because there the question is "is the router up yet", which is
+about time.
+
+### What this asks of the phone
+
+The hotspot must carry the **group passphrase** — the same one the Hub
+generated and pushed to the nodes with `POST /config {"party":{…}}`. It is
+not stored in this repository and never will be; it lives in the Hub's
+data directory and gets typed into the phone once.
+
+It must also be **2.4 GHz**. Android often defaults to auto or prefers
+5 GHz, and the XIAO's radio is 2.4-only, so a 5 GHz hotspot is invisible
+to every speaker with no error anywhere to explain it. This is the most
+likely way for a party to fail to start, and it looks exactly like a
+broken speaker.
+
+### Coming up later is already handled
+
+A phone's hotspot is usually switched on *after* the speakers are plugged
+in, which would strand every node in its portal. Nothing new was needed:
+the portal already reboots itself every three minutes when nobody is
+connected to it, and a reboot re-runs the whole chain including a fresh
+scan. A node that finds no network at power-up therefore joins the phone
+within three minutes of the hotspot appearing, unattended.
+
+The rule that keeps this safe is the one already there — never while
+somebody is on the portal typing.
+
+### Consequences
+
+- `oal_netpick.c` holds the rules and is free of ESP-IDF headers, so all
+  of the above is checked on the host. These rules run once, at boot, in a
+  room with no laptop in it; a mistake in them is not a glitch but a
+  speaker that never appears and cannot be asked why.
+- The convention names are matched **without regard to case**, because a
+  person types them into a phone. The stored home and party names are
+  matched **exactly**, because they are configuration and two households
+  on one street may run networks differing only in case.
+- A plan is capped at four steps and a network is never planned twice —
+  a phone beaconing on two bands and a mesh with several radios both
+  produce one name many times.
+- **A node with no party passphrase never attempts the group at all.** A
+  home speaker that has never been to a party stays a home speaker.
+
+### Still not solved
+
+Nothing detects two access points that are up with the *same* name and
+different keys. The order makes the nodes agree with each other, which is
+the harm that mattered; it does not tell the operator they have set up two
+groups. That needs a node to report the access point it landed on against
+what its peers report, which the discovery layer could do and does not.
