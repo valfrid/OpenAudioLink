@@ -165,10 +165,25 @@ byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, discovery parsing, the peer table's liveness, and every control
 request body.
 
-`app` is written and **has never been compiled** — no Android SDK was
-available where it was authored. Expect the first build to need
-adjustments, most likely around Media3's audio-sink API, which moves
-between versions. Nothing in `app` has been run against real hardware.
+`app` is **built by CI, not by hand.** The container it was written in
+cannot reach `dl.google.com` — the egress policy denies it — so neither the
+Android SDK nor AndroidX and Media3 (which are published only to Google's
+Maven, not Maven Central) could be fetched there. The `phone-app` job on a
+GitHub runner has all of them, and the APK it produces is downloadable
+from the run: there is no store listing and there will not be one, so that
+artefact is how this app reaches a phone.
+
+Every Media3 API used was checked against the 1.4.1 sources rather than
+recalled — `TeeAudioProcessor(AudioBufferSink)` and its two callbacks,
+`DefaultRenderersFactory.buildAudioSink(Context, boolean, boolean)`,
+`DefaultAudioSink.Builder` with `setEnableFloatOutput` and
+`setAudioProcessorChain`, and `SonicAudioProcessor.setOutputSampleRateHz`.
+One detail that matters and is easy to get backwards: a
+`DefaultAudioProcessorChain` applies the processors it is given **before**
+its own silence-skipping and speed adjustment, so the tap sees audio that
+has already been resampled to 48 kHz.
+
+**Nothing in `app` has run against real hardware.**
 
 The first things to check on a real device, in order:
 

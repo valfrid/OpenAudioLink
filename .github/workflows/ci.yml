@@ -33,6 +33,41 @@ jobs:
         run: ./gradlew :core:test
         working-directory: phone
 
+  # The APK itself. Separate from phone-core because it needs an Android
+  # SDK and the core deliberately does not -- and because this is the job
+  # that can be red for a reason nobody can fix without one, which should
+  # not take the wire-format tests down with it.
+  #
+  # It also produces the artefact a person installs: there is no store
+  # listing and there will not be one, so a downloadable APK from a known
+  # commit is how this app reaches a phone.
+  phone-app:
+    name: Phone APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # 17, not 21: it is the version the Android Gradle Plugin
+          # supports without argument, and the app module is not where to
+          # find out which JDKs it tolerates.
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - name: Assemble
+        run: ./gradlew :app:assembleDebug --stacktrace
+        working-directory: phone
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openaudiolink-phone-debug
+          path: phone/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
   hub:
     name: Hub (${{ matrix.os }})
     strategy:
