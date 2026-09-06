@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        A bare theme. The UI is Compose Material 3 and paints itself; this
+        exists so the window has a sane background before the first frame
+        rather than flashing white on a dark phone.
+    -->
+    <style name="Theme.OpenAudioLink" parent="android:Theme.Material.DayNight.NoActionBar" />
+</resources>

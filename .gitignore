@@ -31,3 +31,10 @@ appsettings.Local.json
 credentials.json
 *.raw
 data/
+
+# Android / Gradle (phone app)
+.gradle/
+local.properties
+*.apk
+*.keystore
+*.jks
