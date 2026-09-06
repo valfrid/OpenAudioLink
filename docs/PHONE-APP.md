@@ -199,11 +199,12 @@ One detail that matters and is easy to get backwards: a
 its own silence-skipping and speed adjustment, so the tap sees audio that
 has already been resampled to 48 kHz.
 
-**Compiling is not working.** Nothing in `app` has run on a phone or
-against a speaker, and every runtime behaviour it describes — discovery
-finding anything, the tap producing 48 kHz audio, the pacing surviving a
-locked screen — is so far only an argument. The checks below are the ones
-that turn it into a result.
+**A build is not a test.** The APK compiles and installs; that says the
+types line up and the resources resolve, and nothing more. Nothing in
+`app` has run on a phone or reached a speaker, so every runtime behaviour
+described above — discovery finding anything, the tap producing 48 kHz
+audio, the pacing surviving a locked screen — is so far an argument rather
+than a result. The checks below are what turn it into one.
 
 The first things to check on a real device, in order:
 
