@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        A bare theme. The UI is Compose Material 3 and paints itself; this
-        exists so the window has a sane background before the first frame
-        rather than flashing white on a dark phone.
+        The window's colour before Compose has drawn anything.
+
+        Compose paints the whole interface and this theme exists only so
+        the frame between the window opening and the first composition is
+        the right colour rather than a white flash. The values here are the
+        Hub's, from oal.css, so the two halves of the project match: see
+        Theme.kt, which carries the same palette in Compose.
 
         Light here and dark in values-night, rather than one DayNight
         parent: the platform's DayNight themes are DeviceDefault and
         arrived in API 29, and this app supports 26. Two files is the
         version that actually resolves.
     -->
-    <style name="Theme.OpenAudioLink" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.OpenAudioLink" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/oal_ground_light</item>
+    </style>
 </resources>

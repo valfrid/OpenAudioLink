@@ -2,6 +2,7 @@ package org.openaudiolink.phone
 
 import android.content.Context
 import android.provider.Settings
+import org.openaudiolink.core.Station
 
 /**
  * The handful of things this app remembers between launches.
@@ -21,6 +22,7 @@ object Prefs {
     private const val KEY_CAST_NAME = "castName"
     private const val KEY_DETAILS = "showDetails"
     private const val KEY_SELECTED = "selectedSpeakers"
+    private const val KEY_STATIONS = "stations"
 
     /**
      * What a cast point is called before anybody renames it.
@@ -98,5 +100,29 @@ object Prefs {
 
     fun setSelected(context: Context, ids: List<String>) {
         prefs(context).edit().putString(KEY_SELECTED, ids.joinToString("\n")).apply()
+    }
+
+    /**
+     * Saved radio stations.
+     *
+     * JSON rather than a delimiter this time, because a station has two
+     * fields somebody typed and one of them is a URL — and a URL can
+     * contain very nearly anything. `kotlinx.serialization` is already a
+     * dependency for the discovery protocol, so this costs nothing new.
+     *
+     * On the phone rather than on the Hub, unlike the Hub's own list, and
+     * the difference is deliberate: this app exists to work at a party
+     * where there may be no Hub at all. The two lists are the same shape,
+     * so exchanging them later is a transfer rather than a translation.
+     */
+    fun stations(context: Context): List<Station> {
+        val raw = prefs(context).getString(KEY_STATIONS, null)
+        return Station.decode(raw)
+    }
+
+    fun setStations(context: Context, stations: List<Station>) {
+        prefs(context).edit()
+            .putString(KEY_STATIONS, Station.encode(stations))
+            .apply()
     }
 }

@@ -108,6 +108,47 @@ object Glyphs {
         }
     }
 
+    /**
+     * A set, with a dial and a speaker grille — internet radio.
+     *
+     * Deliberately not the broadcast glyph again. The Spotify tile already
+     * carries that, and two tiles with one mark is a menu that has to be
+     * read rather than recognised.
+     */
+    val Radio: ImageVector = glyph("oal.radio") {
+        path(fill = SolidColor(Color.Black), pathFillType = PathFillType.EvenOdd) {
+            // The cabinet.
+            moveTo(2f, 8f)
+            lineTo(22f, 8f)
+            lineTo(22f, 20f)
+            lineTo(2f, 20f)
+            close()
+            // The speaker, punched out.
+            circle(7.5f, 14f, 3.2f)
+            // The dial.
+            moveTo(13f, 11f)
+            lineTo(20f, 11f)
+            lineTo(20f, 13f)
+            lineTo(13f, 13f)
+            close()
+            // Two tuning marks.
+            moveTo(13f, 15.5f)
+            lineTo(20f, 15.5f)
+            lineTo(20f, 17f)
+            lineTo(13f, 17f)
+            close()
+        }
+        // The aerial, angled the way every set had one.
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.8f,
+            strokeLineCap = StrokeCap.Round,
+        ) {
+            moveTo(7f, 7.2f)
+            lineTo(17f, 2.5f)
+        }
+    }
+
     /** A wave: the test tone, which is a wave and nothing else. */
     val Tone: ImageVector = glyph("oal.tone") {
         path(

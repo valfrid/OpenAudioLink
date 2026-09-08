@@ -134,3 +134,46 @@ class StationPlaylistTest {
         assertEquals("jazz-3", Station.idFor("Jazz", taken = setOf("jazz", "jazz-2")))
     }
 }
+
+/**
+ * The saved list, which has to survive an app the system reclaims.
+ *
+ * JSON rather than a delimiter, because a station has two fields somebody
+ * typed and one of them is a URL — and a URL can contain very nearly
+ * anything, including whichever character seemed safe as a separator.
+ */
+class StationStorageTest {
+
+    private val stations = listOf(
+        Station("p2", "Sveriges Radio P2", "https://http-live.sr.se/p2-mp3-192"),
+        Station("jazz", "Jazz | Groove", "http://ice.example/listen.pls?id=1&x=2"),
+    )
+
+    @Test
+    fun `a list survives the round trip intact`() {
+        assertEquals(stations, Station.decode(Station.encode(stations)))
+    }
+
+    @Test
+    fun `awkward characters in a name and a url survive`() {
+        val awkward = listOf(Station("odd", "A \"quoted\", comma'd\nname", "http://x/y?a=1&b=2#z"))
+        assertEquals(awkward, Station.decode(Station.encode(awkward)))
+    }
+
+    /*
+     * Nothing saved and something unreadable are both "no stations", and
+     * neither is worth taking the app down for.
+     */
+    @Test
+    fun `an unreadable list reads as empty rather than throwing`() {
+        assertEquals(emptyList(), Station.decode(null))
+        assertEquals(emptyList(), Station.decode(""))
+        assertEquals(emptyList(), Station.decode("not json at all"))
+        assertEquals(emptyList(), Station.decode("""{"id":"x"}"""))
+    }
+
+    @Test
+    fun `an empty list is written and read back as one`() {
+        assertEquals(emptyList(), Station.decode(Station.encode(emptyList())))
+    }
+}

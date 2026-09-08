@@ -49,9 +49,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.openaudiolink.core.Rtp
+import org.openaudiolink.core.Station
 import org.openaudiolink.phone.sources.LibrarySource
+import org.openaudiolink.phone.sources.RadioSource
 import org.openaudiolink.phone.sources.SpotifySource
 import org.openaudiolink.phone.sources.ToneSource
 import kotlin.math.roundToInt
@@ -118,7 +121,7 @@ class MainActivity : ComponentActivity() {
          * read.
          */
         setContent {
-            MaterialTheme {
+            OalTheme {
                 Scaffold { padding ->
                     Screen(
                         modifier = Modifier.padding(padding),
@@ -287,7 +290,7 @@ private fun NowPlaying(state: Producer.State) {
                             "\n<20 ${it[0]} · 20-50 ${it[1]} · 50-100 ${it[2]}" +
                                 " · 100-200 ${it[3]} · >200 ${it[4]}"
                         }.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = Diagnostic,
                 )
             }
 
@@ -345,9 +348,16 @@ private fun Rooms(state: Producer.State) {
  */
 @Composable
 private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: () -> Unit) {
+    var showStations by remember { mutableStateOf(false) }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("What would you like to hear?", style = MaterialTheme.typography.titleLarge)
 
+        /*
+         * Four tiles, two rows. One row of four on a phone leaves each
+         * about seventy pixels wide, which is a mark with a caption
+         * squeezed under it rather than something anybody reads.
+         */
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SourceTile(
                 glyph = Glyphs.Broadcast,
@@ -370,6 +380,16 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
                 onClick = onPickTrack,
                 modifier = Modifier.weight(1f),
             )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SourceTile(
+                glyph = Glyphs.Radio,
+                name = "Radio",
+                what = if (state.stations.isEmpty()) "Add a station" else
+                    "${state.stations.size} saved",
+                onClick = { showStations = !showStations },
+                modifier = Modifier.weight(1f),
+            )
             SourceTile(
                 glyph = Glyphs.Tone,
                 name = "Test tone",
@@ -379,6 +399,8 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             )
         }
 
+        if (showStations) Stations(state)
+
         if (state.signingIn) {
             Text(
                 "Spotify's own page has opened. Take as long as you need — this " +
@@ -387,6 +409,80 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             )
             OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) { Text("Cancel") }
         }
+    }
+}
+
+/**
+ * The saved stations, and a field to add one.
+ *
+ * Folded under the tile rather than given a screen of its own: this app is
+ * one screen by design, and a station list that is four taps deep is a
+ * list nobody edits at a party.
+ */
+@Composable
+private fun Stations(state: Producer.State) {
+    val context = LocalContext.current
+    var name by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (station in state.stations) {
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Glyphs.Radio, contentDescription = null, modifier = Modifier.size(24.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(station.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            station.url,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Button(onClick = { Producer.startStream(RadioSource(context, station)) }) {
+                        Text("Play")
+                    }
+                    TextButton(onClick = { Producer.removeStation(context, station.id) }) {
+                        Text("Remove")
+                    }
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Station name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text("Stream or playlist URL") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    Producer.addStation(context, name, url)
+                    name = ""
+                    url = ""
+                },
+                enabled = url.isNotBlank(),
+            ) { Text("Add") }
+        }
+        Text(
+            "MP3, AAC and FLAC. A .pls or .m3u address is fine — it is read " +
+                "each time the station plays, so a station that moves its " +
+                "stream keeps working.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -548,7 +644,7 @@ private fun Details(state: Producer.State) {
             "discovery: on ${state.listeningOn ?: "?"} · heard ${state.datagramsHeard} · " +
                 "announced ${state.announcesSent} · probes ${state.probesSent}" +
                 (state.discoveryError?.let { " · $it" } ?: ""),
-            style = MaterialTheme.typography.bodySmall,
+            style = Diagnostic,
         )
 
         if (state.streaming) {
@@ -562,7 +658,7 @@ private fun Details(state: Producer.State) {
                     // like waiting.
                     "waiting ${elapsed(state.packetsHeld)} · nothing sent"
                 },
-                style = MaterialTheme.typography.bodySmall,
+                style = Diagnostic,
             )
 
             /*
@@ -581,7 +677,7 @@ private fun Details(state: Producer.State) {
                             " · <20 ${it[0]} · 20-50 ${it[1]} · 50-100 ${it[2]}" +
                                 " · 100-200 ${it[3]} · >200 ${it[4]}"
                         }.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = Diagnostic,
                 )
             }
         }
@@ -600,7 +696,7 @@ private fun Details(state: Producer.State) {
         if (state.sourceLog.isNotEmpty()) {
             Text(
                 state.sourceLog.takeLast(LOG_LINES_ON_SCREEN).joinToString("\n"),
-                style = MaterialTheme.typography.bodySmall,
+                style = Diagnostic,
             )
         }
 
@@ -608,7 +704,7 @@ private fun Details(state: Producer.State) {
             Text(
                 "also on the network, not driven from here: " +
                     state.others.joinToString { "${it.name} (${it.address})" },
-                style = MaterialTheme.typography.bodySmall,
+                style = Diagnostic,
             )
         }
     }

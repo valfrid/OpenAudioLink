@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.6, built by CI as one APK — see *One build* below.
+Version 0.8.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -19,14 +19,15 @@ Version 0.7.6, built by CI as one APK — see *One build* below.
 | Room correction on and off, per speaker | |
 | Drive a vinyl node as its Controller | |
 
-Four sources, and the first is the reason the app exists:
+Five sources, and the first is the reason the app exists:
 
 1. **Spotify Connect** — librespot publishes a cast point named after the
    phone. It signs in once, and then appears in the picker of the account
    that signed it in.
 2. **A vinyl node** already on the network, told where to send.
 3. **A music file** from this phone.
-4. **A test tone**, which needs no permission, file or account.
+4. **Internet radio** — MP3, AAC and FLAC, from a saved station list.
+5. **A test tone**, which needs no permission, file or account.
 
 The right-hand column stays the Hub's. A speaker holds its own room
 correction in NVS, so it travels to a party already corrected and the
@@ -47,7 +48,8 @@ for `oal_phase` and `oal_netpick`:
 phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
           control requests, 44.1-to-48 resampling, silence suppression,
-          send-interval measurement. 88 tests. No Android; runs anywhere with a JDK.
+          send-interval measurement, the station model and playlist
+          resolver. 101 tests. No Android; runs anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -165,6 +167,21 @@ The same name is used for the OpenAudioLink announce and for the Spotify
 cast point, deliberately — a device that appears as one thing in the
 picker and another in the speaker list is two devices as far as anybody
 looking at it is concerned.
+
+**The palette is the Hub's**, taken from `oal.css` rather than chosen
+again: `--bg #111317`, `--panel #1B1F25`, `--accent #62D1A6`, and the
+18dp/12dp rounding those cards use. `Theme.kt` carries them in Compose and
+`themes.xml` paints the window before the first frame, so there is no
+white flash on the way in. Dark first, because the web UI has no light
+mode and matching it is the point; a light scheme exists because Android
+will hand this app to somebody with the system set to light, and it is the
+same colours rearranged rather than a second design.
+
+Counters and log lines use a monospace style rather than the body font.
+Proportional digits make every number a different width, so a count that
+changes appears to jitter sideways and two rows of figures do not line up
+— and lining figures up against each other is the entire purpose of that
+panel.
 
 **The marks are placeholders, drawn in `Glyphs.kt`** as vector paths
 rather than fetched: they tint with the theme, add no dependency to a
@@ -401,8 +418,25 @@ player still runs a real audio sink because that is what paces the
 decoder, so the phone's own volume is set to zero: the speakers play, the
 phone does not.
 
-**Internet radio** arrives at this interface whenever it is built: a
-station is a different `MediaItem`, same decoder, same resampler, same tap.
+**Internet radio** arrives at exactly that interface, and did: `RadioSource`
+is mostly paperwork around a `LibrarySource` pointed at a URL. **MP3, AAC
+and FLAC**, which Media3 decodes over HTTP with its own network stack, plus
+a real HLS client for the segment playlists the Hub deliberately refuses.
+
+The Hub's `RadioSource` is a week of work by comparison and the difference
+is not skill: Windows decodes FLAC only in its own container, ships no Ogg
+demuxer, and its MP3 reader wants a seekable stream — which a station is
+the opposite of. Android's decoders were written for streaming.
+
+What is not free is resolving what somebody pasted, so `StationPlaylist`
+is ported from the Hub with its reasoning intact: half of what people call
+a stream URL is a few lines of text naming the real one, the content type
+decides rather than the extension, and **a live stream is never read as
+text**, because reading one line of it consumes audio and blocks until
+more arrives. Stations are stored on the phone rather than the Hub — this
+app exists to work at a party where there may be no Hub at all — in the
+Hub's own shape, so exchanging the lists later is a transfer rather than a
+translation.
 
 **Spotify Connect.** librespot runs as a process with `--backend pipe` and the app reads raw PCM from its stdout —
 the same arrangement the Windows Hub uses, because librespot is a Rust
@@ -568,7 +602,7 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 88 tests covering the header field by field,
+`core` is written and tested: 101 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, the silence gate and the skipped-time accounting, discovery parsing,
 the peer table's liveness and its second liveness channel, every control request body, the

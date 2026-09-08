@@ -1,6 +1,8 @@
 package org.openaudiolink.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
 /**
  * A saved internet radio station: a name somebody chose and the URL behind
@@ -31,6 +33,38 @@ data class Station(
     val url: String,
 ) {
     companion object {
+        /**
+         * Reading and writing the saved list.
+         *
+         * Here rather than in the app, because this module already has the
+         * serialization plugin the discovery protocol needs — and because
+         * a format is the kind of thing worth a host test rather than a
+         * device.
+         */
+        private val json = Json { ignoreUnknownKeys = true }
+
+        /*
+         * The serializer named rather than inferred. The reified overloads
+         * need an extra import to resolve, and without it the error points
+         * at the argument rather than at the missing import — naming it is
+         * shorter than explaining that twice.
+         */
+        private val listOfStations = ListSerializer(serializer())
+
+        fun encode(stations: List<Station>): String =
+            json.encodeToString(listOfStations, stations)
+
+        /**
+         * @return the stations, or an empty list if the text is not a list
+         * of them. A saved file that will not parse is not worth taking an
+         * app down for.
+         */
+        fun decode(raw: String?): List<Station> = try {
+            if (raw.isNullOrBlank()) emptyList() else json.decodeFromString(listOfStations, raw)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
         /**
          * A slug from a name, so a station keeps one identity across
          * renames.

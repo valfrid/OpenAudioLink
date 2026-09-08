@@ -19,6 +19,7 @@ import org.openaudiolink.core.NodeClient
 import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.RtpSender
+import org.openaudiolink.core.Station
 import org.openaudiolink.phone.sources.AudioSource
 import org.openaudiolink.phone.sources.SpotifyAccount
 import java.net.InetAddress
@@ -164,6 +165,8 @@ object Producer {
         val warning: String? = null,
         /** What this phone calls itself, on the network and in Spotify. */
         val castName: String = "",
+        /** Saved radio stations, in the order they were added. */
+        val stations: List<Station> = emptyList(),
         /** Whether the counters and logs are on screen — see [Prefs]. */
         val showDetails: Boolean = false,
     ) {
@@ -851,6 +854,7 @@ object Producer {
             it.copy(
                 castName = Prefs.castName(context),
                 showDetails = Prefs.showDetails(context),
+                stations = Prefs.stations(context),
             )
         }
     }
@@ -872,6 +876,38 @@ object Producer {
     fun setShowDetails(context: Context, show: Boolean) {
         Prefs.setShowDetails(context, show)
         _state.update { it.copy(showDetails = show) }
+    }
+
+    /* ---------- radio stations ---------- */
+
+    /**
+     * Saves a station.
+     *
+     * The URL is kept exactly as pasted. A playlist URL is the durable
+     * address of a station and the stream URLs behind it move, so it is
+     * resolved afresh at each play rather than once here — the Hub's rule,
+     * and the reason a station saved a year ago still works.
+     */
+    fun addStation(context: Context, name: String, url: String) {
+        val cleanName = name.trim().ifEmpty { url.trim().substringAfter("://").substringBefore('/') }
+        val cleanUrl = url.trim()
+        if (cleanUrl.isEmpty()) return
+
+        val existing = _state.value.stations
+        val station = Station(
+            id = Station.idFor(cleanName, existing.map { it.id }.toSet()),
+            name = cleanName,
+            url = cleanUrl,
+        )
+        val updated = existing + station
+        Prefs.setStations(context, updated)
+        _state.update { it.copy(stations = updated) }
+    }
+
+    fun removeStation(context: Context, id: String) {
+        val updated = _state.value.stations.filterNot { it.id == id }
+        Prefs.setStations(context, updated)
+        _state.update { it.copy(stations = updated) }
     }
 
     /**
@@ -908,5 +944,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.7.6"
+    const val VERSION = "0.8.0"
 }
