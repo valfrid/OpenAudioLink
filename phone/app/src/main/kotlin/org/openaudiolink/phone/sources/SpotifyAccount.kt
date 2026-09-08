@@ -188,7 +188,13 @@ object SpotifyAccount {
         synchronized(this) { recent.clear() }
         Log.i(TAG, "signing in as \"$name\"")
         val process = try {
-            ProcessBuilder(command).start()
+            ProcessBuilder(command)
+                // The same writable scratch directory the publishing run
+                // needs, and for the same reason — see SpotifySource. A
+                // sign-in fetches less, but it is the same binary with the
+                // same idea of where a temporary file goes.
+                .apply { environment()["TMPDIR"] = SpotifySource.scratch(context).absolutePath }
+                .start()
         } catch (e: Exception) {
             Log.e(TAG, "could not start librespot to sign in", e)
             return false

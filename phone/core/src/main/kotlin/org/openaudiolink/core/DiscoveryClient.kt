@@ -215,6 +215,18 @@ class DiscoveryClient(
             try {
                 open.send(DatagramPacket(payload, payload.size, group, Discovery.PORT))
                 announcesSent++
+                /*
+                 * Cleared on success, because otherwise it is not a fault
+                 * report but a scar.
+                 *
+                 * A single ENETUNREACH during a Wi-Fi handover sat on the
+                 * screen for the rest of the session, next to a counter
+                 * proving hundreds of announces had gone out since. "The
+                 * most recent problem" is only useful if it can also say
+                 * that there is not one any more; if the fault is real it
+                 * reappears within five seconds.
+                 */
+                lastError = null
             } catch (e: Exception) {
                 lastError = e.message
             }

@@ -65,15 +65,88 @@ class WifiBinding(context: Context) {
         ?.firstOrNull()
         ?.hostAddress
 
-    /** The interface a multicast socket must join the group on. */
+    /**
+     * The interface a multicast socket must join the group on.
+     *
+     * Three ways of asking, because one was not enough on a real phone.
+     * The first build asked `LinkProperties` for a name and gave up when
+     * that produced nothing `NetworkInterface` could resolve — and on a
+     * handset at home it produced nothing, so discovery joined on the
+     * system's choice and outbound announces started failing with
+     * ENETUNREACH. Receiving still worked, which is what made it hard to
+     * see: the Hub appeared in the list, so discovery looked fine, while
+     * this phone was invisible to everything else on the network.
+     *
+     * ENETUNREACH is the shape of the underlying problem. A phone with
+     * mobile data up is multi-homed, the default route is usually the
+     * cellular one, and there is no route to 239.255.41.10 down it — so a
+     * multicast send with no interface chosen has nowhere to go.
+     */
     fun multicastInterface(): NetworkInterface? {
-        val name = linkProperties()?.interfaceName ?: return null
-        return try {
-            NetworkInterface.getByName(name)
-        } catch (e: Exception) {
-            Log.w(TAG, "no interface named $name", e)
-            null
+        val name = linkProperties()?.interfaceName
+        if (name != null) {
+            byName(name)?.let { return it }
+            Log.w(TAG, "the Wi-Fi link calls itself $name, which is not a visible interface")
         }
+
+        /*
+         * Second: whichever interface actually holds this phone's Wi-Fi
+         * address. The address comes from the same LinkProperties, so this
+         * agrees with the first answer whenever both exist — it just does
+         * not depend on the name resolving.
+         */
+        localAddress()?.let { address ->
+            byAddress(address)?.let {
+                Log.i(TAG, "using ${it.name}, found by address $address")
+                return it
+            }
+        }
+
+        /*
+         * Third: the first interface that could carry a group at all.
+         * A guess, and a much better one than the system default, which on
+         * this hardware is the cellular interface.
+         */
+        return firstUsable()?.also {
+            Log.w(TAG, "falling back to ${it.name} by inspection; the Wi-Fi named none")
+        }
+    }
+
+    private fun byName(name: String): NetworkInterface? = try {
+        NetworkInterface.getByName(name)?.takeIf { it.isUp && it.supportsMulticast() }
+    } catch (e: Exception) {
+        Log.w(TAG, "could not look up the interface named $name", e)
+        null
+    }
+
+    private fun byAddress(address: String): NetworkInterface? = try {
+        NetworkInterface.getNetworkInterfaces().toList().firstOrNull { candidate ->
+            candidate.inetAddresses.toList().any { it.hostAddress == address }
+        }?.takeIf { it.isUp && it.supportsMulticast() }
+    } catch (e: Exception) {
+        Log.w(TAG, "could not match an interface to $address", e)
+        null
+    }
+
+    /**
+     * Any interface that could carry a multicast group, Wi-Fi first.
+     *
+     * `wlan` before anything else by name, because the alternative on a
+     * phone is `rmnet` — the cellular interface, and the one place a
+     * speaker's audio is guaranteed not to be.
+     */
+    private fun firstUsable(): NetworkInterface? = try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { candidate ->
+                candidate.isUp &&
+                    !candidate.isLoopback &&
+                    candidate.supportsMulticast() &&
+                    candidate.inetAddresses.toList().any { it is Inet4Address }
+            }
+            .minByOrNull { if (it.name.startsWith("wlan")) 0 else 1 }
+    } catch (e: Exception) {
+        Log.w(TAG, "could not enumerate interfaces", e)
+        null
     }
 
     /**

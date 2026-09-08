@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.1, built by CI as one APK — see *One build* below.
+Version 0.7.2, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -79,6 +79,18 @@ discovery finds nothing at all.
 **A high-performance Wi-Fi lock.** Station power save batches frames into
 beacon intervals. The consumer's servo absorbs it, but it turns a quiet
 link into a bursty one for no benefit.
+
+**Naming the multicast interface, three ways.** `LinkProperties` gives an
+interface name, and on a handset at home that name resolved to nothing
+`NetworkInterface` could see — so discovery joined the group on the
+system's choice and outbound announces began failing with `ENETUNREACH`.
+Receiving still worked, which is what made it invisible: the Hub appeared
+in the list so discovery looked healthy, while this phone was announcing
+to nobody. `WifiBinding.multicastInterface()` now tries the name, then the
+interface that actually holds the phone's Wi-Fi address, then the first
+up, non-loopback, multicast-capable IPv4 interface with `wlan` preferred —
+because the alternative on a phone is `rmnet`, the one place a speaker's
+audio is guaranteed not to be.
 
 **Explicit socket binding.** A phone with mobile data up is multi-homed,
 and a socket left to choose for itself will send a speaker's audio to the
@@ -275,6 +287,41 @@ Spotify is 44.1 kHz, so this is the one source that goes through
 so the phone produces the same 48 kHz the Hub does rather than a second
 one nobody could hear the difference in and everybody would have to reason
 about.
+
+**librespot needs somewhere it is allowed to write, and Android's default
+is not it.** With `--disable-audio-cache` librespot streams each track
+into a temporary file from the `tempfile` crate, which asks Rust for
+`std::env::temp_dir()`:
+
+```rust
+env::var_os("TMPDIR").map(PathBuf::from).unwrap_or_else(|| {
+    if cfg!(target_os = "android") { "/data/local/tmp".into() }
+    else { "/tmp".into() }
+})
+```
+
+`/data/local/tmp` belongs to the shell, not to apps. So on a real phone
+librespot authenticated, accepted the play command, resolved the track,
+and then could not create the file to download it into:
+
+```text
+! Unable to load encrypted file: PermissionDenied,
+    PathError { path: "/data/local/tmp/.tmpIyyh2o", code: 13 }
+! Skipping to next track, unable to load track
+  Loading <Father Figure - Remastered> …
+! Unable to load encrypted file: PermissionDenied …
+  Not playing next track because there are no more tracks left in queue.
+```
+
+Every layer above it worked and nothing was ever going to come out. The
+app now sets `TMPDIR` to its own cache directory in librespot's
+environment. Note the `cfg!` is compile-time: patching `env::consts::OS`
+to `"linux"` for the OAuth client ID does not move this, and the fix had
+to be an environment variable.
+
+This is also the clearest case yet for putting librespot's own lines on
+the phone. Nothing about the packet counters, the discovery heartbeat or
+any state this app can see would ever have named `/data/local/tmp`.
 
 **librespot's mDNS name is the cast point.** It is named after the phone,
 because at a party "Anna's phone" tells four people in a room which device

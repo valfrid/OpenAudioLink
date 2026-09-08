@@ -165,6 +165,7 @@ class SpotifySource(
                 // stderr into the same stream would corrupt the PCM, so it
                 // goes to the log instead, where a login failure can be read.
                 .redirectErrorStream(false)
+                .apply { environment()["TMPDIR"] = scratch(context).absolutePath }
                 .start()
         } catch (e: Exception) {
             Log.e(TAG, "could not start librespot", e)
@@ -283,16 +284,54 @@ class SpotifySource(
         }
     }
 
-    private companion object {
-        const val TAG = "oal.spotify"
+    companion object {
+        private const val TAG = "oal.spotify"
+
+        /**
+         * Somewhere librespot is allowed to write, which is not the default.
+         *
+         * This is the whole reason Spotify played nothing on a real phone.
+         * With `--disable-audio-cache` librespot streams each track into a
+         * temporary file from the `tempfile` crate, which asks Rust for
+         * `std::env::temp_dir()` — and Rust's implementation is:
+         *
+         *     env::var_os("TMPDIR").map(PathBuf::from).unwrap_or_else(|| {
+         *         if cfg!(target_os = "android") { "/data/local/tmp".into() }
+         *         else { "/tmp".into() }
+         *     })
+         *
+         * `/data/local/tmp` belongs to the shell, not to apps. So librespot
+         * authenticated, took the play command, resolved the track, and
+         * then could not create the file to download it into:
+         *
+         *     Unable to load encrypted file: PermissionDenied,
+         *       PathError { path: "/data/local/tmp/.tmpIyyh2o", code: 13 }
+         *     Skipping to next track, unable to load track
+         *
+         * and then the next, and the next, until "there are no more tracks
+         * left in queue". Every layer above worked perfectly and nothing
+         * was ever going to come out.
+         *
+         * The cfg is compile-time, so patching `env::consts::OS` to "linux"
+         * for the OAuth client ID does not change it — this build still
+         * looks in the Android place, and has to be told otherwise.
+         *
+         * Not cleaned on start, deliberately: a sign-in may be running
+         * alongside and using the same directory, and deleting a file out
+         * from under it would be a new bug in place of an old one. It is
+         * the app's cache directory, which Android reclaims under storage
+         * pressure.
+         */
+        fun scratch(context: Context): File =
+            File(context.cacheDir, "librespot-tmp").apply { mkdirs() }
 
         /** Spotify decodes to 44.1 kHz, always. */
-        const val SPOTIFY_RATE = 44_100
+        private const val SPOTIFY_RATE = 44_100
 
         /** How many of librespot's lines are kept for the screen. */
-        const val KEPT_LINES = 10
+        private const val KEPT_LINES = 10
 
         /** librespot's own words on the only question that gates the rest. */
-        const val AUTHENTICATED = "Authenticated as"
+        private const val AUTHENTICATED = "Authenticated as"
     }
 }
