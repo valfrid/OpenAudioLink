@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        The Hub's palette, so the two halves of the project look related.
-        `hub/src/OpenAudioLink.Hub/wwwroot/oal.css`: --bg #111317, --accent
+        The Hub's palette, so the two halves of the project look related:
+        the background and accent custom properties in
+        hub/src/OpenAudioLink.Hub/wwwroot/oal.css, which are #111317 and
         #62d1a6. A launcher icon is the one place this app is seen next to
         everything else on a phone, so it is dark with the accent on it
         rather than another white square.
