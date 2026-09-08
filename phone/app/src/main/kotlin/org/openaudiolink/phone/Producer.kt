@@ -523,10 +523,27 @@ object Producer {
                 if (ok) {
                     "Signed in. \"$name\" will now appear in Spotify — publish it and pick it there."
                 } else {
-                    "Sign-in did not finish. adb logcat -s oal.spotify has librespot's own account."
+                    /*
+                     * librespot's own words, on the phone.
+                     *
+                     * Sending somebody to `adb logcat` is sending them to
+                     * find a computer, and the lines that explain a failed
+                     * sign-in belong on the handset that failed.
+                     */
+                    val said = SpotifyAccount.lastOutput()
+                        .filter { it.isNotBlank() }
+                        .takeLast(4)
+                        .joinToString("\n")
+                    "Sign-in did not finish." +
+                        if (said.isNotEmpty()) "\n\nlibrespot said:\n$said" else ""
                 }
             )
         }
+    }
+
+    /** Stops a sign-in that is waiting for the browser. */
+    fun cancelSpotifySignIn() {
+        SpotifyAccount.cancelSignIn()
     }
 
     fun forgetSpotify(context: Context) {
@@ -566,5 +583,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.0"
+    const val VERSION = "0.6.1"
 }

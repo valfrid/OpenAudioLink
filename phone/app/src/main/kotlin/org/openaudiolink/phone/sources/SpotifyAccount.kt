@@ -86,10 +86,32 @@ object SpotifyAccount {
      * one that carries audio, and playing to it fails in a way that reads
      * as a broken speaker.
      */
+    /** Set by [cancelSignIn]; the wait below watches it. */
+    @Volatile private var cancelled = false
+
+    fun cancelSignIn() {
+        cancelled = true
+    }
+
+    /**
+     * The last thing librespot said, kept for the screen.
+     *
+     * Telling somebody to run `adb logcat` is telling them to go and get a
+     * computer. The lines that explain a failed sign-in should be on the
+     * phone that failed.
+     */
+    private val recent = ArrayDeque<String>()
+
+    @Synchronized private fun remember(line: String) {
+        recent.addLast(line)
+        while (recent.size > 12) recent.removeFirst()
+    }
+
+    @Synchronized fun lastOutput(): List<String> = recent.toList()
+
     fun signIn(
         context: Context,
         name: String,
-        timeoutMs: Long = 5 * 60 * 1000,
         onUrl: (String) -> Unit,
     ): Boolean {
         val exe = binary(context)
@@ -112,6 +134,8 @@ object SpotifyAccount {
             "--oauth-port", REDIRECT_PORT.toString(),
         )
 
+        cancelled = false
+        synchronized(this) { recent.clear() }
         Log.i(TAG, "signing in as \"$name\"")
         val process = try {
             ProcessBuilder(command).start()
@@ -122,8 +146,10 @@ object SpotifyAccount {
 
         Thread({
             try {
-                process.errorStream.bufferedReader()
-                    .forEachLine { Log.i(TAG, "librespot: $it") }
+                process.errorStream.bufferedReader().forEachLine {
+                    Log.i(TAG, "librespot: $it")
+                    remember(it)
+                }
             } catch (_: Exception) {
             }
         }, "oal-signin-log").apply { isDaemon = true }.start()
@@ -138,6 +164,7 @@ object SpotifyAccount {
             try {
                 process.inputStream.bufferedReader().forEachLine { line ->
                     Log.i(TAG, "librespot out: $line")
+                    remember(line)
                     val at = line.indexOf(BROWSE_PREFIX)
                     if (at >= 0) {
                         onUrl(line.substring(at + BROWSE_PREFIX.length).trim())
@@ -151,10 +178,17 @@ object SpotifyAccount {
          * Wait for the credential to appear rather than for the process to
          * exit: librespot carries on running as a receiver once it is
          * signed in, and the file is what this run was for.
+         *
+         * **No deadline.** The first version gave it five minutes, which is
+         * a plausible-sounding number and shorter than this actually takes:
+         * a person types a username, waits for a code to arrive by email,
+         * finds it, and types that. Five minutes ran out mid-sign-in and
+         * the app reported a Spotify failure that was entirely its own
+         * impatience. It now waits until it succeeds, until librespot
+         * gives up, or until the person cancels.
          */
-        val deadline = System.currentTimeMillis() + timeoutMs
         var signedIn = false
-        while (System.currentTimeMillis() < deadline) {
+        while (!cancelled) {
             if (credentials(context).exists()) {
                 signedIn = true
                 break

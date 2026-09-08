@@ -307,18 +307,38 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                         "approve, and it comes back.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Button(
-                    onClick = {
-                        Producer.signInToSpotify(context, castPointName) { url ->
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            Producer.signInToSpotify(context, castPointName) { url ->
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        },
+                        enabled = !state.signingIn,
+                    ) {
+                        Text(if (state.signingIn) "Waiting for Spotify…" else "Sign in to Spotify")
+                    }
+                    /*
+                     * There is no deadline on the wait any more, so there
+                     * has to be a way to stop it. The first version gave it
+                     * five minutes and then declared failure — while the
+                     * person was still reading a code out of their email.
+                     */
+                    if (state.signingIn) {
+                        OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) {
+                            Text("Cancel")
                         }
-                    },
-                    enabled = !state.signingIn,
-                ) {
-                    Text(if (state.signingIn) "Waiting for Spotify…" else "Sign in to Spotify")
+                    }
+                }
+                if (state.signingIn) {
+                    Text(
+                        "Take as long as you need — this waits. Come back to the app " +
+                            "when Spotify says it is done.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             } else {
                 Text(
