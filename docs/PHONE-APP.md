@@ -439,7 +439,7 @@ ring, the silence gate and the skipped-time accounting, discovery parsing,
 the peer table's liveness, every control request body, the
 device-versus-Hub rule, and the resampler.
 
-`app` **compiles, and CI produces the APK**, beside the node firmware and
+`app` **works on a phone, and CI produces the APK**, beside the node firmware and
 the Hub built from the same commit — there is no store listing and there
 will not be one, so those artefacts are how this app reaches a phone.
 
@@ -519,22 +519,51 @@ network at all — a deliberate smoke test, not a party.
   constant to `"linux"`; `librespot-android-v0.8.0-2` carries the fix and
   sign-in completes.
 
-**Still unproven.** No packet has yet been shown to reach a speaker. The
-first things to check on a real device, in order:
+**It works.** 0.7.2, a Galaxy A8 (2018) on Android 9, a home network with
+the Hub on it: Spotify picked the cast point, the phone produced the
+stream, and **sound came out of a speaker**. The counters from that
+session:
 
-1. Test tone to one speaker. Proves discovery, binding, the packet format
-   and the port in one step.
-2. `GET /stream` on that node — `lastSsrc` changing and no
-   `foreignPackets` says the packets are being accepted as a real stream
-   rather than tolerated.
-3. A track from the library, to check the decoder and the resampler.
-4. Spotify: does the cast point appear in the picker, on this phone and on
-   another one?
-5. Two speakers, and listen for the offset the whole synchronisation
-   design exists to remove.
+```text
+discovery: on wlan0 · heard 2424 · announced 283 · probes 3
+sending: 63839 packets · 0 underruns · 0 resyncs
+librespot: signed in to Spotify.
+<Jesus to a Child> (410746 ms) loaded
+```
 
-Untested beyond that, and worth knowing before relying on either: the
-vinyl node's *Play this* button has never driven `POST /stream/start` on a
-producer node, and the Spotify source has never been run at all — whether
-librespot's mDNS survives Android's network stack is exactly the kind of
-thing that only a phone can answer.
+63 839 packets is five and a half minutes of continuous audio. **Zero
+underruns** says the ring never ran dry, so librespot's bursts and the
+5 ms wire never disagreed for even one packet. **Zero resyncs** says the
+pacer never fell far enough behind to give up and re-anchor — on a phone,
+with a foreground service holding it awake, over Wi-Fi. That is the whole
+pacing argument above, measured rather than asserted.
+
+Two warnings librespot printed in that same session, both benign and both
+worth knowing, because they are the same fault twice:
+
+```text
+! couldn't load context info because: context is not available. type: Default
+! Invalid start position of 613867 ms exceeds track's duration of 410746 ms,
+  starting track from the beginning
+```
+
+A transfer arrives carrying a playback position but the context does not
+resolve, so librespot loads a track from the session rather than the one
+Spotify was actually playing — and then the position from the old track
+does not fit the new one. It recovers by starting from the beginning, so
+the visible cost is that **transferring playback to this cast point
+restarts the track** instead of resuming where you were. It is inside
+librespot's Connect state machine, not in anything here.
+
+**Still unproven**, and each needs hardware rather than code:
+
+1. `GET /stream` on the receiving node — `lastSsrc` changing and no
+   `foreignPackets` would say the packets are being accepted as a real
+   stream rather than tolerated. Sound coming out proves rather a lot, but
+   not this.
+2. Two speakers at once, and listening for the offset the whole
+   synchronisation design exists to remove.
+3. A track from the phone's own library, which exercises the Media3
+   decoder and the 16-bit int path rather than librespot's pipe.
+4. The vinyl node's *Play* button, which has still never driven
+   `POST /stream/start` on a producer node.
