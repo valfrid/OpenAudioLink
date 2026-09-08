@@ -74,8 +74,17 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        ProducerService.start(this)
 
+        /*
+         * The screen first, the service second.
+         *
+         * A service that dies in onCreate takes the process with it, and
+         * starting it before setContent meant the app crashed before
+         * drawing a single frame — so the one thing that could have said
+         * what was wrong was the thing that never appeared. Drawing first
+         * costs nothing and means a failure is something a person can
+         * read.
+         */
         setContent {
             MaterialTheme {
                 Scaffold { padding ->
@@ -86,6 +95,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        ProducerService.start(this)
     }
 
     private fun nameOf(uri: Uri): String =

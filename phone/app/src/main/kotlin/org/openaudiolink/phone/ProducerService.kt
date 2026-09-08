@@ -7,10 +7,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 
 /**
  * The service that keeps the music going when the screen is off.
@@ -29,9 +32,42 @@ class ProducerService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIFICATION_ID, notification("Looking for speakers"))
 
-        Producer.attach(this, Producer.identity(deviceName(), deviceId()))
+        /*
+         * The type, spelled out, through ServiceCompat.
+         *
+         * From Android 14 a foreground service that declares a type in the
+         * manifest is expected to name it here too, and the bare two-argument
+         * call is the one that has to infer it. Naming it removes a whole
+         * class of launch-time exception from a code path that runs before
+         * the app has drawn anything — which is the worst place to discover
+         * a platform rule.
+         */
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notification("Looking for speakers"),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            } else {
+                0
+            },
+        )
+
+        /*
+         * A failure here must not take the process with it.
+         *
+         * An exception out of a service's onCreate kills the app, and this
+         * one is started from the activity, so the crash arrives before the
+         * first frame — an app that "repeatedly crashes" and never shows a
+         * screen. Whatever goes wrong setting up the radio, the UI is a
+         * better place to say so than a stack trace nobody sees.
+         */
+        try {
+            Producer.attach(this, Producer.identity(deviceName(), deviceId()))
+        } catch (e: Exception) {
+            Log.e(TAG, "could not start the producer", e)
+        }
 
         // Redraw the notification as the state changes, so the lock screen
         // says what is playing and where.
@@ -42,7 +78,13 @@ class ProducerService : Service() {
                     !state.streaming -> "Ready — ${state.speakers.size} speaker(s) found"
                     else -> "${state.sourceLabel} → ${state.selected.size} speaker(s)"
                 }
-                notificationManager().notify(NOTIFICATION_ID, notification(text))
+                try {
+                    notificationManager().notify(NOTIFICATION_ID, notification(text))
+                } catch (e: Exception) {
+                    // A notification that cannot be posted is not worth a
+                    // dead thread; the audio does not depend on it.
+                    Log.w(TAG, "could not update the notification", e)
+                }
                 Thread.sleep(2_000)
             }
         }, "oal-notification").apply { isDaemon = true }.start()
@@ -119,6 +161,7 @@ class ProducerService : Service() {
         const val CHANNEL_ID = "oal-streaming"
         const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "org.openaudiolink.phone.STOP"
+        const val TAG = "oal.service"
 
         fun start(context: Context) {
             val intent = Intent(context, ProducerService::class.java)

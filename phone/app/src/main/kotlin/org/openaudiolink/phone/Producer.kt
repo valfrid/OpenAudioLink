@@ -1,6 +1,7 @@
 package org.openaudiolink.phone
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,6 +32,8 @@ import java.net.InetAddress
  * commands below.
  */
 object Producer {
+
+    private const val TAG = "oal.producer"
 
     /**
      * One device on the network, and what this phone may do with it.
@@ -110,6 +113,22 @@ object Producer {
 
     /* ---------- lifecycle, called by the service ---------- */
 
+    /**
+     * Brings the producer up. Safe to call from the main thread.
+     *
+     * The locks and the Wi-Fi look-up are ordinary system calls and happen
+     * here, so `binding` is set before this returns and a person pressing
+     * play immediately is not told there is no Wi-Fi when there is.
+     *
+     * **Everything that touches a socket is deferred**, and that is not a
+     * tidiness preference. Joining a multicast group and sending a probe
+     * are network operations, Android throws NetworkOnMainThreadException
+     * for those on the main thread, and this runs from a service's
+     * onCreate — so the exception killed the process before the first
+     * frame was drawn, the service being START_STICKY brought it back, and
+     * it died again. From outside that is an app that crashes on launch
+     * and never shows a screen.
+     */
     fun attach(context: Context, identity: Announce) {
         val wifi = WifiBinding(context).also { binding = it }
         wifi.acquireLocks()
@@ -118,16 +137,28 @@ object Producer {
             warn("No Wi-Fi. The speakers are on the Wi-Fi, so nothing can reach them yet.")
         }
 
-        val client = DiscoveryClient(
-            self = identity,
-            networkInterface = wifi.multicastInterface(),
-        )
-        client.onChange = { refreshSpeakers() }
-        client.start()
-        client.probe()
-        discovery = client
-
-        refreshSpeakers()
+        scope.launch {
+            try {
+                val client = DiscoveryClient(
+                    self = identity,
+                    networkInterface = wifi.multicastInterface(),
+                )
+                client.onChange = { refreshSpeakers() }
+                client.start()
+                discovery = client
+                client.probe()
+                refreshSpeakers()
+            } catch (e: Exception) {
+                /*
+                 * A caught failure a person can read, rather than a dead
+                 * process. Discovery not starting means no speakers appear,
+                 * which is worth saying; it is not worth taking the app
+                 * down for, because every other control still works.
+                 */
+                Log.e(TAG, "discovery did not start", e)
+                warn("Could not start looking for speakers: ${e.message}")
+            }
+        }
     }
 
     fun detach() {
@@ -257,8 +288,16 @@ object Producer {
         scope.launch { client(node).stopStream() }
     }
 
+    /** "Look again". Off the main thread, because a probe is a send. */
     fun probe() {
-        discovery?.probe()
+        val client = discovery ?: return
+        scope.launch {
+            try {
+                client.probe()
+            } catch (e: Exception) {
+                Log.w(TAG, "probe failed", e)
+            }
+        }
     }
 
     fun dismissWarning() = _state.update { it.copy(warning = null) }
@@ -384,5 +423,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.4.0"
+    const val VERSION = "0.4.1"
 }
