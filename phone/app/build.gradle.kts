@@ -1,3 +1,15 @@
+import java.net.URI
+import java.security.MessageDigest
+
+/*
+ * Imported, not written out.
+ *
+ * In a Gradle Kotlin DSL script `java` resolves to the Java plugin's
+ * extension, not to the package root, so `java.net.URI` is read as
+ * `javaExtension.net.URI` and fails with "Unresolved reference: net" —
+ * pointing at the wrong thing entirely.
+ */
+
 /*
  * The Android half. Built only where an SDK exists — see settings.gradle.kts,
  * which is also where these plugins' versions are pinned.
@@ -95,7 +107,7 @@ val fetchLibrespot by tasks.registering {
         target.parentFile.mkdirs()
 
         val expected = try {
-            java.net.URI("$base/liblibrespot.so.sha256").toURL()
+            URI("$base/liblibrespot.so.sha256").toURL()
                 .readText().trim().substringBefore(' ')
         } catch (e: Exception) {
             throw GradleException(
@@ -104,8 +116,8 @@ val fetchLibrespot by tasks.registering {
             )
         }
 
-        val bytes = java.net.URI("$base/liblibrespot.so").toURL().readBytes()
-        val actual = java.security.MessageDigest.getInstance("SHA-256")
+        val bytes = URI("$base/liblibrespot.so").toURL().readBytes()
+        val actual = MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { "%02x".format(it) }
 
