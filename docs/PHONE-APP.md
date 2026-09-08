@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.6.5, built by CI as one APK — see *One build* below.
+Version 0.7.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -124,6 +124,47 @@ Three behaviours follow, all tested:
   not a stumble, it is a stop, and there is no timeline left to keep
   continuous: `SilenceGate` stops sending until audio comes back, and
   marks the packet that resumes.
+
+## The screen
+
+Shaped like the Hub's `play.html`, because it is the same job for the same
+person and two products that do one thing should not have to be learned
+twice: a brand line with a health dot, a banner for what is playing, the
+rooms, and a row of tiles answering *what would you like to hear*.
+
+**The instrumentation is behind a switch.** The packet counters, the
+discovery heartbeat and librespot's own lines were each added because a
+screenshot could not be read without them, and each one earned its place —
+so none of them was deleted. They live under *Settings → Show details*,
+off by default. A screen that opens on packet counts and another
+program's stderr is an instrument panel; this is meant to be a thing
+somebody plays music with.
+
+**The cast point's name is editable**, and defaults to `OAL ` plus the
+phone's own name. A Spotify device list is a flat alphabetical pile of
+everything in the house, so the prefix keeps a Hub's rooms and a phone
+together in it rather than scattered between a television and somebody's
+laptop. It is a default, not a rule. Renaming needs the stream stopped: a
+running librespot advertises the name it was started with and there is no
+way to tell it otherwise, so renaming mid-stream would leave the screen
+and the Spotify picker disagreeing.
+
+The same name is used for the OpenAudioLink announce and for the Spotify
+cast point, deliberately — a device that appears as one thing in the
+picker and another in the speaker list is two devices as far as anybody
+looking at it is concerned.
+
+**The marks are placeholders, drawn in `Glyphs.kt`** as vector paths
+rather than fetched: they tint with the theme, add no dependency to a
+build that already fetches one binary over the network, and can be
+replaced wholesale when there is a real visual language. The launcher icon
+is an adaptive icon in the Hub's palette — `--bg #111317`, `--accent
+#62d1a6` from `oal.css` — so the two halves of the project look related.
+
+One thing the Spotify tile deliberately does **not** carry is anything
+resembling Spotify's logo. That mark is a trademark and this project has
+no licence to draw it; the tile shows a generic broadcast glyph, and the
+word beside it is a factual statement of what the feature talks to.
 
 ## Publishing is not playing
 

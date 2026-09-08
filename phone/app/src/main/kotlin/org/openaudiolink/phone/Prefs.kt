@@ -1,0 +1,79 @@
+package org.openaudiolink.phone
+
+import android.content.Context
+import android.provider.Settings
+
+/**
+ * The handful of things this app remembers between launches.
+ *
+ * SharedPreferences and nothing else: two values, both trivial, and a
+ * database would be more machinery than the whole app has elsewhere.
+ *
+ * Note what is *not* here. The Spotify credential lives where librespot
+ * put it, in app-private storage, and is never copied into a preferences
+ * file — it is reusable playback access to a real account, the same class
+ * of secret this project keeps its Wi-Fi credentials out of the repository
+ * for, and one copy of it is enough.
+ */
+object Prefs {
+
+    private const val FILE = "openaudiolink"
+    private const val KEY_CAST_NAME = "castName"
+    private const val KEY_DETAILS = "showDetails"
+
+    /**
+     * What a cast point is called before anybody renames it.
+     *
+     * The prefix is the point. A Spotify device list is a flat alphabetical
+     * pile of everything in the house, and a household running a Hub with
+     * several rooms plus a phone wants those to arrive as a block rather
+     * than scattered between a television and somebody's laptop. It is a
+     * default, not a rule: the field below accepts anything.
+     */
+    const val PREFIX = "OAL "
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    /** The phone's own name, which is the one a guest recognises. */
+    private fun phoneName(context: Context): String =
+        Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            ?: android.os.Build.MODEL
+            ?: "phone"
+
+    fun defaultCastName(context: Context): String = PREFIX + phoneName(context)
+
+    fun castName(context: Context): String =
+        prefs(context).getString(KEY_CAST_NAME, null)?.takeIf { it.isNotBlank() }
+            ?: defaultCastName(context)
+
+    /**
+     * Renames the cast point.
+     *
+     * Blank means "go back to the default" rather than an empty name: a
+     * nameless device in a Spotify picker is unpickable, and refusing the
+     * edit would strand somebody who cleared the field to start again.
+     */
+    fun setCastName(context: Context, name: String) {
+        val trimmed = name.trim()
+        prefs(context).edit().apply {
+            if (trimmed.isEmpty()) remove(KEY_CAST_NAME) else putString(KEY_CAST_NAME, trimmed)
+        }.apply()
+    }
+
+    /**
+     * Whether the counters, the log and the heartbeat are on screen.
+     *
+     * Off by default. They were written to answer questions a person
+     * hitting a wall needs answered, and they earned their place doing
+     * exactly that — but a screen that opens on packet counts and
+     * librespot's stderr is an instrument panel, and this is meant to be
+     * something somebody plays music with.
+     */
+    fun showDetails(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_DETAILS, false)
+
+    fun setShowDetails(context: Context, show: Boolean) {
+        prefs(context).edit().putBoolean(KEY_DETAILS, show).apply()
+    }
+}

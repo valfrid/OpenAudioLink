@@ -142,6 +142,10 @@ object Producer {
         val signingIn: Boolean = false,
         /** Something a person needs to be told, in their own words. */
         val warning: String? = null,
+        /** What this phone calls itself, on the network and in Spotify. */
+        val castName: String = "",
+        /** Whether the counters and logs are on screen — see [Prefs]. */
+        val showDetails: Boolean = false,
     ) {
         val selected: List<Speaker> get() = speakers.filter { it.selected }
 
@@ -196,6 +200,7 @@ object Producer {
     fun attach(context: Context, identity: Announce) {
         val wifi = WifiBinding(context).also { binding = it }
         wifi.acquireLocks()
+        readSettings(context)
         readSpotifyState(context)
 
         if (wifi.wifiNetwork() == null) {
@@ -664,17 +669,44 @@ object Producer {
         _state.update { it.copy(spotifySignedIn = SpotifyAccount.isSignedIn(context)) }
     }
 
+    /* ---------- the two settings ---------- */
+
+    fun readSettings(context: Context) {
+        _state.update {
+            it.copy(
+                castName = Prefs.castName(context),
+                showDetails = Prefs.showDetails(context),
+            )
+        }
+    }
+
+    /**
+     * Renames the cast point.
+     *
+     * Takes effect the next time something is published. A running
+     * librespot advertises the name it was started with and there is no
+     * way to tell it otherwise, so renaming mid-stream would leave the
+     * screen and the Spotify picker disagreeing — which is worse than
+     * waiting until the next publish, and is what the screen says.
+     */
+    fun setCastName(context: Context, name: String) {
+        Prefs.setCastName(context, name)
+        _state.update { it.copy(castName = Prefs.castName(context)) }
+    }
+
+    fun setShowDetails(context: Context, show: Boolean) {
+        Prefs.setShowDetails(context, show)
+        _state.update { it.copy(showDetails = show) }
+    }
+
     /**
      * The name this phone wears on the network, and in Spotify.
      *
-     * The phone's own name, because at a party that is the one a guest
-     * recognises: "Anna's phone" tells four people in a room which device
-     * is which, where a product name would show all four the same thing.
+     * One name for both, deliberately: a device that appears as one thing
+     * in the Spotify picker and another in the speaker list is two devices
+     * as far as anybody looking at it is concerned.
      */
-    fun castPointName(context: Context): String =
-        android.provider.Settings.Global.getString(
-            context.contentResolver, android.provider.Settings.Global.DEVICE_NAME
-        ) ?: android.os.Build.MODEL ?: "OpenAudioLink"
+    fun castPointName(context: Context): String = Prefs.castName(context)
 
     /** The announce this phone sends, so it appears like any other device. */
     fun identity(name: String, id: String): Announce = Announce(
@@ -690,5 +722,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.5"
+    const val VERSION = "0.7.0"
 }

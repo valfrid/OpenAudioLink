@@ -75,8 +75,12 @@ class ProducerService : Service() {
             while (true) {
                 val state = Producer.state.value
                 val text = when {
-                    !state.streaming -> "Ready — ${state.speakers.size} speaker(s) found"
-                    else -> "${state.sourceLabel} → ${state.selected.size} speaker(s)"
+                    !state.streaming -> "Ready — ${state.destinations.size} speaker(s) found"
+                    state.sendingAudio -> "${state.sourceLabel} → ${state.selected.size} speaker(s)"
+                    // Published and waiting is not playing, and a lock
+                    // screen that says it is playing is the same lie the
+                    // main screen used to tell.
+                    else -> "${state.sourceLabel} — published, waiting"
                 }
                 try {
                     notificationManager().notify(NOTIFICATION_ID, notification(text))
@@ -119,7 +123,7 @@ class ProducerService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
             .addAction(android.R.drawable.ic_media_pause, "Stop", stop)
             .setOngoing(true)
