@@ -28,8 +28,8 @@ android {
         applicationId = "org.openaudiolink.phone"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.4.3"
+        versionCode = 8
+        versionName = "0.5.0"
     }
 
     buildTypes {

@@ -250,7 +250,8 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             }
             Text(
                 "${state.packetsSent} packets · ${state.underruns} underruns · " +
-                    "${state.resyncs} resyncs",
+                    "${state.resyncs} resyncs" +
+                    if (chosen == 0) " · to nobody" else " · to $chosen speaker(s)",
                 style = MaterialTheme.typography.bodySmall,
             )
         } else {
@@ -258,23 +259,24 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                 if (chosen > 0) {
                     "Sends this phone's audio to the $chosen ticked speaker(s)."
                 } else {
-                    // Why they are grey. Without this the buttons look
-                    // broken rather than waiting.
-                    "Tick a speaker above and these turn on."
+                    /*
+                     * Not disabled, and this says why it is still worth
+                     * pressing: publishing the cast point before any
+                     * speaker exists is how a party starts, and speakers
+                     * can be added to a running stream without the ones
+                     * already playing noticing.
+                     */
+                    "Nothing ticked — these will run and be heard by nobody " +
+                        "until a speaker appears."
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onPickTrack, enabled = chosen > 0) {
-                    Text("A music file…")
-                }
+                Button(onClick = onPickTrack) { Text("A music file…") }
                 // Needs no permission, no file and no account, so it
                 // separates "is the network right" from "is the decoder
                 // right" when a speaker is silent.
-                OutlinedButton(
-                    onClick = { Producer.startStream(ToneSource()) },
-                    enabled = chosen > 0,
-                ) {
+                OutlinedButton(onClick = { Producer.startStream(ToneSource()) }) {
                     Text("Test tone")
                 }
             }
@@ -291,10 +293,7 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                     "list. It plays on the ticked speakers.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Button(
-                onClick = { Producer.startStream(SpotifySource(context, castPointName)) },
-                enabled = chosen > 0,
-            ) {
+            Button(onClick = { Producer.startStream(SpotifySource(context, castPointName)) }) {
                 Text("Publish to Spotify")
             }
         }

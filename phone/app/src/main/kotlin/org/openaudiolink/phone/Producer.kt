@@ -224,30 +224,38 @@ object Producer {
 
     fun startStream(newSource: AudioSource) {
         val wifi = binding ?: return
-        if (wifi.wifiNetwork() == null) {
-            warn("No Wi-Fi to send on. Join the speakers' network, or turn on the hotspot.")
-            return
-        }
 
         /*
-         * Refuse rather than send to nobody.
+         * Started with nobody ticked, and that is allowed.
          *
-         * A stream with no destinations is perfectly valid and completely
-         * silent: the pacer runs, the packets are built, and every one is
-         * addressed to an empty list. From the outside that is
-         * indistinguishable from a broken speaker, so it has to be said
-         * out loud instead.
+         * An earlier version refused, to stop a stream that runs perfectly
+         * and is heard by no one — the pacer paces, the packets are built,
+         * and every one is addressed to an empty list. But refusing was the
+         * wrong cure for that. Publishing a Spotify cast point before any
+         * speaker exists is a real thing to want: it is how a party starts,
+         * and destinations can be added mid-stream without the speakers
+         * already playing noticing. So it runs, and the screen says loudly
+         * that nothing is being heard.
          */
         if (_state.value.selected.isEmpty()) {
-            warn("Tick a speaker first — otherwise this plays to nobody.")
-            return
+            warn("Nothing is ticked, so this plays to nobody — tick a speaker when one appears.")
         }
 
         stopStream()
         ring.clear()
 
         val rtp = RtpSender(ring, socketProvider = {
-            wifi.boundSocket() ?: error("the Wi-Fi went away between the check and the socket")
+            /*
+             * Bound to the Wi-Fi where there is one, unbound where there is
+             * not — never refused.
+             *
+             * A phone *hosting* the hotspot has no station network at all,
+             * so `wifiNetwork()` is null and there is nothing to bind to;
+             * that is the party-mode arrangement of decision 20, not a
+             * fault. Refusing to open a socket there would have made the
+             * one deployment this app exists for the one it cannot do.
+             */
+            wifi.boundSocket() ?: java.net.DatagramSocket()
         })
         rtp.setDestinations(currentDestinations())
         rtp.start()
@@ -461,6 +469,21 @@ object Producer {
                         )
                     }
                 }
+
+                /*
+                 * A source that stopped on its own.
+                 *
+                 * librespot failing to start is the case that matters: the
+                 * process cannot exec, the thread exits, and nothing else
+                 * would ever notice — the screen would sit showing "Stop"
+                 * for a stream that ended before it began.
+                 */
+                val playing = source
+                if (playing != null && !playing.isPlaying) {
+                    warn("${playing.label} stopped on its own. " +
+                        "adb logcat -s oal.spotify says why.")
+                    stopStream()
+                }
                 kotlinx.coroutines.delay(1_000)
             }
         }
@@ -492,5 +515,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.4.3"
+    const val VERSION = "0.5.0"
 }
