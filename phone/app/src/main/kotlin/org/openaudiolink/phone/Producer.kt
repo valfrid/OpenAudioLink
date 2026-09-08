@@ -722,5 +722,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.7.0"
+    const val VERSION = "0.7.1"
 }

@@ -21,7 +21,9 @@ import java.nio.ByteOrder
  * The phone's own music, decoded and resampled to the wire rate.
  *
  * Media3 does the two things that would otherwise be a project each: it
- * decodes MP3, AAC, FLAC and the rest, and `SonicAudioProcessor` resamples
+ * decodes MP3, AAC (in M4A, MP4 and ADTS), FLAC, WAV, Ogg Vorbis, Opus,
+ * AMR and Matroska — its own extractors plus the phone's own decoders, no
+ * decoder extensions bundled — and `SonicAudioProcessor` resamples
  * whatever came out to 48 kHz. That matters more than it sounds — decision
  * 13 fixes one wire rate at 48 kHz and most music is 44.1, so *every*
  * ordinary track needs resampling before it can be sent.
@@ -39,6 +41,12 @@ import java.nio.ByteOrder
  * 44.1 kHz file resampled to 48 kHz is still that file. The format does
  * not add information; what it avoids is throwing any away between here
  * and the speaker.
+ *
+ * And in the other direction: a 24-bit file is folded to 16 before it
+ * reaches the wire — see the note on float output in `start()`, which is
+ * where that is forced and why. Everything is resampled to 48 kHz too, so
+ * a 96 kHz file is a 48 kHz stream. Decision 13 fixes one wire rate and
+ * this is what that costs.
  */
 @OptIn(UnstableApi::class)
 class LibrarySource(
@@ -74,8 +82,15 @@ class LibrarySource(
             buffer.order(ByteOrder.nativeOrder())
             try {
                 when (encoding) {
-                    C.ENCODING_PCM_FLOAT -> pushFloat(buffer, target)
                     C.ENCODING_PCM_16BIT -> pushShort(buffer, target)
+                    /*
+                     * Not reachable as the sink is configured — float
+                     * output is off, so the chain only ever sees 16-bit —
+                     * and kept anyway. It costs one branch, and the day
+                     * somebody turns float output back on is the day this
+                     * is the difference between working and silent.
+                     */
+                    C.ENCODING_PCM_FLOAT -> pushFloat(buffer, target)
                     else -> Unit   // an encoding we cannot read is silence, not a crash
                 }
             } finally {
@@ -143,10 +158,46 @@ class LibrarySource(
                     setOutputSampleRateHz(Rtp.SAMPLE_RATE)
                 }
                 return DefaultAudioSink.Builder(context)
-                    // Float first where the device offers it: the tap sees
-                    // whatever the chain carries, and float costs nothing
-                    // on the way to a 24-bit wire.
-                    .setEnableFloatOutput(true)
+                    /*
+                     * Float output **off**, and this is not a preference.
+                     *
+                     * `DefaultAudioSink.configure()` builds two different
+                     * pipelines, and only one of them contains the chain
+                     * supplied above:
+                     *
+                     *     if (shouldUseFloatOutput(pcmEncoding)) {
+                     *         pipeline.addAll(toFloatPcmAvailableAudioProcessors);
+                     *     } else {
+                     *         pipeline.addAll(toIntPcmAvailableAudioProcessors);
+                     *         pipeline.add(audioProcessorChain.getAudioProcessors());
+                     *     }
+                     *
+                     * and `shouldUseFloatOutput` is `enableFloatOutput &&
+                     * isEncodingHighResolutionPcm(encoding)` — 24-bit,
+                     * 32-bit and float. So with float output enabled, a
+                     * 24-bit FLAC took a path with neither the resampler
+                     * nor the tap in it: nothing was resampled to 48 kHz
+                     * and nothing ever reached the ring. From the outside
+                     * that is a track that plays silently forever, with
+                     * the screen saying "published, waiting" and no packet
+                     * ever sent — a fault that looks like the network.
+                     *
+                     * Turning it off puts every file through the int path,
+                     * where `ToInt16PcmAudioProcessor` folds 24-bit,
+                     * 32-bit and float down to 16-bit first, and the
+                     * resampler and the tap run on everything.
+                     *
+                     * The cost, stated plainly: a 24-bit file reaches the
+                     * wire as 16 bits. The wire is still L24 and every
+                     * ordinary 16/44.1 recording is unaffected, but this
+                     * app is not a high-resolution path and should not be
+                     * described as one. Keeping the depth would mean
+                     * resampling here rather than in Media3 — a general
+                     * rate converter, not the fixed 147:160 the Spotify
+                     * source uses — which is a real piece of work and not
+                     * one to do by accident.
+                     */
+                    .setEnableFloatOutput(false)
                     .setAudioProcessorChain(
                         DefaultAudioSink.DefaultAudioProcessorChain(
                             resampler,

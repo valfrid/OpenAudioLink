@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.0, built by CI as one APK — see *One build* below.
+Version 0.7.1, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -212,7 +212,48 @@ about decoders.
 network right" from "is the decoder right" when a speaker is silent, which
 is the same reason the firmware carries one.
 
-**The phone's library.** Media3 decodes and `SonicAudioProcessor` resamples
+**The phone's library.** The picker filters on `audio/*` and Media3 does
+the decoding, so the supported set is ExoPlayer's own extractors plus the
+phone's own decoders — no decoder extensions are bundled. In practice:
+**MP3, AAC** (M4A, MP4, ADTS), **FLAC, WAV, Ogg Vorbis, Opus** (in
+Matroska everywhere, in `.ogg` from Android 10), **AMR** and **Matroska**.
+Not ALAC, which needs a device decoder few phones have; not WMA; not
+AIFF; not DSD.
+
+Two things every file goes through, both from decision 13's one wire rate:
+it is **resampled to 48 kHz**, so a 96 kHz file becomes a 48 kHz stream,
+and it is **folded to 16-bit** on the way. The wire is still L24 and an
+ordinary 16/44.1 recording is untouched by the second of those, but this
+is not a high-resolution path and should not be described as one.
+
+That 16-bit fold is forced, and the reason is a bug worth recording.
+`DefaultAudioSink.configure()` builds two different pipelines and the
+audio-processor chain you supply is **only in one of them**:
+
+```java
+if (shouldUseFloatOutput(pcmEncoding)) {
+    pipeline.addAll(toFloatPcmAvailableAudioProcessors);
+} else {
+    pipeline.addAll(toIntPcmAvailableAudioProcessors);
+    pipeline.add(audioProcessorChain.getAudioProcessors());
+}
+```
+
+`shouldUseFloatOutput` is `enableFloatOutput && isEncodingHighResolutionPcm(...)`
+— 24-bit, 32-bit and float. This app asked for float output, so a 24-bit
+FLAC took a path containing neither the resampler nor the tap: nothing was
+resampled and nothing ever reached the ring. From outside that is a track
+that plays silently forever with the screen saying "published, waiting"
+and no packet ever sent — a decoder fault wearing a network fault's
+clothes. Float output is now off, every file takes the int path, and
+`SonicAudioProcessor` would have refused float anyway: it accepts
+`ENCODING_PCM_16BIT` and throws on everything else.
+
+Keeping 24 bits would mean resampling here instead of in Media3 — a
+general rate converter rather than the fixed 147:160 the Spotify source
+uses — which is real work and not something to do by accident.
+
+Media3 decodes and `SonicAudioProcessor` resamples
 to 48 kHz — which matters more than it sounds, because decision 13 fixes
 one wire rate and most music is 44.1 kHz, so *every* ordinary track is
 resampled. A `TeeAudioProcessor` after the resampler is the tap. The
