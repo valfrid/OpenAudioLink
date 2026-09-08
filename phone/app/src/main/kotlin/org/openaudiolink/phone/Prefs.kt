@@ -20,6 +20,7 @@ object Prefs {
     private const val FILE = "openaudiolink"
     private const val KEY_CAST_NAME = "castName"
     private const val KEY_DETAILS = "showDetails"
+    private const val KEY_SELECTED = "selectedSpeakers"
 
     /**
      * What a cast point is called before anybody renames it.
@@ -75,5 +76,27 @@ object Prefs {
 
     fun setShowDetails(context: Context, show: Boolean) {
         prefs(context).edit().putBoolean(KEY_DETAILS, show).apply()
+    }
+
+    /**
+     * Which speakers were ticked, so a restart does not silence a party.
+     *
+     * A `StringSet` would be the obvious type and is the wrong one: it
+     * does not preserve order, and the order speakers were chosen in is
+     * the order they appear. A joined string keeps it, and a device id has
+     * no newline in it.
+     *
+     * This is preference, not state — if a remembered id belongs to a
+     * device that never comes back it costs one entry that is never
+     * matched, which is why nothing here has to expire.
+     */
+    fun selected(context: Context): List<String> =
+        prefs(context).getString(KEY_SELECTED, null)
+            ?.split("\n")
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+
+    fun setSelected(context: Context, ids: List<String>) {
+        prefs(context).edit().putString(KEY_SELECTED, ids.joinToString("\n")).apply()
     }
 }

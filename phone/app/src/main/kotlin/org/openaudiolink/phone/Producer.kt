@@ -66,6 +66,16 @@ object Producer {
          * left the phone.
          */
         val answered: Boolean = false,
+        /**
+         * Whether anything has been heard from it lately.
+         *
+         * A ticked speaker that goes quiet stays on the list, marked, and
+         * keeps receiving audio. Removing it was the old behaviour and it
+         * was wrong twice over: the tick went with it, so the device came
+         * back unticked and silent, and the audio stopped for a device
+         * that was very often still there and simply not being heard.
+         */
+        val online: Boolean = true,
     ) {
         val hasVolume: Boolean get() = volume >= 0
         val volumeUnsupported: Boolean get() = answered && volume < 0
@@ -173,11 +183,31 @@ object Producer {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * The speakers this phone has been told to play on, by id.
+     *
+     * **Held here rather than derived from the visible list, and that is
+     * the fix for the bug this exists to record.** `refreshSpeakers` used
+     * to read the ticks off the speakers it already had and re-apply them
+     * to the ones it could currently see. A device that dropped out of the
+     * liveness window vanished from that list, and with it the only record
+     * that anybody had chosen it — so "Look again" brought it back
+     * unticked, every time, and a party went quiet until somebody noticed
+     * and re-ticked three speakers by hand.
+     *
+     * A choice is about a device, not about whether a datagram arrived in
+     * the last thirty seconds.
+     */
+    private val selectedIds = LinkedHashSet<String>()
+
     private val ring = PcmRing(capacityFrames = Rtp.SAMPLE_RATE)   // one second
     private var sender: RtpSender? = null
     private var discovery: DiscoveryClient? = null
     private var binding: WifiBinding? = null
     private var source: AudioSource? = null
+
+    /** Kept so a change of selection can be written down without a screen. */
+    private var appContext: Context? = null
 
     /* ---------- lifecycle, called by the service ---------- */
 
@@ -198,9 +228,23 @@ object Producer {
      * and never shows a screen.
      */
     fun attach(context: Context, identity: Announce) {
+        appContext = context.applicationContext
         val wifi = WifiBinding(context).also { binding = it }
         wifi.acquireLocks()
         readSettings(context)
+
+        /*
+         * The ticks, restored before anything has been heard from.
+         *
+         * So a phone that was restarted — or an app the system reclaimed
+         * mid-party — comes back already pointed at the same speakers, and
+         * they start playing as they announce themselves rather than
+         * waiting for somebody to tick three boxes again.
+         */
+        synchronized(selectedIds) {
+            selectedIds.clear()
+            selectedIds.addAll(Prefs.selected(context))
+        }
         readSpotifyState(context)
 
         if (wifi.wifiNetwork() == null) {
@@ -254,6 +298,7 @@ object Producer {
              */
             while (isActive) {
                 refreshSpeakers()
+                probeIfQuiet()
                 readCounters()
                 delay(2_000)
             }
@@ -354,9 +399,18 @@ object Producer {
      * reached and its probation handles arriving mid-stream.
      */
     fun toggleSpeaker(id: String) {
+        val nowSelected = synchronized(selectedIds) {
+            if (!selectedIds.remove(id)) {
+                selectedIds.add(id)
+                true
+            } else {
+                false
+            }
+        }
+        appContext?.let { Prefs.setSelected(it, selectedIds.toList()) }
         _state.update { current ->
             current.copy(speakers = current.speakers.map {
-                if (it.id == id) it.copy(selected = !it.selected) else it
+                if (it.id == id) it.copy(selected = nowSelected) else it
             })
         }
         sender?.setDestinations(currentDestinations())
@@ -464,14 +518,23 @@ object Producer {
     /**
      * Rebuilds the speaker list, keeping what the person chose.
      *
-     * A speaker that dropped off the network and came back must not lose
-     * its tick — at a party that is the difference between "it reappeared"
-     * and "it reappeared and went silent".
+     * "Keeping" now means keeping the device, not just the tick. A ticked
+     * speaker that has gone quiet stays on the list marked offline and
+     * stays in the destination set, because the alternative — the old
+     * behaviour — was to drop it, forget it had been chosen, stop sending
+     * to it, and then greet it as a stranger when its next announce
+     * happened to survive the air.
+     *
+     * Multicast on Wi-Fi is the least reliable thing on the network. A
+     * speaker missing six announces in a row is thirty seconds and is
+     * usually a run of bad luck rather than a device that left the house,
+     * and continuing to send to it costs one unicast stream to an address
+     * that either answers or does not.
      */
     private fun refreshSpeakers() {
         val table = discovery?.peers ?: return
         val now = System.currentTimeMillis()
-        val chosen = _state.value.speakers.filter { it.selected }.map { it.id }.toSet()
+        val chosen = synchronized(selectedIds) { selectedIds.toSet() }
         val known = _state.value.speakers.associateBy { it.id }
 
         /*
@@ -481,7 +544,7 @@ object Producer {
          * device is never dropped here, because a Hub that is present and
          * unmentioned looks exactly like discovery having failed.
          */
-        val speakers = table.online(now).map { peer ->
+        val live = table.online(now).map { peer ->
             val existing = known[peer.id]
             Speaker(
                 id = peer.id,
@@ -494,32 +557,107 @@ object Producer {
                 volume = existing?.volume ?: -1,
                 roomCorrection = existing?.roomCorrection ?: false,
                 answered = existing?.answered ?: false,
+                online = true,
             )
         }
 
-        _state.update { it.copy(speakers = speakers) }
+        /*
+         * And the ones that were chosen and have gone quiet, at their last
+         * known address. Only the chosen ones: an unticked device that
+         * left is simply gone, and a list that never forgets anything
+         * becomes a list of everything that has ever been switched on.
+         */
+        val liveIds = live.map { it.id }.toSet()
+        val missing = known.values.filter { it.id in chosen && it.id !in liveIds }
+            .map { it.copy(selected = true, online = false) }
+
+        _state.update { it.copy(speakers = live + missing) }
         sender?.setDestinations(currentDestinations())
 
         // What each one currently thinks its volume and correction are.
         // Only the ones this app can actually ask: the Hub serves a
         // different API on a different port and would 404 all day.
-        scope.launch {
-            for (speaker in speakers.filter { !it.answered && it.canReceiveAudio }) {
-                val status = NodeClient(speaker.address, speaker.controlPort).status() ?: continue
-                _state.update { current ->
-                    current.copy(speakers = current.speakers.map {
-                        if (it.id == speaker.id) {
-                            it.copy(
-                                volume = status.volume,
-                                roomCorrection = status.eqEnabled,
-                                answered = true,
-                            )
-                        } else {
-                            it
-                        }
-                    })
-                }
+        scope.launch { pollNodes(live + missing) }
+    }
+
+    /**
+     * Asks the chosen speakers how they are, over TCP.
+     *
+     * Two jobs in one request. It fills in volume and room correction for
+     * a speaker that has not answered yet — which is what it was written
+     * for — and it doubles as **a second liveness channel**, which is what
+     * it is really worth. A unicast HTTP request that succeeds is much
+     * better evidence that a speaker is present than a multicast announce
+     * that happens to arrive, and it works in the case that produced this
+     * whole change: a device sitting there perfectly healthy whose
+     * announces are being eaten by the air.
+     *
+     * A device that answers is marked heard, so it never expires while it
+     * is still talking to us.
+     */
+    private suspend fun pollNodes(speakers: List<Speaker>) {
+        for (speaker in speakers) {
+            if (!speaker.canReceiveAudio) continue
+            // Ask a speaker we have never heard from, and keep asking the
+            // ticked ones: those are the ones whose absence costs music.
+            if (speaker.answered && !speaker.selected) continue
+
+            val status = NodeClient(speaker.address, speaker.controlPort).status()
+            if (status == null) continue
+
+            discovery?.peers?.answered(speaker.id, System.currentTimeMillis())
+            _state.update { current ->
+                current.copy(speakers = current.speakers.map {
+                    if (it.id == speaker.id) {
+                        it.copy(
+                            volume = status.volume,
+                            roomCorrection = status.eqEnabled,
+                            answered = true,
+                            online = true,
+                        )
+                    } else {
+                        it
+                    }
+                })
             }
+        }
+    }
+
+    /**
+     * Asks again, early, when a chosen speaker has gone quiet.
+     *
+     * The protocol has a probe precisely for this: a controller asks and
+     * every device replies at once, instead of waiting up to five seconds
+     * for the next scheduled announce. Sending one as soon as a ticked
+     * speaker is halfway to expiring turns a run of lost datagrams into a
+     * question rather than a disappearance.
+     *
+     * Not sent more than every [PROBE_INTERVAL_MS], and not sent at all
+     * while everything chosen is present — a probe makes every device on
+     * the network answer, and doing that twice a second would be its own
+     * kind of rudeness.
+     */
+    private var lastProbeMs = 0L
+
+    private fun probeIfQuiet() {
+        val client = discovery ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastProbeMs < PROBE_INTERVAL_MS) return
+
+        val chosen = synchronized(selectedIds) { selectedIds.toSet() }
+        if (chosen.isEmpty()) return
+
+        val quiet = chosen.any { id ->
+            val silent = client.peers.silentFor(id, now)
+            silent == null || silent > QUIET_MS
+        }
+        if (!quiet) return
+
+        lastProbeMs = now
+        try {
+            client.probe()
+        } catch (e: Exception) {
+            Log.w(TAG, "probe failed", e)
         }
     }
 
@@ -721,6 +859,17 @@ object Producer {
     )
 }
 
+/** How often a probe may be sent while something chosen is missing. */
+private const val PROBE_INTERVAL_MS = 5_000L
+
+/**
+ * How long a chosen speaker may be silent before it is asked directly.
+ *
+ * Well inside the 30-second liveness window, so the question is asked
+ * while there is still time for the answer to keep the device on the list.
+ */
+private const val QUIET_MS = 10_000L
+
 object BuildInfo {
-    const val VERSION = "0.7.2"
+    const val VERSION = "0.7.3"
 }

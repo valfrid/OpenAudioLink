@@ -625,7 +625,21 @@ private fun SpeakerCard(speaker: Producer.Speaker) {
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(speaker.name, style = MaterialTheme.typography.titleMedium)
-                    if (speaker.unreachable) {
+                    if (!speaker.online) {
+                        /*
+                         * Still ticked, still being sent to, and said so.
+                         *
+                         * This used to be a speaker silently vanishing
+                         * from the list — which lost the tick with it, so
+                         * "Look again" brought it back unselected and
+                         * quiet. It stays now, because a run of lost
+                         * announces is not a device leaving the house.
+                         */
+                        Text(
+                            "Not answering — still sending, and asking again",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else if (speaker.unreachable) {
                         /*
                          * Not the same sentence as "no volume control",
                          * and the difference cost a debugging session.

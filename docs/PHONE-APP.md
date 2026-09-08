@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.2, built by CI as one APK — see *One build* below.
+Version 0.7.3, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -47,7 +47,7 @@ for `oal_phase` and `oal_netpick`:
 phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
           control requests, 44.1-to-48 resampling, silence suppression.
-          76 tests. No Android; runs anywhere with a JDK.
+          82 tests. No Android; runs anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -177,6 +177,44 @@ One thing the Spotify tile deliberately does **not** carry is anything
 resembling Spotify's logo. That mark is a trademark and this project has
 no licence to draw it; the tile shows a generic broadcast glyph, and the
 word beside it is a factual statement of what the feature talks to.
+
+## Staying in touch
+
+Two speakers and a turntable played, and then kept dropping off the list —
+reappearing on *Look again*, **unticked and silent**. Two separate faults
+wearing one symptom.
+
+**The app forgot the choice.** `refreshSpeakers` read the ticks off the
+speakers it already had and re-applied them to the ones it could currently
+see. A device that fell out of the liveness window vanished from that
+list, and with it the only record that anybody had chosen it. A choice is
+a fact about a device, not a property of whichever devices happen to be
+visible in the last thirty seconds, so it now lives in its own set — and
+is written to preferences, so an app the system reclaims mid-party comes
+back pointed at the same speakers.
+
+**And the window is easy to miss.** Multicast on Wi-Fi goes out at a low
+basic rate, unacknowledged and unretried, and a phone's power save batches
+what does arrive. Six lost announces in a row is thirty seconds, which is
+the entire liveness window — so a speaker sitting there perfectly healthy
+can disappear because the air was busy. Three things now push back:
+
+- **A ticked speaker that goes quiet is not removed.** It stays on the
+  list marked "not answering", and **it stays in the destination set**, so
+  the audio does not stop for a device that is very often still there.
+  Sending to an address that has gone costs one unicast stream that nobody
+  receives.
+- **A unicast status request counts as being heard from.**
+  `PeerTable.answered()` refreshes a peer's timestamp without an announce.
+  A `GET /status` that succeeds over TCP is much better evidence than a
+  multicast datagram that happened to survive, and it works precisely in
+  the case that caused this: a healthy device whose announces are being
+  eaten by the air.
+- **A probe goes out early**, at ten seconds of silence rather than after
+  the device has gone. The protocol has one for exactly this — every
+  device replies at once instead of waiting up to five seconds for its next
+  scheduled announce — and it is rate-limited to one every five seconds,
+  because a probe makes the whole network answer.
 
 ## Publishing is not playing
 
@@ -433,10 +471,10 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 76 tests covering the header field by field,
+`core` is written and tested: 82 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, the silence gate and the skipped-time accounting, discovery parsing,
-the peer table's liveness, every control request body, the
+the peer table's liveness and its second liveness channel, every control request body, the
 device-versus-Hub rule, and the resampler.
 
 `app` **works on a phone, and CI produces the APK**, beside the node firmware and

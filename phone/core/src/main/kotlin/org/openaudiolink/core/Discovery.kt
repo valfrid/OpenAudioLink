@@ -162,6 +162,35 @@ class PeerTable(private val livenessMs: Long = Discovery.LIVENESS_MS) {
     fun sources(nowMs: Long): List<Peer> =
         online(nowMs).filter { it.announce.canBeToldToPlay }
 
+    /**
+     * Marks a peer alive without an announce having arrived.
+     *
+     * Multicast is the least reliable thing on a Wi-Fi network: frames go
+     * out at a low basic rate, unacknowledged, and a phone's power save
+     * batches what does arrive. Six lost announces in a row is thirty
+     * seconds, and thirty seconds is the whole liveness window — so a
+     * speaker that is plainly working, answering HTTP on demand, can drop
+     * out of the list because a few datagrams did not survive the air.
+     *
+     * A successful unicast request to the device is better evidence than a
+     * multicast announce and arrives over TCP, so it counts. The peer must
+     * already be known: this refreshes a timestamp, it does not invent a
+     * device out of a reply.
+     *
+     * @return true if there was such a peer to refresh.
+     */
+    @Synchronized
+    fun answered(id: String, nowMs: Long): Boolean {
+        val existing = peers[id] ?: return false
+        peers[id] = existing.copy(lastSeenMs = nowMs)
+        return true
+    }
+
+    /** How long since anything was heard from @p id, or null if unknown. */
+    @Synchronized
+    fun silentFor(id: String, nowMs: Long): Long? =
+        peers[id]?.let { nowMs - it.lastSeenMs }
+
     /** Drops what has been silent for long enough, returning how many went. */
     @Synchronized
     fun expire(nowMs: Long): Int {
