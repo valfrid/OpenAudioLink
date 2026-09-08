@@ -19,6 +19,10 @@ on:
         description: "librespot version to build, e.g. 0.8.0"
         required: true
         default: "0.8.0"
+      revision:
+        description: "Packaging revision. Bump when the patch below changes."
+        required: true
+        default: "2"
 
 permissions:
   contents: write
@@ -32,6 +36,31 @@ jobs:
         run: |
           git clone --depth 1 --branch "v${{ inputs.version }}" \
             https://github.com/librespot-org/librespot.git librespot
+
+      - name: Identify as Linux, not Android
+        working-directory: librespot
+        # The one patch this build carries, and it is the difference
+        # between OAuth working and Spotify refusing the sign-in.
+        #
+        # librespot picks a Spotify client ID from the target OS:
+        # `default_for_os(OS)` maps "android" to Spotify's *Android app*
+        # client ID. That client has no loopback redirect registered, so
+        # the authorisation page ends in "redirect_uri: Not matching
+        # configuration" — while the identical flow on the Windows Hub
+        # works, because a desktop build gets KEYMASTER_CLIENT_ID, which
+        # does have `http://127.0.0.1:5588/login` registered.
+        #
+        # Nothing on the command line can override it: librespot has no
+        # --client-id option. So the platform is set here instead, which is
+        # what the constant's own comment invites — "easily adjust the
+        # current platform to mock the behavior on it". Setting OS rather
+        # than the client ID alone keeps the two consistent: the client
+        # token and login5 requests describe the same platform as the ID.
+        run: |
+          f=core/src/config.rs
+          grep -q 'pub const OS: &str = std::env::consts::OS;' "$f"
+          sed -i 's|pub const OS: &str = std::env::consts::OS;|pub const OS: \&str = "linux";  // OpenAudioLink: see librespot-android.yml|' "$f"
+          grep -n 'pub const OS' "$f"
 
       - name: Rust for Android
         run: |
@@ -92,11 +121,19 @@ jobs:
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: librespot-android-v${{ inputs.version }}
-          name: librespot ${{ inputs.version }} for Android (arm64)
+          tag_name: librespot-android-v${{ inputs.version }}-${{ inputs.revision }}
+          name: librespot ${{ inputs.version }} for Android (arm64), rev ${{ inputs.revision }}
           body: |
             librespot ${{ inputs.version }}, cross-compiled for
             `aarch64-linux-android` (arm64-v8a), API 26.
+
+            **Patched in one place**, and the release is versioned
+            separately because of it: `core/src/config.rs` reports the
+            platform as `linux` rather than `android`. librespot chooses a
+            Spotify client ID from that, and the Android one has no
+            loopback redirect registered — so OAuth sign-in fails with
+            "redirect_uri: Not matching configuration" while the same flow
+            on a desktop build works. There is no command-line override.
 
             Built `--no-default-features --features
             "rustls-tls-webpki-roots,with-libmdns"`: no ALSA, no OpenSSL,
