@@ -5,6 +5,8 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -76,6 +78,13 @@ object Producer {
         val packetsSent: Long = 0,
         val underruns: Long = 0,
         val resyncs: Long = 0,
+        /**
+         * Whether the search for speakers is actually running.
+         *
+         * "None found yet" and "never started looking" are different
+         * situations and only one of them is worth waiting through.
+         */
+        val discovering: Boolean = false,
         /** Something a person needs to be told, in their own words. */
         val warning: String? = null,
     ) {
@@ -144,10 +153,20 @@ object Producer {
                     networkInterface = wifi.multicastInterface(),
                 )
                 client.onChange = { refreshSpeakers() }
-                client.start()
+                /*
+                 * Assigned before start(), and that ordering is a bug fix.
+                 *
+                 * The listener threads begin inside start(), so an announce
+                 * could arrive while `discovery` was still null —
+                 * refreshSpeakers() would bail, and because the peer table
+                 * only reports *changes*, that speaker would never fire the
+                 * callback again. One unlucky millisecond and a speaker
+                 * stayed invisible for the life of the app.
+                 */
                 discovery = client
+                client.start()
+                _state.update { it.copy(discovering = true) }
                 client.probe()
-                refreshSpeakers()
             } catch (e: Exception) {
                 /*
                  * A caught failure a person can read, rather than a dead
@@ -157,6 +176,21 @@ object Producer {
                  */
                 Log.e(TAG, "discovery did not start", e)
                 warn("Could not start looking for speakers: ${e.message}")
+            }
+
+            /*
+             * And poll, rather than trusting the callback alone.
+             *
+             * Announces arrive every five seconds and the callback fires
+             * only on a change, so any single missed edge leaves the list
+             * wrong until something else happens to change. A two-second
+             * read of a table already held in memory costs nothing and
+             * means the screen cannot get stuck showing "no speakers"
+             * while three of them are announcing.
+             */
+            while (isActive) {
+                refreshSpeakers()
+                delay(2_000)
             }
         }
     }
@@ -423,5 +457,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.4.1"
+    const val VERSION = "0.4.2"
 }

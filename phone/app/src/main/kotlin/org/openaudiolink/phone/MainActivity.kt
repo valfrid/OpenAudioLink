@@ -143,12 +143,27 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             TextButton(onClick = { Producer.probe() }) { Text("Look again") }
         }
         Text(
-            if (state.destinations.isEmpty()) {
-                "No speakers yet. They must be on this Wi-Fi — and if this phone " +
-                    "is the hotspot it has to be 2.4 GHz, because a speaker's radio " +
-                    "cannot see 5 GHz at all."
-            } else {
-                "Tick the speakers that should play. $chosen chosen."
+            when {
+                state.destinations.isNotEmpty() ->
+                    "Tick the speakers that should play. $chosen chosen."
+                /*
+                 * "Still looking" and "never started" are different, and
+                 * only one of them is worth waiting through. Saying which
+                 * also distinguishes a working app from a dead one: with
+                 * nothing found, every control below is legitimately
+                 * disabled, and a screen full of grey buttons is exactly
+                 * what a frozen app looks like.
+                 */
+                !state.discovering ->
+                    "Not looking for speakers — discovery did not start. " +
+                        "Reopening the app is the quickest thing to try."
+                state.speakers.isNotEmpty() ->
+                    "Listening… ${state.speakers.size} device(s) heard, none of " +
+                        "them a speaker yet."
+                else ->
+                    "Listening… none heard yet. Speakers must be on this Wi-Fi — " +
+                        "and if this phone is the hotspot it has to be 2.4 GHz, " +
+                        "because a speaker's radio cannot see 5 GHz at all."
             },
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -220,7 +235,13 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             )
         } else {
             Text(
-                "Sends this phone's audio to the ticked speakers.",
+                if (chosen > 0) {
+                    "Sends this phone's audio to the $chosen ticked speaker(s)."
+                } else {
+                    // Why they are grey. Without this the buttons look
+                    // broken rather than waiting.
+                    "Tick a speaker above and these turn on."
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
