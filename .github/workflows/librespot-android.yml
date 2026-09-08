@@ -1,0 +1,111 @@
+name: librespot (Android)
+
+# Built on demand and published on its own tag, exactly as the Windows
+# build is (decision 18). librespot changes when *librespot* changes, never
+# when OpenAudioLink does, and a cold Rust cross-build costs a quarter of an
+# hour — so it is not attached to every push. One published build serves
+# many phone releases.
+#
+# It is a separate artefact for the other reason too: whether running a
+# reimplementation of somebody's streaming protocol is licensed for use
+# with that service is the operator's decision. Keeping it on its own
+# release keeps that decision visible instead of folding it into every
+# build of the app.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "librespot version to build, e.g. 0.8.0"
+        required: true
+        default: "0.8.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: aarch64-linux-android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch librespot
+        run: |
+          git clone --depth 1 --branch "v${{ inputs.version }}" \
+            https://github.com/librespot-org/librespot.git librespot
+
+      - name: Rust for Android
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+
+      - name: Build
+        working-directory: librespot
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        # No default features, and that is the whole trick.
+        #
+        #   * the default audio backend is rodio, which wants ALSA — there is
+        #     no ALSA on Android. The `pipe` backend is compiled
+        #     unconditionally, so dropping every backend feature still
+        #     leaves the one this app uses.
+        #   * the default TLS is native-tls, which wants OpenSSL. rustls
+        #     with webpki roots is pure Rust and carries its own
+        #     certificates, so nothing has to be cross-compiled in C and
+        #     nothing depends on the phone's certificate store.
+        #   * with-libmdns is the pure-Rust mDNS, which is what publishes
+        #     the cast point. The alternative wants an Avahi daemon.
+        #
+        # -p 26 matches the app's minSdk: a binary built against a newer
+        # API than the phone provides fails to link at run time, which on
+        # Android is a process that dies with no output at all.
+        run: |
+          cargo ndk -t arm64-v8a -p 26 build \
+            --release --bin librespot \
+            --no-default-features \
+            --features "rustls-tls-webpki-roots,with-libmdns"
+
+      - name: Name it as a library, and say why
+        # Android refuses to execute a file from an app's data directory
+        # (W^X, enforced since Android 10), but it will execute one from
+        # the APK's native library directory. Anything matching lib*.so in
+        # jniLibs lands there, so the executable travels under a library's
+        # name. It is a PIE executable, not a shared object; the extension
+        # is a packaging convention here, not a claim about the file.
+        run: |
+          mkdir -p out
+          cp librespot/target/aarch64-linux-android/release/librespot \
+             out/liblibrespot.so
+          cd out
+          sha256sum liblibrespot.so > liblibrespot.so.sha256
+          ls -l
+          file liblibrespot.so || true
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: librespot-android-v${{ inputs.version }}
+          name: librespot ${{ inputs.version }} for Android (arm64)
+          body: |
+            librespot ${{ inputs.version }}, cross-compiled for
+            `aarch64-linux-android` (arm64-v8a), API 26.
+
+            Built `--no-default-features --features
+            "rustls-tls-webpki-roots,with-libmdns"`: no ALSA, no OpenSSL,
+            pure-Rust mDNS. The `pipe` backend is compiled unconditionally,
+            which is the one the phone app uses — it reads raw PCM from
+            librespot's stdout, the same arrangement the Windows Hub uses.
+
+            `liblibrespot.so` is an executable, not a shared object. It
+            carries that name so it lands in the APK's native library
+            directory, which is the only place Android will execute a file
+            from.
+
+            Not built by, endorsed by, or affiliated with Spotify. Whether
+            running a reimplementation of their protocol is permitted with
+            that service is the operator's decision — see
+            `docs/CAST-POINTS.md`.
+          files: |
+            out/liblibrespot.so
+            out/liblibrespot.so.sha256
+          fail_on_unmatched_files: true
