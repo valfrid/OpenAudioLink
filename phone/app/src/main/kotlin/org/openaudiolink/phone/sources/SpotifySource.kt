@@ -25,8 +25,9 @@ import java.io.InputStream
  * picks it in their own Spotify app and their music comes out of the
  * speakers this phone has ticked.
  *
- * Only in the `spotify` flavour. The `plain` build has no such file and no
- * librespot binary in it — see decision 21.
+ * One build carries it, alongside the vinyl node, the file player and the
+ * tone — decision 21. Spotify at a party is what the phone hub is for, so
+ * it is not a variant of the app but part of it.
  */
 class SpotifySource(
     private val context: Context,
@@ -72,8 +73,13 @@ class SpotifySource(
     private fun run(ring: PcmRing) {
         val exe = binary()
         if (!exe.exists()) {
-            // The plain flavour, or a build whose fetch step was skipped.
-            Log.e(TAG, "no librespot in ${exe.parent}; this is not a Spotify build")
+            /*
+             * Should not happen: the build fetches librespot and fails if
+             * it cannot. It is checked anyway because the alternative is
+             * ProcessBuilder throwing from a background thread, which
+             * reaches a person as a button that does nothing.
+             */
+            Log.e(TAG, "no librespot in ${exe.parent}; the build did not package it")
             running = false
             return
         }

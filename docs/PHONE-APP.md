@@ -5,14 +5,14 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.3.0, built by CI as two APKs — see *Two builds* below.
+Version 0.4.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
 | Does | Does not |
 | --- | --- |
 | Send L24/48 kHz stereo RTP to any OpenAudioLink consumer | OTA |
-| Publish a Spotify cast point (`spotify` build) | Sample logging |
+| Publish a Spotify cast point | Sample logging |
 | Find speakers by multicast discovery | Room measurement |
 | Choose which speakers play, mid-song | Provisioning a node's Wi-Fi |
 | Volume, per speaker | Anything else a Hub does |
@@ -63,8 +63,7 @@ so CI runs `:core:test` on a plain JDK image.
 ```bash
 cd phone
 gradle :core:test          # anywhere
-gradle :app:assemblePlainDebug    # needs ANDROID_HOME
-gradle :app:assembleSpotifyDebug  # ...and fetches librespot
+gradle :app:assembleDebug  # needs ANDROID_HOME; fetches librespot
 ```
 
 ## The three Android things that fail silently
@@ -143,8 +142,7 @@ phone does not.
 **Internet radio** arrives at this interface whenever it is built: a
 station is a different `MediaItem`, same decoder, same resampler, same tap.
 
-**Spotify Connect**, in the `spotify` build only. librespot runs as a
-process with `--backend pipe` and the app reads raw PCM from its stdout —
+**Spotify Connect.** librespot runs as a process with `--backend pipe` and the app reads raw PCM from its stdout —
 the same arrangement the Windows Hub uses, because librespot is a Rust
 program rather than a library with a Java binding. The pipe is also the
 flow control: stop reading and the kernel buffer fills, which blocks
@@ -162,19 +160,19 @@ is which. A guest opens Spotify on their own handset, picks it, and their
 music comes out of the speakers this phone has ticked — no account handed
 over, no cable.
 
-## Two builds
+## One build, and what that costs
 
-| Flavour | librespot | Artifact |
-| --- | --- | --- |
-| `plain` | no | `openaudiolink-phone-debug` |
-| `spotify` | yes | `openaudiolink-phone-spotify-debug` |
+Decision 21: **one APK**, with the producer, the control surface, the
+resampler and librespot in it. A two-flavour split was tried and dropped —
+two artefacts and two names, so that a person had to know which was the
+real app, is ceremony rather than safety for a project with one operator.
 
-Decision 21. The concern decision 19 recorded is intact — shipping
-librespot in the one artefact everybody installs would take the
-operator's licensing decision for them — but the choice moves from
-install time to download time. `SpotifySupport` exists twice with one
-shape, so the rest of the app asks whether the source exists, never which
-build it is, and `plain` contains no code that could use librespot.
+The honest consequence: decision 19's protection is **gone**, not
+relocated. Shipping librespot in the artefact everybody installs takes the
+operator's licensing decision for them. What is left in its place is that
+the app is on no store, carries no Spotify branding, and says plainly what
+is inside — which is weaker than a build that cannot do it, and was traded
+deliberately, because a feature nobody can reach protects nobody.
 
 The binary is not in this repository. `librespot-android.yml` builds it on
 demand and publishes it on its own `librespot-android-v*` tag; Gradle
@@ -204,11 +202,10 @@ away between the phone and the speaker.
 
 ## Installing it
 
-Sideloading, not a store. Download the APK you want from a CI run's
-artifacts — `openaudiolink-phone-debug` or
-`openaudiolink-phone-spotify-debug` — enable "install unknown apps" for
-whatever transfers it, and install. Both carry the same applicationId and
-the same debug key, so one replaces the other in place.
+Sideloading, not a store. Download `openaudiolink-phone-debug` from a CI
+run's artifacts, enable "install unknown apps" for whatever transfers it,
+and install. Successive builds share the applicationId and the debug key,
+so each replaces the last in place.
 
 **The signing keystore is never committed.** Android requires a signed
 APK, and a self-signed key is enough — but that key is the same class of
@@ -225,7 +222,7 @@ byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, discovery parsing, the peer table's liveness, every control request
 body, the device-versus-Hub rule, and the resampler.
 
-`app` **compiles, and CI produces the APKs**, beside the node firmware and
+`app` **compiles, and CI produces the APK**, beside the node firmware and
 the Hub built from the same commit — there is no store listing and there
 will not be one, so those artefacts are how this app reaches a phone.
 

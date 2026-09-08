@@ -1803,11 +1803,10 @@ time" assumption below is no longer an operator's rule. Nodes walk a fixed
 list, so a phone and a node both beaconing is a preference rather than a
 split. The paragraph is left as written because the failure it describes
 is why the list exists.
-**Amended by decision 21:** "source-only, no built APK containing it" is
-superseded by two published builds, one with librespot and one without.
-The concern it expressed — that shipping librespot in the one artefact
-everybody installs takes the operator's licensing decision for them — is
-kept, by moving that choice from install time to download time.
+**Superseded by decision 21:** "source-only, no built APK containing it"
+is replaced by one build with librespot in it. The protection that
+sentence offered is genuinely given up, not relocated; decision 21 says
+what is left in its place and why the trade was made.
 
 ### Decision
 
@@ -2146,56 +2145,57 @@ what its peers report, which the discovery layer could do and does not.
 
 ---
 
-## 21. Spotify on the phone is a second build, not a second app
+## 21. One phone build, with Spotify in it
 
 **Date:** 2026-09-08
-**Status:** accepted and implemented in phone 0.3.0
-**Amends:** decision 19's "source-only, no built APK containing it"
+**Status:** accepted and implemented in phone 0.4.0
+**Supersedes:** decision 19's "source-only, no built APK containing it"
 
 ### Decision
 
-The phone app is built twice from one source tree:
+**One APK**, carrying the producer, the control surface, the 44.1-to-48
+resampler and librespot. Four sources in it: Spotify Connect, a vinyl node
+on the network, a file from the phone, a test tone.
 
-| Flavour | Contains librespot | Sources |
-| --- | --- | --- |
-| `plain` | no | vinyl node, music file, test tone |
-| `spotify` | yes | those, plus Spotify Connect |
+The librespot binary itself is **not** in this repository: it is
+cross-compiled on demand by `.github/workflows/librespot-android.yml`,
+published on its own `librespot-android-v*` tag, and fetched at build time
+against the SHA256 that release publishes — the same arrangement
+`get-librespot.ps1` uses for Windows, and for the same reasons decision 18
+gives.
 
-Both are published by CI. The librespot binary itself is **not** in this
-repository: it is cross-compiled on demand by
-`.github/workflows/librespot-android.yml`, published on its own
-`librespot-android-v*` tag, and fetched at build time against the SHA256
-that release publishes — the same arrangement `get-librespot.ps1` uses for
-Windows, and for the same reasons decision 18 gives.
-
-### Why this amends decision 19 rather than obeying it
+### Why this supersedes decision 19 rather than obeying it
 
 Decision 19 said the librespot-backed source would be **source-only, with
 no built APK containing it**. Read literally that makes the feature
 unreachable: building it needs an Android SDK *and* a Rust NDK toolchain,
-which is a working afternoon before any music plays, and the point of the
-phone hub is Spotify at a party — not vinyl to speaker, which the vinyl
-node already does without a phone.
+which is a working afternoon before any music plays. And the point of the
+phone hub is Spotify at a party — vinyl to speaker is what the vinyl node
+already does without a phone at all.
 
-What decision 19 was actually protecting is intact, and it is worth
-separating from the sentence that expressed it. The concern was that
-shipping librespot inside the one artefact everybody installs **makes the
-operator's choice for them**: whether running a reimplementation of
-somebody's streaming protocol is licensed for use with that service is
-not this project's decision to take on a stranger's behalf.
+A two-flavour split was tried first, and abandoned within the hour: it
+kept decision 19's letter by shipping a `plain` build and a `spotify` one,
+at the cost of two artefacts, two names, and a person having to know which
+of them was the real app. For a project with one operator and a handful of
+speakers that is ceremony, not safety.
 
-Two flavours keep that choice, and move it from install time to download
-time. A person who wants a multi-room speaker system takes `plain` and
-never has librespot on their phone. A person who wants Spotify takes the
-other, and the release says plainly what is in it.
+**So the protection decision 19 offered is gone, and this says so rather
+than pretending otherwise.** The concern was real: shipping librespot
+inside the one artefact everybody installs takes the operator's licensing
+decision for them, because whether running a reimplementation of
+somebody's streaming protocol is permitted with that service is not this
+project's call to make on a stranger's behalf.
 
-### What the flavour split is, structurally
+What is left in its place is honesty rather than structure:
 
-`SpotifySupport` exists twice with one shape — `AVAILABLE` and a factory
-returning `AudioSource?`. The `plain` copy answers false and returns null,
-and its source set contains no code that could use librespot at all. The
-rest of the app therefore asks *whether the source exists*, never which
-build it is, and there is no hidden feature waiting behind a flag.
+- the APK is **not on any store**, so nobody installs it without meaning
+  to — it is downloaded from a CI run by someone who came looking;
+- no Spotify branding, no logo, no name in the app title;
+- the librespot release and `docs/PHONE-APP.md` both say plainly what is
+  inside and whose decision it is.
+
+That is weaker than a build that cannot do it, and the trade was made
+deliberately: a feature nobody can reach protects nobody.
 
 ### The cast point is librespot's mDNS name
 
@@ -2257,8 +2257,9 @@ and never fail a test that resamples one big array.
 
 ### When to revisit
 
-If the two builds start to diverge in anything but this one source. The
-moment `plain` needs a workaround the other does not, the flavour split
-has stopped being containment and become a fork, and the answer then is
-one build with the choice made at run time — which is a worse answer to
-the licensing question and would need saying out loud.
+If this app ever heads for a store, or for anyone beyond the people who
+build it. A listing is distribution to strangers, and the reasoning above
+stops holding the moment installing it is easier than reading what is in
+it. The move then is back to a build without librespot as the default one,
+with Spotify as the deliberate extra — which is what the flavour split
+briefly was, and would be worth its ceremony at that point.

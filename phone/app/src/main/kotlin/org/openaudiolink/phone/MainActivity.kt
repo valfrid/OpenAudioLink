@@ -37,7 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import org.openaudiolink.phone.sources.LibrarySource
-import org.openaudiolink.phone.sources.SpotifySupport
+import org.openaudiolink.phone.sources.SpotifySource
 import org.openaudiolink.phone.sources.ToneSource
 import kotlin.math.roundToInt
 
@@ -228,28 +228,22 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             }
 
             /*
-             * Present only in the spotify flavour. The plain build's
-             * SpotifySupport says no and carries no librespot at all, so
-             * this is not a hidden feature waiting to be switched on.
+             * The reason the phone hub exists, so it is not tucked away
+             * under the file picker.
              */
-            if (SpotifySupport.AVAILABLE) {
-                Spacer(Modifier.height(16.dp))
-                Text("Spotify", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "Publishes \"$castPointName\" to Spotify. Open Spotify — on " +
-                        "this phone or anyone else's — and pick it from the device " +
-                        "list. It plays on the ticked speakers.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Button(
-                    onClick = {
-                        SpotifySupport.create(context, castPointName)
-                            ?.let { Producer.startStream(it) }
-                    },
-                    enabled = chosen > 0,
-                ) {
-                    Text("Publish to Spotify")
-                }
+            Spacer(Modifier.height(16.dp))
+            Text("Spotify", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Publishes \"$castPointName\" to Spotify. Open Spotify — on " +
+                    "this phone or anyone else's — and pick it from the device " +
+                    "list. It plays on the ticked speakers.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = { Producer.startStream(SpotifySource(context, castPointName)) },
+                enabled = chosen > 0,
+            ) {
+                Text("Publish to Spotify")
             }
         }
     }

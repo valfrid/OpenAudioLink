@@ -16,8 +16,8 @@ android {
         applicationId = "org.openaudiolink.phone"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildTypes {
@@ -34,26 +34,6 @@ android {
              * reproducible updates on your own device.
              */
             signingConfig = signingConfigs.getByName("debug")
-        }
-    }
-
-    /*
-     * Two builds, and the split is decision 19's containment made real.
-     *
-     * `plain` has no librespot binary and no code that could use one.
-     * `spotify` carries both. Nobody gets a reimplementation of somebody
-     * else's streaming protocol by accident: the choice is made when a
-     * build is downloaded, not buried inside one APK that everyone
-     * installs.
-     */
-    flavorDimensions += "spotify"
-    productFlavors {
-        create("plain") {
-            dimension = "spotify"
-        }
-        create("spotify") {
-            dimension = "spotify"
-            versionNameSuffix = "-spotify"
         }
     }
 
@@ -101,13 +81,13 @@ val librespotRepo = providers.gradleProperty("oal.librespot.repo")
     .orElse("valfrid/OpenAudioLink")
 
 val fetchLibrespot by tasks.registering {
-    description = "Downloads the published librespot build for arm64 into the spotify flavour."
+    description = "Downloads the published librespot build for arm64 into the app."
     group = "build setup"
 
     val version = librespotVersion.get()
     val repo = librespotRepo.get()
     val target = layout.projectDirectory
-        .file("src/spotify/jniLibs/arm64-v8a/liblibrespot.so").asFile
+        .file("src/main/jniLibs/arm64-v8a/liblibrespot.so").asFile
     outputs.file(target)
 
     doLast {
@@ -142,10 +122,12 @@ val fetchLibrespot by tasks.registering {
 }
 
 /*
- * Only the spotify flavour needs it, and only that flavour waits for it.
- * A plain build must not reach the network to compile.
+ * Every build waits for it, because there is only one build and Spotify is
+ * what the phone hub is for. A missing librespot release therefore fails
+ * the build with the message above rather than quietly producing an app
+ * whose main feature does nothing.
  */
-tasks.matching { it.name.contains("Spotify") && it.name.startsWith("merge") }
+tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLibFolders") }
     .configureEach { dependsOn(fetchLibrespot) }
 
 dependencies {
