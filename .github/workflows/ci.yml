@@ -66,12 +66,59 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-35" "build-tools;35.0.0" "platform-tools"
       - name: Assemble
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: ./gradlew :app:assemblePlainDebug --stacktrace
         working-directory: phone
       - uses: actions/upload-artifact@v4
         with:
           name: openaudiolink-phone-debug
-          path: phone/app/build/outputs/apk/debug/*.apk
+          path: phone/app/build/outputs/apk/plain/debug/*.apk
+          if-no-files-found: error
+
+  # The Spotify build, separately and deliberately.
+  #
+  # Two APKs rather than one, because nobody should get a reimplementation
+  # of somebody else's streaming protocol by accident: decision 21 moves
+  # that choice to which build a person downloads. It also needs a
+  # published librespot binary, which lives on its own tag and its own
+  # clock — so this job is skipped, not failed, until that release exists.
+  phone-app-spotify:
+    name: Phone APK (Spotify)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Is there a librespot build to fetch?
+        id: librespot
+        run: |
+          version="$(grep -oP '(?<=^oal\.librespot\.version=).*' phone/gradle.properties)"
+          url="https://github.com/${{ github.repository }}/releases/download/librespot-android-v$version/liblibrespot.so.sha256"
+          if curl -sfL --max-time 30 -o /dev/null "$url"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No librespot-android-v$version release yet — run the librespot-android workflow to build one. Skipping the Spotify APK."
+          fi
+      - uses: actions/setup-java@v4
+        if: steps.librespot.outputs.found == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.librespot.outputs.found == 'true'
+      - name: SDK components
+        if: steps.librespot.outputs.found == 'true'
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+      - name: Assemble
+        if: steps.librespot.outputs.found == 'true'
+        run: ./gradlew :app:assembleSpotifyDebug --stacktrace
+        working-directory: phone
+      - uses: actions/upload-artifact@v4
+        if: steps.librespot.outputs.found == 'true'
+        with:
+          name: openaudiolink-phone-spotify-debug
+          path: phone/app/build/outputs/apk/spotify/debug/*.apk
           if-no-files-found: error
 
   hub:

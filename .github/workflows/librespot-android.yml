@@ -41,8 +41,12 @@ jobs:
 
       - name: Build
         working-directory: librespot
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        # No ANDROID_NDK_HOME here. The runner already exports
+        # ANDROID_NDK_ROOT and cargo-ndk reads it; setting the other name
+        # from `${{ env.* }}` yields an empty string, because runner-set
+        # variables are shell environment, not the workflow's env context —
+        # and an empty ANDROID_NDK_HOME overrides the good one.
+        #
         # No default features, and that is the whole trick.
         #
         #   * the default audio backend is rodio, which wants ALSA — there is

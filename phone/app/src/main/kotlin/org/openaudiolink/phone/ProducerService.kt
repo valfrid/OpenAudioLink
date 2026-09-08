@@ -98,10 +98,8 @@ class ProducerService : Service() {
     private fun notificationManager() =
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-    private fun deviceName(): String =
-        Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)
-            ?: Build.MODEL
-            ?: "Phone"
+    /** One name for the announce and for the Spotify cast point. */
+    private fun deviceName(): String = Producer.castPointName(this)
 
     /**
      * A stable identity for this install.

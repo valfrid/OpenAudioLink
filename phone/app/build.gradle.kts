@@ -37,6 +37,42 @@ android {
         }
     }
 
+    /*
+     * Two builds, and the split is decision 19's containment made real.
+     *
+     * `plain` has no librespot binary and no code that could use one.
+     * `spotify` carries both. Nobody gets a reimplementation of somebody
+     * else's streaming protocol by accident: the choice is made when a
+     * build is downloaded, not buried inside one APK that everyone
+     * installs.
+     */
+    flavorDimensions += "spotify"
+    productFlavors {
+        create("plain") {
+            dimension = "spotify"
+        }
+        create("spotify") {
+            dimension = "spotify"
+            versionNameSuffix = "-spotify"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            /*
+             * Extract the native libraries to a real directory.
+             *
+             * The modern default keeps them compressed inside the APK and
+             * maps them from there, which is fine for something you
+             * dlopen() and useless for something you exec(): there is no
+             * path to hand ProcessBuilder. librespot is an executable, so
+             * it has to be a file on disk — and the native library
+             * directory is the only place Android will run one from.
+             */
+            useLegacyPackaging = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -46,6 +82,71 @@ android {
 
     buildFeatures { compose = true }
 }
+
+/*
+ * Fetching librespot, the same way the Hub does.
+ *
+ * `hub/scripts/get-librespot.ps1` downloads a published build and checks it
+ * against the SHA256 that release publishes, refusing to install one that
+ * publishes no hash. This is that, in Gradle, for the same reason: the
+ * binary is on a different clock from this app — it changes when librespot
+ * changes — so it is a published artefact fetched on demand rather than
+ * something rebuilt on every push.
+ *
+ * Run `.github/workflows/librespot-android.yml` once to produce the
+ * release this reads.
+ */
+val librespotVersion = providers.gradleProperty("oal.librespot.version").orElse("0.8.0")
+val librespotRepo = providers.gradleProperty("oal.librespot.repo")
+    .orElse("valfrid/OpenAudioLink")
+
+val fetchLibrespot by tasks.registering {
+    description = "Downloads the published librespot build for arm64 into the spotify flavour."
+    group = "build setup"
+
+    val version = librespotVersion.get()
+    val repo = librespotRepo.get()
+    val target = layout.projectDirectory
+        .file("src/spotify/jniLibs/arm64-v8a/liblibrespot.so").asFile
+    outputs.file(target)
+
+    doLast {
+        val base = "https://github.com/$repo/releases/download/librespot-android-v$version"
+        target.parentFile.mkdirs()
+
+        val expected = try {
+            java.net.URI("$base/liblibrespot.so.sha256").toURL()
+                .readText().trim().substringBefore(' ')
+        } catch (e: Exception) {
+            throw GradleException(
+                "librespot-android-v$version publishes no SHA256, or could not be reached " +
+                    "($e). Refusing to install it. Run the librespot-android workflow first."
+            )
+        }
+
+        val bytes = java.net.URI("$base/liblibrespot.so").toURL().readBytes()
+        val actual = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+
+        if (!actual.equals(expected, ignoreCase = true)) {
+            throw GradleException(
+                "librespot download does not match its published SHA256.\n" +
+                    "  expected $expected\n  got      $actual"
+            )
+        }
+
+        target.writeBytes(bytes)
+        logger.lifecycle("librespot $version: ${bytes.size} bytes, SHA256 verified")
+    }
+}
+
+/*
+ * Only the spotify flavour needs it, and only that flavour waits for it.
+ * A plain build must not reach the network to compile.
+ */
+tasks.matching { it.name.contains("Spotify") && it.name.startsWith("merge") }
+    .configureEach { dependsOn(fetchLibrespot) }
 
 dependencies {
     implementation(project(":core"))

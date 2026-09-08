@@ -31,10 +31,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import org.openaudiolink.phone.sources.LibrarySource
+import org.openaudiolink.phone.sources.SpotifySupport
 import org.openaudiolink.phone.sources.ToneSource
 import kotlin.math.roundToInt
 
@@ -92,6 +95,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
     val state by Producer.state.collectAsState()
+    val context = LocalContext.current
+
+    /*
+     * What the cast point is called in everyone's Spotify picker.
+     *
+     * The phone's own name, because at a party that is the name a guest
+     * will recognise — "Anna's phone" rather than a product name four
+     * people in the room would each see identically.
+     */
+    val castPointName = remember { Producer.castPointName(context) }
 
     Column(modifier.fillMaxSize().padding(16.dp)) {
 
@@ -211,6 +224,31 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                     enabled = chosen > 0,
                 ) {
                     Text("Test tone")
+                }
+            }
+
+            /*
+             * Present only in the spotify flavour. The plain build's
+             * SpotifySupport says no and carries no librespot at all, so
+             * this is not a hidden feature waiting to be switched on.
+             */
+            if (SpotifySupport.AVAILABLE) {
+                Spacer(Modifier.height(16.dp))
+                Text("Spotify", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Publishes \"$castPointName\" to Spotify. Open Spotify — on " +
+                        "this phone or anyone else's — and pick it from the device " +
+                        "list. It plays on the ticked speakers.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(
+                    onClick = {
+                        SpotifySupport.create(context, castPointName)
+                            ?.let { Producer.startStream(it) }
+                    },
+                    enabled = chosen > 0,
+                ) {
+                    Text("Publish to Spotify")
                 }
             }
         }

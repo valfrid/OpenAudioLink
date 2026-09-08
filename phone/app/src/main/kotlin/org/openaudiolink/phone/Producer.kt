@@ -358,6 +358,18 @@ object Producer {
         }
     }
 
+    /**
+     * The name this phone wears on the network, and in Spotify.
+     *
+     * The phone's own name, because at a party that is the one a guest
+     * recognises: "Anna's phone" tells four people in a room which device
+     * is which, where a product name would show all four the same thing.
+     */
+    fun castPointName(context: Context): String =
+        android.provider.Settings.Global.getString(
+            context.contentResolver, android.provider.Settings.Global.DEVICE_NAME
+        ) ?: android.os.Build.MODEL ?: "OpenAudioLink"
+
     /** The announce this phone sends, so it appears like any other device. */
     fun identity(name: String, id: String): Announce = Announce(
         oal = Discovery.SUITE,
