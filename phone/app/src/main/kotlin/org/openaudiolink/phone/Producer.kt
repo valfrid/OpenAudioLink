@@ -508,6 +508,20 @@ object Producer {
      */
     fun signInToSpotify(context: Context, name: String, openUrl: (String) -> Unit) {
         if (_state.value.signingIn) return
+
+        /*
+         * A publishing stream is the other librespot, and it must go first.
+         *
+         * Both instances carry the cast point's name, and `LIBRESPOT.md`
+         * records what two of those do to each other: Spotify offers
+         * whichever it heard last, and playing to the wrong one fails in a
+         * way that reads as a broken speaker. Signing in while publishing
+         * would set that up deliberately.
+         */
+        if (_state.value.streaming) {
+            stopStream()
+        }
+
         _state.update { it.copy(signingIn = true) }
         scope.launch {
             val ok = try {
@@ -546,10 +560,20 @@ object Producer {
         SpotifyAccount.cancelSignIn()
     }
 
+    /**
+     * Forgets the account and clears anything left behind.
+     *
+     * Also stops a sign-in still in flight, because "start over" that
+     * leaves the last attempt running is not starting over — the old
+     * process keeps the OAuth port and the next try fails on a conflict
+     * nobody would connect to this button.
+     */
     fun forgetSpotify(context: Context) {
+        SpotifyAccount.stopAnySignIn()
         SpotifyAccount.forget(context)
-        _state.update { it.copy(spotifySignedIn = false) }
-        warn("Spotify account forgotten. The cast point needs signing in again before it appears.")
+        _state.update { it.copy(spotifySignedIn = false, signingIn = false) }
+        warn("Spotify account forgotten, and anything still running stopped. " +
+            "Sign in again for a fresh attempt.")
     }
 
     /** Reads the signed-in state from disk, for the first draw. */
@@ -583,5 +607,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.1"
+    const val VERSION = "0.6.2"
 }

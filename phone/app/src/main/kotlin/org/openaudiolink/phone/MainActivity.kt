@@ -331,6 +331,17 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                         OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) {
                             Text("Cancel")
                         }
+                    } else {
+                        /*
+                         * Available before the first success, not only
+                         * after it: a half-finished attempt can leave a
+                         * process holding the OAuth port, and the way out
+                         * of that should not be hidden behind having
+                         * signed in.
+                         */
+                        OutlinedButton(onClick = { Producer.forgetSpotify(context) }) {
+                            Text("Start over")
+                        }
                     }
                 }
                 if (state.signingIn) {

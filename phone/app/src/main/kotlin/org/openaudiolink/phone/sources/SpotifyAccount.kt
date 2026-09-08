@@ -89,8 +89,48 @@ object SpotifyAccount {
     /** Set by [cancelSignIn]; the wait below watches it. */
     @Volatile private var cancelled = false
 
+    /**
+     * The sign-in process, held so a second attempt can end the first.
+     *
+     * Two librespots at once is the failure `LIBRESPOT.md` warns about
+     * from the Hub: they carry the same cast point name, so Spotify offers
+     * whichever it heard last, and the wrong one has no audio behind it.
+     * On a phone there is a second reason — the OAuth listener binds
+     * 127.0.0.1:5588, and a leftover holding that port makes every retry
+     * fail before it starts.
+     */
+    @Volatile private var signInProcess: Process? = null
+
+    /**
+     * Ends any sign-in still running. Safe to call when none is.
+     *
+     * `destroy()` is SIGTERM and librespot does not always take the hint
+     * promptly, so this waits a moment and then insists. A retry that
+     * begins while the last attempt still holds the port fails in a way
+     * that looks like Spotify refusing, which is the wrong place to look.
+     */
+    fun stopAnySignIn() {
+        cancelled = true
+        val running = signInProcess ?: return
+        signInProcess = null
+        try {
+            running.destroy()
+            for (i in 0 until 20) {
+                if (!running.isAlive) break
+                Thread.sleep(100)
+            }
+            if (running.isAlive) {
+                Log.w(TAG, "sign-in process ignored destroy(); forcing it")
+                running.destroyForcibly()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "could not stop the sign-in process", e)
+        }
+    }
+
     fun cancelSignIn() {
         cancelled = true
+        stopAnySignIn()
     }
 
     /**
@@ -134,6 +174,16 @@ object SpotifyAccount {
             "--oauth-port", REDIRECT_PORT.toString(),
         )
 
+        /*
+         * Clear the ground first.
+         *
+         * A previous attempt may still be holding 127.0.0.1:5588 and the
+         * cast point's name. Starting a second one on top produces a
+         * failure that reads as Spotify's — librespot cannot bind, gives
+         * up, and the app reports a sign-in that never began.
+         */
+        stopAnySignIn()
+
         cancelled = false
         synchronized(this) { recent.clear() }
         Log.i(TAG, "signing in as \"$name\"")
@@ -143,6 +193,7 @@ object SpotifyAccount {
             Log.e(TAG, "could not start librespot to sign in", e)
             return false
         }
+        signInProcess = process
 
         Thread({
             try {
@@ -197,7 +248,14 @@ object SpotifyAccount {
             Thread.sleep(500)
         }
 
+        signInProcess = null
         process.destroy()
+        for (i in 0 until 20) {
+            if (!process.isAlive) break
+            Thread.sleep(100)
+        }
+        if (process.isAlive) process.destroyForcibly()
+
         Log.i(TAG, if (signedIn) "signed in; credential cached" else "sign-in did not complete")
         return signedIn
     }
