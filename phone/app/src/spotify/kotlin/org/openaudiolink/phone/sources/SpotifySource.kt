@@ -3,6 +3,7 @@ package org.openaudiolink.phone.sources
 import android.content.Context
 import android.util.Log
 import org.openaudiolink.core.LibrespotPcm
+import org.openaudiolink.phone.WifiBinding
 import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.RationalResampler
 import org.openaudiolink.core.Rtp
@@ -84,7 +85,7 @@ class SpotifySource(
          */
         val cache = File(context.filesDir, "librespot").apply { mkdirs() }
 
-        val command = listOf(
+        val command = mutableListOf(
             exe.absolutePath,
             "--name", name,
             "--backend", "pipe",
@@ -98,6 +99,23 @@ class SpotifySource(
             "--cache", cache.absolutePath,
             "--disable-audio-cache",
         )
+
+        /*
+         * Which interface the cast point is advertised on.
+         *
+         * Without it libmdns binds every interface and lets the operating
+         * system decide where multicast goes — the Hub passes this for the
+         * same reason, where the wrong answer is a VPN. On a phone the
+         * wrong answer is cellular, and a cast point advertised there is
+         * one nobody in the room can see.
+         *
+         * An **address**, not an interface name: librespot parses this as
+         * an IP and calls exit(1) on anything else, so "wlan0" would kill
+         * the process before it ever reached the network.
+         */
+        WifiBinding(context).localAddress()?.let { address ->
+            command += listOf("--zeroconf-interface", address)
+        } ?: Log.w(TAG, "no Wi-Fi address; librespot will advertise on every interface")
 
         Log.i(TAG, "starting librespot as \"$name\"")
 
