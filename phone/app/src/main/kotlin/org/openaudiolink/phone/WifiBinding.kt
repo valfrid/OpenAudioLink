@@ -150,6 +150,38 @@ class WifiBinding(context: Context) {
     }
 
     /**
+     * Marks a socket's traffic as real-time audio, for the radio's sake.
+     *
+     * **This is the one lever left after the producer was measured and
+     * cleared.** Over 38 minutes the phone's own pacing was late by more
+     * than 15 ms just 33 times, the worst by 34 ms, and never once by more
+     * than 50 — while the speakers were reporting 41 gaps over 200 ms
+     * every thirty seconds. The packets left on time and arrived in
+     * clumps, and the nodes are not asleep: the firmware sets
+     * `WIFI_PS_NONE`. So the bunching happens in the air, or on the way to
+     * it.
+     *
+     * DSCP 46 — expedited forwarding, `0xB8` once shifted into the byte —
+     * is what Wi-Fi's WMM maps to the **voice** access category. Voice
+     * contends for the medium with a much shorter window than best effort
+     * and is not held back to be aggregated into a larger frame, which is
+     * exactly the mechanism that turns an evenly paced stream into
+     * quarter-second bursts. Unmarked, this audio has been competing as
+     * ordinary background traffic all along.
+     *
+     * Best effort in the other sense too: an operating system may ignore
+     * it, and a network without WMM certainly will. It costs one system
+     * call and cannot make anything worse.
+     */
+    private fun expedite(socket: DatagramSocket) {
+        try {
+            socket.trafficClass = DSCP_EXPEDITED_FORWARDING
+        } catch (e: Exception) {
+            Log.w(TAG, "could not mark the audio socket as voice traffic", e)
+        }
+    }
+
+    /**
      * A datagram socket pinned to the Wi-Fi.
      *
      * Returns null rather than an unbound socket when there is no Wi-Fi.
@@ -159,6 +191,7 @@ class WifiBinding(context: Context) {
     fun boundSocket(): DatagramSocket? {
         val network = wifiNetwork() ?: return null
         val socket = DatagramSocket()
+        expedite(socket)
         return try {
             network.bindSocket(socket)
             /*
@@ -221,7 +254,23 @@ class WifiBinding(context: Context) {
         wifiLock = null
     }
 
+    /**
+     * The same marking for a socket this class did not open.
+     *
+     * A phone hosting the hotspot has no Wi-Fi `Network` to bind to, so
+     * the producer falls back to a plain socket — and that is the party
+     * arrangement of decision 20, the one deployment this app exists for.
+     * It deserves the priority marking as much as any other.
+     */
+    fun expediteAudio(socket: DatagramSocket) = expedite(socket)
+
     private companion object {
         const val TAG = "oal.wifi"
+
+        /**
+         * DSCP 46 in the traffic-class byte: the six-bit code point sits
+         * in the top six bits, so 46 becomes 46 shl 2 = 184.
+         */
+        const val DSCP_EXPEDITED_FORWARDING = 0xB8
     }
 }

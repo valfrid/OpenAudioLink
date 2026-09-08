@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.5, built by CI as one APK — see *One build* below.
+Version 0.7.6, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -210,6 +210,37 @@ One thing the packet counts already rule out: the phone kept sending
 **6 000 packets per 30-second sample throughout**, which is the full
 200 per second. It was not going quiet. Whatever produced those gaps
 delayed packets rather than skipping them.
+
+**The measurement came back, and it cleared the producer.** Over 38
+minutes — 455 919 packets — the phone's own sending was late by more than
+three packet intervals just **33 times**, worst 34 ms, and **never once by
+more than 50 ms**:
+
+```text
+sending:       455919 packets · 0 underruns · 0 resyncs
+sent unevenly: 33 gaps · worst 34 ms
+               <20 22 · 20-50 11 · 50-100 0 · 100-200 0 · >200 0
+```
+
+The speakers, over the same kind of interval, report 41 gaps **over
+200 ms every thirty seconds**. So the packets leave this app on time and
+arrive in clumps, and the nodes are not asleep either — the firmware sets
+`WIFI_PS_NONE`. Whatever bunches them is between the socket and the
+speaker.
+
+That is what `expedite()` in `WifiBinding` addresses: the audio socket is
+marked **DSCP 46, expedited forwarding**, which Wi-Fi's WMM maps to the
+*voice* access category. Voice contends for the medium with a much shorter
+window than best effort and is not held back to be aggregated into a
+larger frame — and aggregation is precisely the mechanism that turns an
+evenly paced stream into quarter-second bursts. Unmarked, this audio had
+been competing as ordinary background traffic all along.
+
+It may not be the whole answer. An operating system is free to ignore the
+marking and a network without WMM certainly will, so this is the cheapest
+strong candidate rather than a proven cure — but the measurement has at
+least moved the search off the producer, where three rounds of work had
+been aimed.
 
 Two changes went in with the measurement. The sending thread now asks for
 `THREAD_PRIORITY_URGENT_AUDIO` — `Thread.MAX_PRIORITY` is very nearly a

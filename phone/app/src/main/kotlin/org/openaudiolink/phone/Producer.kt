@@ -381,7 +381,7 @@ object Producer {
                  * have made the one deployment this app exists for the one
                  * it cannot do.
                  */
-                wifi.boundSocket() ?: java.net.DatagramSocket()
+                wifi.boundSocket() ?: java.net.DatagramSocket().also { wifi.expediteAudio(it) }
             },
         )
         rtp.setDestinations(currentDestinations())
@@ -908,5 +908,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.7.5"
+    const val VERSION = "0.7.6"
 }
