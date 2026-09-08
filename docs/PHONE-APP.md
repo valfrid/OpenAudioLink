@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.4, built by CI as one APK — see *One build* below.
+Version 0.7.5, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -515,7 +515,7 @@ away between the phone and the speaker.
 
 ## Installing it
 
-**The artefacts carry their versions in their names** — `openaudiolink-phone-0.7.4-debug`, `testnode-esp32s3-0.55.0`,
+**The artefacts carry their versions in their names** — `openaudiolink-phone-0.7.5-debug`, `testnode-esp32s3-0.55.0`,
 `OpenAudioLink-Hub-win-x64-0.104.0` — and the APK inside is named the same
 way. They did not, and a build list where every entry reads
 `openaudiolink-phone-debug` cannot say which is which: an APK already on a

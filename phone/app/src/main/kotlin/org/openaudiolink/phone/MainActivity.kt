@@ -270,6 +270,27 @@ private fun NowPlaying(state: Producer.State) {
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
+            /*
+             * The one figure worth reading while it plays, at the top.
+             *
+             * It lives in Details as well, under Settings, which is below
+             * two speaker cards and off the bottom of a phone screen —
+             * far enough that two screenshots taken to answer this exact
+             * question both stopped just short of it. A number nobody can
+             * find has not been measured.
+             */
+            if (state.showDetails && state.sendingAudio) {
+                Text(
+                    "sent unevenly: ${state.sendGaps} gaps · worst " +
+                        "${state.sendGapWorstMs} ms" +
+                        state.sendGapShape.takeIf { it.size == 5 }?.let {
+                            "\n<20 ${it[0]} · 20-50 ${it[1]} · 50-100 ${it[2]}" +
+                                " · 100-200 ${it[3]} · >200 ${it[4]}"
+                        }.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
             Button(onClick = { Producer.stopStream() }) { Text("Stop") }
         }
     }
