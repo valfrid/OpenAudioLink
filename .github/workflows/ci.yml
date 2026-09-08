@@ -68,6 +68,30 @@ jobs:
       - name: Assemble
         run: ./gradlew :app:assembleDebug --stacktrace
         working-directory: phone
+
+      # A green build is not proof that librespot is inside it.
+      #
+      # The fetch, the jniLibs directory and the packaging flag are three
+      # separate things that each fail quietly: a task that did not run, a
+      # directory the source set does not include, or a native library
+      # stored in a way that leaves nothing on disk to exec. Any one of
+      # them produces an APK that installs perfectly and whose Spotify
+      # button does nothing -- and Spotify is what the phone hub is for.
+      - name: Is librespot actually in the APK?
+        working-directory: phone
+        run: |
+          apk="$(ls app/build/outputs/apk/debug/*.apk | head -1)"
+          echo "APK: $apk ($(stat -c%s "$apk") bytes)"
+          if ! unzip -l "$apk" | grep -q 'lib/arm64-v8a/liblibrespot\.so'; then
+            echo "::error::liblibrespot.so is not in the APK — Spotify would do nothing"
+            unzip -l "$apk" | grep -E 'lib/|\.so' || echo "(no native libraries at all)"
+            exit 1
+          fi
+          unzip -l "$apk" | grep 'liblibrespot'
+          # extractNativeLibs must be on, or there is no file to exec.
+          "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging "$apk" \
+            | grep -i "native-code\|extractNativeLibs" || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: openaudiolink-phone-debug
