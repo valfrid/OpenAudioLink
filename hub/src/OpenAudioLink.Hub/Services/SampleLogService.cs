@@ -170,7 +170,11 @@ public sealed class SampleLogService : BackgroundService
         "filledHoles",
         // The link.
         "received", "expected", "lost", "jitterMs", "lossEvents", "longestGap",
-        "arrivalGaps", "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
+        "arrivalGaps",
+        // Gaps the producer meant, split out from 0.55.0. Zero on older
+        // firmware, where they are still counted as stalls above.
+        "deliberateGaps",
+        "maxArrivalGapMs", "duplicates", "reordered", "ssrcChanges",
         // Gaps by length rather than the worst there has ever been:
         // <20 ms, 20-50, 50-100, 100-200, >200. Monotonic, so consecutive
         // rows subtract to the interval's own distribution.
@@ -274,6 +278,7 @@ public sealed class SampleLogService : BackgroundService
                 // what a buffer is sized in and what a reader thinks in.
                 N(r.JitterTicks / 48.0, 2),
                 L(r.LossEvents), L(r.LongestGap), L(r.ArrivalGaps),
+                L(r.DeliberateGaps),
                 N(r.MaxArrivalGapTicks / 48.0, 0),
                 L(r.Duplicates), L(r.Reordered), L(r.SsrcChanges),
                 Bucket(r.GapBuckets, 0), Bucket(r.GapBuckets, 1), Bucket(r.GapBuckets, 2),

@@ -45,7 +45,7 @@ public sealed record NodeReading(
     long TightPackets, long WriteErrors,
     long PlayingTimestamp, bool PlayingKnown,
     long Received, long Expected, long Lost, long JitterTicks,
-    long LossEvents, long LongestGap, long ArrivalGaps,
+    long LossEvents, long LongestGap, long ArrivalGaps, long DeliberateGaps,
     long MaxArrivalGapTicks, long Duplicates, long Reordered, long SsrcChanges,
     long Reprimes, IReadOnlyList<long> GapBuckets,
     long PhaseErrorFrames, bool PhaseKnown, long TimelineBreaks,
@@ -289,6 +289,7 @@ public sealed class NodeClockService : BackgroundService
                     stats?.Received ?? 0, stats?.Expected ?? 0, stats?.Lost ?? 0,
                     stats?.JitterTicks ?? 0, stats?.LossEvents ?? 0,
                     stats?.LongestGap ?? 0, stats?.ArrivalGaps ?? 0,
+                    stats?.DeliberateGaps ?? 0,
                     stats?.MaxArrivalGapTicks ?? 0, stats?.Duplicates ?? 0,
                     stats?.Reordered ?? 0, stats?.SsrcChanges ?? 0,
                     playout.Reprimes, stats?.GapBuckets ?? [],
@@ -550,6 +551,23 @@ public sealed class NodeClockService : BackgroundService
         [JsonPropertyName("lossEvents")] public long LossEvents { get; init; }
         [JsonPropertyName("longestGap")] public long LongestGap { get; init; }
         [JsonPropertyName("arrivalGaps")] public long ArrivalGaps { get; init; }
+
+        /// <summary>
+        /// Gaps the producer chose, from firmware 0.55.0 onwards.
+        /// </summary>
+        /// <remarks>
+        /// A producer with silence suppression -- the phone app has it --
+        /// stops sending when there is nothing to play, so a paused track
+        /// leaves a real hole in the arrival stream that no network fault
+        /// caused. RFC 3550's marker bit says the packet after it begins a
+        /// talkspurt, and a node from 0.55.0 counts such a gap here rather
+        /// than in <see cref="ArrivalGaps"/>.
+        ///
+        /// Absent on older firmware, where it reads zero and those gaps are
+        /// still inside ArrivalGaps. Two nodes on different versions are
+        /// therefore not reporting the same measurement.
+        /// </remarks>
+        [JsonPropertyName("deliberateGaps")] public long DeliberateGaps { get; init; }
         [JsonPropertyName("maxArrivalGapTicks")] public long MaxArrivalGapTicks { get; init; }
 
         /// <summary>

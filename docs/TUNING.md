@@ -1128,6 +1128,39 @@ the first of a talkspurt, which is exactly what a producer resuming sends
 - **A stall is now a stall.** If `arrivalGaps` is still high on 0.55.0,
   something really did fail to arrive on time.
 
+The Hub logs it as `deliberateGaps` and shows it under the stall count
+from **0.105.0**. An older Hub against a 0.55.0 node loses the number
+entirely — the node splits the gaps, and nothing reads the field.
+
+### A gap the producer did not mean, and how it looks
+
+Two speakers on 0.55.0, the phone producing, over nine minutes:
+
+```text
+time      | Spk >200  undr  rsy | Ste >200  undr  rsy
+17:51:03  |       41     9    4 |       41     7    2
+17:52:02  |       41     7    2 |       41     7    4
+17:53:02  |       41     9    3 |       41     7    2
+17:54:02  |       41     8    2 |       41     8    2
+17:58:02  |       41    12    4 |       41    10    5
+```
+
+**41 per thirty-second sample, on both nodes, every sample.** Two
+receivers eight decibels apart do not agree packet-for-packet by accident,
+so this is one event upstream of both, repeating every 0.73 seconds.
+
+The consumer's buffer says what kind of event: `fillMin` touches 0–18 ms
+while `fillMax` reaches 240–319 ms, a sawtooth. Delivery is arriving in
+bursts of roughly three hundred milliseconds' worth — about sixty packets
+— rather than one packet every five.
+
+And the producer's own catch-up limit is **fifty packets**, a quarter of a
+second, beyond which `SendClock` gives up and re-anchors. These bursts sit
+just underneath it. That is why the phone's own `resyncs` counter reads
+zero throughout: the pacer is absorbing the stall silently, exactly as
+designed, and reporting nothing. `SendGaps` in phone 0.7.4 is what sees
+it from that end.
+
 ## If it is still not clean
 
 1. **Late packets, drops near zero** → not enough depth. Raise `delayMs`,

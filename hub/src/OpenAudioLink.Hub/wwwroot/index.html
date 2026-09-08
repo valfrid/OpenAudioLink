@@ -3382,9 +3382,25 @@ and swap supplies between two nodes to find out.">Clock</th>
           + `50-100 ${b[2].toLocaleString()} · 100-200 ${b[3].toLocaleString()}`
           + `${b[4] ? ` · <b>&gt;200 ${b[4].toLocaleString()}</b>` : ''}</span>`
         : '';
+      /*
+       * Gaps the producer meant, kept beside the ones it did not.
+       *
+       * A phone that stops sending when nothing is playing leaves a real
+       * hole in the arrival stream, and counting those as stalls is how a
+       * healthy link read 66 517 ppm with a worst gap of sixteen seconds.
+       * Firmware 0.55.0 splits them; an older node reports nothing here
+       * and still has them inside the stall count, so the absence of this
+       * line is itself worth seeing.
+       */
+      const meant = stats.deliberateGaps ?? 0;
+      const paused = meant
+        ? `<br><span class="muted" title="Silences the producer chose: a `
+          + `paused track, or a cast point nobody has started. Not stalls.">`
+          + `${meant.toLocaleString()} deliberate</span>`
+        : '';
       return `${lossLine}<br><span class="rssi ${stallClass}">` +
         `${stalls.toLocaleString()} stalls (${ppm} ppm)</span>` +
-        `<br><span class="muted">worst ${worstMs} ms (lifetime)</span>${shape}`;
+        `<br><span class="muted">worst ${worstMs} ms (lifetime)</span>${shape}${paused}`;
     }
 
     /*
