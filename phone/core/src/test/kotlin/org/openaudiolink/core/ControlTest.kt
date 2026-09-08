@@ -128,7 +128,7 @@ class PeerTableTest {
         val table = PeerTable()
         table.heard(announce("a", role = "consumer"), "192.168.0.71", 0)
         table.heard(announce("b", role = "producer"), "192.168.0.72", 0)
-        assertEquals(listOf("a"), table.consumers(1_000).map { it.id })
+        assertEquals(listOf("a"), table.destinations(1_000).map { it.id })
     }
 
     /* An analog source that also plays is both, and must appear as both. */
@@ -138,8 +138,57 @@ class PeerTableTest {
         val both = Announce(id = "v", name = "Turntable",
             roles = listOf("producer", "consumer"), hw = "h", fw = "f")
         table.heard(both, "192.168.0.80", 0)
-        assertEquals(1, table.consumers(0).size)
-        assertTrue(table.online(0).single().announce.isProducer)
+        assertEquals(1, table.destinations(0).size)
+        assertEquals(1, table.sources(0).size)
+    }
+
+    /*
+     * The Hub is not a speaker, and roles alone will not say so.
+     *
+     * It announces ["controller","producer"] — the same producer role a
+     * turntable announces — so the first build on real hardware put a
+     * Windows PC in the speaker list with a tick box offering to play
+     * music at it. What separates them is the port: the device control API
+     * lives on 41001 and the Hub serves a different REST API on 41080.
+     */
+    @Test
+    fun `a hub is neither a destination nor a source this app can drive`() {
+        val hub = Announce(
+            id = "hub-1", name = "OpenAudioLink Hub",
+            roles = listOf("controller", "producer"),
+            hw = "windows-hub", fw = "0.104.0", ctrlPort = 41080,
+        )
+        val table = PeerTable()
+        table.heard(hub, "192.168.0.201", 0)
+
+        assertTrue(!hub.speaksDeviceControl)
+        assertEquals(emptyList(), table.destinations(0).map { it.id })
+        assertEquals(emptyList(), table.sources(0).map { it.id })
+        assertEquals(1, table.online(0).size, "but it is still on the network, and visible")
+    }
+
+    /* A turntable node announces the same producer role and *is* drivable. */
+    @Test
+    fun `a producer node on the device port can be told to play`() {
+        val vinyl = Announce(
+            id = "v", name = "Vinylspelare", roles = listOf("producer"),
+            hw = "esp32s3-pcm1808", fw = "0.54.0", ctrlPort = 41001,
+        )
+        val table = PeerTable()
+        table.heard(vinyl, "192.168.0.237", 0)
+
+        assertEquals(listOf("v"), table.sources(0).map { it.id })
+        assertEquals(emptyList(), table.destinations(0).map { it.id },
+            "a producer that does not also play is not a speaker")
+    }
+
+    /* An announce with no ctrlPort at all is a node, by the default. */
+    @Test
+    fun `an announce without a control port is taken as a node`() {
+        val terse = Announce(id = "n", name = "Kitchen",
+            roles = listOf("consumer"), hw = "h", fw = "f")
+        assertTrue(terse.speaksDeviceControl)
+        assertTrue(terse.canReceiveAudio)
     }
 }
 

@@ -23,6 +23,21 @@ object Discovery {
     const val DEFAULT_CONTROL_PORT = 41001
 
     /**
+     * Where the *device* control API lives — the endpoints in
+     * `protocol/CONTROL.md` that this app knows how to speak.
+     *
+     * It doubles as the only reliable way to tell a node from a Hub. The
+     * Hub announces `producer` like a turntable does, and announces its own
+     * port (41080) because it serves a different REST API; nothing in an
+     * announce says "I speak the device API" outright. The port does, by
+     * construction: that is the door those endpoints are behind. The Hub's
+     * own code says as much where it sets the field — without it "a node
+     * assumes the device control port and knocks on a door the Hub does
+     * not have".
+     */
+    const val DEVICE_CONTROL_PORT = 41001
+
+    /**
      * Lenient on the way in, exact on the way out.
      *
      * `ignoreUnknownKeys` is not laziness: the protocol says a receiver
@@ -78,7 +93,24 @@ data class Announce(
 ) {
     val isConsumer: Boolean get() = roles.contains("consumer")
     val isProducer: Boolean get() = roles.contains("producer")
+    val isController: Boolean get() = roles.contains("controller")
     val controlPort: Int get() = ctrlPort ?: Discovery.DEFAULT_CONTROL_PORT
+
+    /** Whether this app can drive it: see `Discovery.DEVICE_CONTROL_PORT`. */
+    val speaksDeviceControl: Boolean get() = controlPort == Discovery.DEVICE_CONTROL_PORT
+
+    /**
+     * Somewhere this phone can send audio.
+     *
+     * Roles are not enough on their own. A Hub announces `producer`
+     * exactly as a turntable does, so a list built from roles alone offers
+     * to play music at a Windows PC — which is what the first build on
+     * real hardware did.
+     */
+    val canReceiveAudio: Boolean get() = isConsumer && speaksDeviceControl
+
+    /** Something this phone can *start*, as its Controller rather than its source. */
+    val canBeToldToPlay: Boolean get() = isProducer && speaksDeviceControl
 }
 
 /** A device as this app currently understands it. */
@@ -120,8 +152,15 @@ class PeerTable(private val livenessMs: Long = Discovery.LIVENESS_MS) {
     fun online(nowMs: Long): List<Peer> =
         peers.values.filter { nowMs - it.lastSeenMs <= livenessMs }
 
+    /** Everything this phone can send audio to. Not everything with a role. */
     @Synchronized
-    fun consumers(nowMs: Long): List<Peer> = online(nowMs).filter { it.announce.isConsumer }
+    fun destinations(nowMs: Long): List<Peer> =
+        online(nowMs).filter { it.announce.canReceiveAudio }
+
+    /** Nodes this phone can tell to start their own stream — a turntable. */
+    @Synchronized
+    fun sources(nowMs: Long): List<Peer> =
+        online(nowMs).filter { it.announce.canBeToldToPlay }
 
     /** Drops what has been silent for long enough, returning how many went. */
     @Synchronized

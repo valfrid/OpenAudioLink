@@ -32,18 +32,38 @@ import java.net.InetAddress
  */
 object Producer {
 
-    /** A speaker as the app currently understands it. */
+    /**
+     * One device on the network, and what this phone may do with it.
+     *
+     * Three separate questions, because conflating them is what put a
+     * Windows PC in the speaker list: whether it can *play* what this
+     * phone sends, whether it can be *told to play* something of its own,
+     * and whether it is merely present.
+     */
     data class Speaker(
         val id: String,
         val name: String,
         val address: String,
         val controlPort: Int,
+        val canReceiveAudio: Boolean = false,
+        val canBeToldToPlay: Boolean = false,
         val selected: Boolean = false,
         val volume: Int = -1,
         val roomCorrection: Boolean = false,
-        val isProducerNode: Boolean = false,
+        /*
+         * Whether the node has actually answered.
+         *
+         * Without it, "we have not asked yet" and "this firmware has no
+         * volume control" look identical, and the app says the second when
+         * it means the first — which is what it told a person about three
+         * healthy devices while every request was being refused before it
+         * left the phone.
+         */
+        val answered: Boolean = false,
     ) {
         val hasVolume: Boolean get() = volume >= 0
+        val volumeUnsupported: Boolean get() = answered && volume < 0
+        val unreachable: Boolean get() = !answered
     }
 
     data class State(
@@ -57,6 +77,24 @@ object Producer {
         val warning: String? = null,
     ) {
         val selected: List<Speaker> get() = speakers.filter { it.selected }
+
+        /** Speakers: things that can play what this phone sends. */
+        val destinations: List<Speaker> get() = speakers.filter { it.canReceiveAudio }
+
+        /** Other sources on the network — a turntable node, not the Hub. */
+        val sources: List<Speaker> get() =
+            speakers.filter { it.canBeToldToPlay && !it.canReceiveAudio }
+
+        /**
+         * Present, but nothing this app drives — the Hub, most obviously.
+         *
+         * Listed rather than hidden. A person who can see the Hub in the
+         * app knows the network is right and this phone simply does not
+         * command it; a person who cannot see it wonders whether discovery
+         * is broken.
+         */
+        val others: List<Speaker> get() =
+            speakers.filter { !it.canReceiveAudio && !it.canBeToldToPlay }
     }
 
     private val _state = MutableStateFlow(State())
@@ -106,6 +144,20 @@ object Producer {
         val wifi = binding ?: return
         if (wifi.wifiNetwork() == null) {
             warn("No Wi-Fi to send on. Join the speakers' network, or turn on the hotspot.")
+            return
+        }
+
+        /*
+         * Refuse rather than send to nobody.
+         *
+         * A stream with no destinations is perfectly valid and completely
+         * silent: the pacer runs, the packets are built, and every one is
+         * addressed to an empty list. From the outside that is
+         * indistinguishable from a broken speaker, so it has to be said
+         * out loud instead.
+         */
+        if (_state.value.selected.isEmpty()) {
+            warn("Tick a speaker first — otherwise this plays to nobody.")
             return
         }
 
@@ -239,33 +291,46 @@ object Producer {
         val chosen = _state.value.speakers.filter { it.selected }.map { it.id }.toSet()
         val known = _state.value.speakers.associateBy { it.id }
 
-        val speakers = table.online(now)
-            .filter { it.announce.isConsumer || it.announce.isProducer }
-            .map { peer ->
-                val existing = known[peer.id]
-                Speaker(
-                    id = peer.id,
-                    name = peer.name,
-                    address = peer.address,
-                    controlPort = peer.controlPort,
-                    selected = peer.id in chosen,
-                    volume = existing?.volume ?: -1,
-                    roomCorrection = existing?.roomCorrection ?: false,
-                    isProducerNode = peer.announce.isProducer,
-                )
-            }
+        /*
+         * Everything heard from, not a filtered subset.
+         *
+         * What each device *is* decides which list it lands in later; a
+         * device is never dropped here, because a Hub that is present and
+         * unmentioned looks exactly like discovery having failed.
+         */
+        val speakers = table.online(now).map { peer ->
+            val existing = known[peer.id]
+            Speaker(
+                id = peer.id,
+                name = peer.name,
+                address = peer.address,
+                controlPort = peer.controlPort,
+                canReceiveAudio = peer.announce.canReceiveAudio,
+                canBeToldToPlay = peer.announce.canBeToldToPlay,
+                selected = peer.id in chosen,
+                volume = existing?.volume ?: -1,
+                roomCorrection = existing?.roomCorrection ?: false,
+                answered = existing?.answered ?: false,
+            )
+        }
 
         _state.update { it.copy(speakers = speakers) }
         sender?.setDestinations(currentDestinations())
 
         // What each one currently thinks its volume and correction are.
+        // Only the ones this app can actually ask: the Hub serves a
+        // different API on a different port and would 404 all day.
         scope.launch {
-            for (speaker in speakers.filter { it.volume < 0 }) {
+            for (speaker in speakers.filter { !it.answered && it.canReceiveAudio }) {
                 val status = NodeClient(speaker.address, speaker.controlPort).status() ?: continue
                 _state.update { current ->
                     current.copy(speakers = current.speakers.map {
                         if (it.id == speaker.id) {
-                            it.copy(volume = status.volume, roomCorrection = status.eqEnabled)
+                            it.copy(
+                                volume = status.volume,
+                                roomCorrection = status.eqEnabled,
+                                answered = true,
+                            )
                         } else {
                             it
                         }
@@ -307,5 +372,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.1.0"
+    const val VERSION = "0.2.0"
 }

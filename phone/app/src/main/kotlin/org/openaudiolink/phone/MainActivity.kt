@@ -104,62 +104,138 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             }
         }
 
-        Text("Play from this phone", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
+        /*
+         * The order on screen is the order of the job: pick the speakers,
+         * then pick what plays through them. The first build had it the
+         * other way round, with a "Choose a track" button above a list
+         * titled "Speakers" that also held a Windows PC — so nothing said
+         * what the button would do or which of those things it would do it
+         * to.
+         */
+        val chosen = state.selected.size
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (state.streaming) {
-                Button(onClick = { Producer.stopStream() }) { Text("Stop") }
-                Text(
-                    state.sourceLabel ?: "",
-                    Modifier.align(Alignment.CenterVertically),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Play on", style = MaterialTheme.typography.titleLarge)
+            TextButton(onClick = { Producer.probe() }) { Text("Look again") }
+        }
+        Text(
+            if (state.destinations.isEmpty()) {
+                "No speakers yet. They must be on this Wi-Fi — and if this phone " +
+                    "is the hotspot it has to be 2.4 GHz, because a speaker's radio " +
+                    "cannot see 5 GHz at all."
             } else {
-                Button(onClick = onPickTrack) { Text("Choose a track") }
-                // Needs no permission, no file and no account, so it
-                // separates "is the network right" from "is the decoder
-                // right" when a speaker is silent.
-                OutlinedButton(onClick = { Producer.startStream(ToneSource()) }) {
-                    Text("Test tone")
+                "Tick the speakers that should play. $chosen chosen."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        LazyColumn(
+            Modifier.weight(1f, fill = false),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(state.destinations, key = { it.id }) { speaker ->
+                SpeakerCard(speaker)
+            }
+
+            if (state.sources.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Or play something already on the network",
+                        style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "These make their own sound — a turntable, say. This phone " +
+                            "only tells them where to send it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                items(state.sources, key = { it.id }) { source ->
+                    SourceCard(source, enabled = chosen > 0)
+                }
+            }
+
+            if (state.others.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Also on the network", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "Found, but not driven from here. The Hub has its own " +
+                            "controls — this phone does not command it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                items(state.others, key = { it.id }) { other ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(other.name, style = MaterialTheme.typography.titleMedium)
+                            Text("${other.address} · not a speaker",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
         }
 
+        Spacer(Modifier.height(20.dp))
+        Text("Play from this phone", style = MaterialTheme.typography.titleLarge)
+
         if (state.streaming) {
-            Spacer(Modifier.height(4.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Button(onClick = { Producer.stopStream() }) { Text("Stop") }
+                Text(
+                    "${state.sourceLabel} → $chosen speaker(s)",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             Text(
                 "${state.packetsSent} packets · ${state.underruns} underruns · " +
                     "${state.resyncs} resyncs",
                 style = MaterialTheme.typography.bodySmall,
             )
-        }
-
-        Spacer(Modifier.height(20.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Speakers", style = MaterialTheme.typography.titleLarge)
-            TextButton(onClick = { Producer.probe() }) { Text("Look again") }
-        }
-
-        if (state.speakers.isEmpty()) {
+        } else {
             Text(
-                "None yet. They must be on this Wi-Fi — if you are hosting the " +
-                    "hotspot, it has to be 2.4 GHz, because the speakers' radio " +
-                    "cannot see 5 GHz at all.",
+                "Sends this phone's audio to the ticked speakers.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-        }
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.speakers, key = { it.id }) { speaker ->
-                SpeakerCard(speaker, streaming = state.streaming)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onPickTrack, enabled = chosen > 0) {
+                    Text("A music file…")
+                }
+                // Needs no permission, no file and no account, so it
+                // separates "is the network right" from "is the decoder
+                // right" when a speaker is silent.
+                OutlinedButton(
+                    onClick = { Producer.startStream(ToneSource()) },
+                    enabled = chosen > 0,
+                ) {
+                    Text("Test tone")
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SpeakerCard(speaker: Producer.Speaker, streaming: Boolean) {
+private fun SourceCard(source: Producer.Speaker, enabled: Boolean) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text(source.name, style = MaterialTheme.typography.titleMedium)
+            Text(source.address, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { Producer.startVinyl(source.id) },
+                    enabled = enabled,
+                ) { Text("Play this") }
+                OutlinedButton(onClick = { Producer.stopVinyl(source.id) }) { Text("Stop") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeakerCard(speaker: Producer.Speaker) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -187,37 +263,33 @@ private fun SpeakerCard(speaker: Producer.Speaker, streaming: Boolean) {
                     )
                     Text("${speaker.volume}", style = MaterialTheme.typography.bodySmall)
                 }
-            } else {
+            } else if (speaker.volumeUnsupported) {
                 // Firmware older than 0.11.0 has no volume at all, and a
                 // slider at zero would be a lie about a speaker playing
                 // perfectly well.
                 Text("This speaker's firmware has no volume control",
                     style = MaterialTheme.typography.bodySmall)
+            } else {
+                /*
+                 * Not the same sentence as the one above, and the
+                 * difference cost a debugging session. "We have not heard
+                 * back" is a question about this phone's reach; "no volume
+                 * control" is a statement about the speaker. Saying the
+                 * second when the first is true blames working firmware
+                 * for a request that never left the handset.
+                 */
+                Text("No answer yet from this speaker",
+                    style = MaterialTheme.typography.bodySmall)
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Room correction", Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = speaker.roomCorrection,
-                    onCheckedChange = { Producer.setRoomCorrection(speaker.id, it) },
-                )
-            }
-
-            /*
-             * The turntable. The phone is its Controller, not its source:
-             * the node is already a Producer, so it is told where to send
-             * rather than asked to hand over the audio.
-             */
-            if (speaker.isProducerNode) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { Producer.startVinyl(speaker.id) },
-                        enabled = !streaming,
-                    ) { Text("Play this source") }
-                    OutlinedButton(onClick = { Producer.stopVinyl(speaker.id) }) {
-                        Text("Stop it")
-                    }
+            if (!speaker.unreachable) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Room correction", Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = speaker.roomCorrection,
+                        onCheckedChange = { Producer.setRoomCorrection(speaker.id, it) },
+                    )
                 }
             }
         }

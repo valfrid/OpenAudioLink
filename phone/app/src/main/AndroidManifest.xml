@@ -31,10 +31,24 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!--
+        Without this, nothing this app asks a speaker ever arrives.
+
+        Android blocks cleartext HTTP by default from targetSdk 28, and
+        every node endpoint in protocol/CONTROL.md is plain HTTP on port
+        41001 — by design, because OpenAudioLink is local-first and a
+        speaker on a house network has no certificate and no name to put on
+        one. The failure is silent and looks like broken firmware: the
+        first build on real hardware found the speakers over UDP discovery
+        and then reported every one of them as having no volume control,
+        because each status request had been refused before it left the
+        phone.
+    -->
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.OpenAudioLink">
 
         <activity
