@@ -254,6 +254,30 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                     if (chosen == 0) " · to nobody" else " · to $chosen speaker(s)",
                 style = MaterialTheme.typography.bodySmall,
             )
+
+            /*
+             * The source's own words, not this app's summary of them.
+             *
+             * The counters above say this app is sending. They say nothing
+             * about whether the source is well, and for Spotify that is the
+             * whole question: librespot can be running and publishing
+             * nothing, which from outside looks exactly like a cast point
+             * Spotify has not listed yet. "Authenticated as …" is the line
+             * that separates those two, and it belongs on the phone rather
+             * than in a log on some other machine.
+             */
+            state.sourceStatus?.let { said ->
+                Text(said, style = MaterialTheme.typography.bodySmall)
+            }
+
+            if (state.sourceLabel?.startsWith("Spotify") == true) {
+                Text(
+                    "The cast point is live only while this is running. Open " +
+                        "Spotify, pull up the device list, and pick " +
+                        "\"$castPointName\" — leave this running while you do.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         } else {
             Text(
                 if (chosen > 0) {
@@ -352,10 +376,24 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                     )
                 }
             } else {
+                /*
+                 * "Signed in" is not "visible", and saying so cost an
+                 * evening.
+                 *
+                 * Signing in claims the cast point against the account; it
+                 * does not create one. The receiver only exists while
+                 * librespot is running, and the sign-in run is deliberately
+                 * killed once it has earned the credential — so between
+                 * signing in and pressing Publish there is nothing on the
+                 * network to find, and looking in Spotify then finds
+                 * exactly nothing. The button is the thing that makes it
+                 * appear, and the text now says so.
+                 */
                 Text(
-                    "Signed in. Publishes \"$castPointName\" to Spotify — open " +
-                        "Spotify and pick it from the device list. It plays on the " +
-                        "ticked speakers.",
+                    "Signed in — but nothing is published yet. Press Publish and " +
+                        "leave it running: \"$castPointName\" appears in Spotify's " +
+                        "device list while it runs, and disappears when it stops. " +
+                        "It plays on the ticked speakers.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

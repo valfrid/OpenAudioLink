@@ -76,6 +76,16 @@ object Producer {
         val speakers: List<Speaker> = emptyList(),
         val streaming: Boolean = false,
         val sourceLabel: String? = null,
+        /**
+         * The last thing the source itself said.
+         *
+         * The packet counters below prove this *app* is sending; they say
+         * nothing about whether the source is happy. For Spotify that is
+         * the entire question — librespot can run, publish nothing, and
+         * fail to authenticate, and from outside that is indistinguishable
+         * from a cast point Spotify has simply not listed yet.
+         */
+        val sourceStatus: String? = null,
         val packetsSent: Long = 0,
         val underruns: Long = 0,
         val resyncs: Long = 0,
@@ -270,7 +280,14 @@ object Producer {
         newSource.start(ring)
         source = newSource
 
-        _state.update { it.copy(streaming = true, sourceLabel = newSource.label, warning = null) }
+        _state.update {
+            it.copy(
+                streaming = true,
+                sourceLabel = newSource.label,
+                sourceStatus = null,
+                warning = null,
+            )
+        }
         pollCounters()
     }
 
@@ -279,7 +296,7 @@ object Producer {
         source = null
         sender?.stop()
         sender = null
-        _state.update { it.copy(streaming = false, sourceLabel = null) }
+        _state.update { it.copy(streaming = false, sourceLabel = null, sourceStatus = null) }
     }
 
     /* ---------- the four controls ---------- */
@@ -477,6 +494,19 @@ object Producer {
                 }
 
                 /*
+                 * And what the source says about itself.
+                 *
+                 * Read every second because librespot's most useful line —
+                 * whether it authenticated — arrives seconds after it
+                 * starts, and a person watching the screen should not have
+                 * to guess whether it ever will.
+                 */
+                val said = source?.status
+                if (said != _state.value.sourceStatus) {
+                    _state.update { it.copy(sourceStatus = said) }
+                }
+
+                /*
                  * A source that stopped on its own.
                  *
                  * librespot failing to start is the case that matters: the
@@ -486,8 +516,11 @@ object Producer {
                  */
                 val playing = source
                 if (playing != null && !playing.isPlaying) {
-                    warn("${playing.label} stopped on its own. " +
-                        "adb logcat -s oal.spotify says why.")
+                    // Its own last words, not a pointer at a log on a
+                    // computer the person holding the phone may not have.
+                    val why = playing.status
+                    warn("${playing.label} stopped on its own." +
+                        if (why != null) "\n\nIt last said: $why" else "")
                     stopStream()
                 }
                 kotlinx.coroutines.delay(1_000)
@@ -535,7 +568,15 @@ object Producer {
             }
             warn(
                 if (ok) {
-                    "Signed in. \"$name\" will now appear in Spotify — publish it and pick it there."
+                    /*
+                     * Not "it will now appear". Nothing appears until
+                     * something is publishing: the sign-in run is killed
+                     * once it has the credential, so at this exact moment
+                     * there is no receiver on the network at all.
+                     */
+                    "Signed in. Now press \"Publish to Spotify\" and leave it " +
+                        "running — \"$name\" only shows in Spotify's device list " +
+                        "while it does."
                 } else {
                     /*
                      * librespot's own words, on the phone.
@@ -607,5 +648,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.2"
+    const val VERSION = "0.6.3"
 }

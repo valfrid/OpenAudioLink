@@ -42,6 +42,10 @@ class SpotifySource(
 
     override val isPlaying: Boolean get() = running
 
+    @Volatile private var lastLine: String? = null
+
+    override val status: String? get() = lastLine
+
     override fun start(ring: PcmRing) {
         if (running) return
         running = true
@@ -211,10 +215,23 @@ class SpotifySource(
         }
     }
 
-    /** librespot's own diagnostics — a failed login is only visible here. */
+    /**
+     * librespot's own diagnostics, kept where a person can read them.
+     *
+     * A failed login appears here and nowhere else, and "Authenticated
+     * as …" is the one line that separates a cast point Spotify has not
+     * shown yet from one that never connected. It goes on the screen for
+     * the same reason the sign-in output does: the phone that failed is
+     * where the explanation belongs.
+     */
     private fun drainErrors(errors: InputStream) {
         try {
-            errors.bufferedReader().forEachLine { Log.i(TAG, "librespot: $it") }
+            errors.bufferedReader().forEachLine { line ->
+                Log.i(TAG, "librespot: $line")
+                // The timestamp and level prefix are noise on a phone screen.
+                val trimmed = line.substringAfterLast("] ").trim()
+                if (trimmed.isNotBlank()) lastLine = trimmed
+            }
         } catch (_: Exception) {
         }
     }

@@ -39,4 +39,15 @@ interface AudioSource {
     fun stop()
 
     val isPlaying: Boolean
+
+    /**
+     * What the source would say for itself, if asked.
+     *
+     * Packet counters prove this app is sending; they say nothing about
+     * whether the *source* is happy. For Spotify that is the whole
+     * question — librespot can be running, publishing nothing, and
+     * refusing to authenticate, and from outside that is identical to a
+     * cast point Spotify simply has not shown yet.
+     */
+    val status: String? get() = null
 }

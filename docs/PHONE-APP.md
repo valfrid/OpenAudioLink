@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.6.0, built by CI as one APK — see *One build* below.
+Version 0.6.3, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -172,6 +172,20 @@ That sign-in is a **separate run of librespot**, because it prints the
 authorisation URL to stdout — the stream the pipe backend fills with PCM.
 The sign-in run sends audio to `/dev/null` so stdout carries the URL.
 
+**Signed in is not published, and the two get confused because the words
+sound the same.** Signing in claims the cast point against an account; it
+does not put a receiver on the network. The receiver exists only while
+librespot is running, and the sign-in run is killed the moment it has
+earned the credential — so between "Signed in" and pressing *Publish to
+Spotify* there is nothing to find, and looking in Spotify's device list at
+that moment correctly finds nothing. This cost an evening on a real phone:
+sign-in succeeded, the app said so, and the device list stayed empty
+because nothing was publishing. 0.6.3 says it on the screen — "Signed in —
+but nothing is published yet" — and, while publishing, shows librespot's
+own last line, because "Authenticated as …" is the one sentence that
+separates a receiver Spotify has not listed yet from one that never
+connected.
+
 **The cast point belongs to the account that signed it in**, so a guest on
 a different account will not see it. A shared household account covers a
 home; **Spotify Jam** covers a party, with guests joining the host's
@@ -291,6 +305,34 @@ recording because neither was visible from the code.
   announces — so a list filtered on consumer-or-producer offered to play
   music at a Windows PC. Roles cannot separate them; the port can, and
   four tests now pin it.
+
+**0.6.x reached a phone and signed in to Spotify.** On a Galaxy A8 (2018),
+Android 9, with the phone acting as the hotspot and no other device on the
+network at all — a deliberate smoke test, not a party.
+
+- **The app crash-looped before drawing anything.** `client.probe()` ran
+  on the main thread inside the service's `onCreate`;
+  `NetworkOnMainThreadException` killed the process, `START_STICKY`
+  brought it back, and it died again. Fixed by drawing the screen first
+  and deferring every socket call to a coroutine.
+- **It then looked frozen, and was not.** With no devices on the network
+  three buttons were legitimately disabled and "Look again" had no visible
+  effect, which is indistinguishable from a hang. Fixed with an on-screen
+  heartbeat — interface, datagrams heard, announces and probes sent — so a
+  quiet network reads as quiet rather than broken.
+- **Two of the app's own rules made the smoke test impossible.** Sources
+  required a ticked speaker, and starting a stream required station Wi-Fi
+  — which a phone *hosting* the hotspot does not have. Both removed:
+  publishing to nobody is how a party starts.
+- **The sign-in "failed" on a five-minute timeout** invented here, which
+  expired while a person was reading an emailed code. The wait now has no
+  deadline and a Cancel button.
+- **`redirect_uri: Not matching configuration`.** librespot picks its
+  Spotify client ID from `std::env::consts::OS`, so cross-compiling for
+  Android selected the Android client ID, which has no loopback redirect,
+  and there is no `--client-id` option. The build now patches that
+  constant to `"linux"`; `librespot-android-v0.8.0-2` carries the fix and
+  sign-in completes.
 
 **Still unproven.** No packet has yet been shown to reach a speaker. The
 first things to check on a real device, in order:
