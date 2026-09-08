@@ -69,6 +69,22 @@ jobs:
         run: ./gradlew :app:assembleDebug --stacktrace
         working-directory: phone
 
+      # The version, in the artefact's name.
+      #
+      # Every build was called "openaudiolink-phone-debug", so a list of
+      # them said nothing about which was which, and an APK already on a
+      # phone could not be told from a new one. A person looking for the
+      # build they were just told about found no such thing and reasonably
+      # concluded it had not been built.
+      - name: What version is this?
+        id: phone-version
+        working-directory: phone
+        run: |
+          v="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          test -n "$v" || { echo "::error::no versionName in app/build.gradle.kts"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Phone app $v"
+
       # A green build is not proof that librespot is inside it.
       #
       # The fetch, the jniLibs directory and the packaging flag are three
@@ -92,9 +108,18 @@ jobs:
           "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging "$apk" \
             | grep -i "native-code\|extractNativeLibs" || true
 
+      - name: Name the file after the version too
+        working-directory: phone/app/build/outputs/apk/debug
+        run: |
+          v="${{ steps.phone-version.outputs.version }}"
+          for apk in *.apk; do
+            mv "$apk" "openaudiolink-phone-$v-debug.apk"
+          done
+          ls -l
+
       - uses: actions/upload-artifact@v4
         with:
-          name: openaudiolink-phone-debug
+          name: openaudiolink-phone-${{ steps.phone-version.outputs.version }}-debug
           path: phone/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -266,9 +291,18 @@ jobs:
           Get-ChildItem hub\publish |
             Where-Object { $_.Name -match '\.dll$|LICENSE' } | Format-Table Name, Length
 
+      - name: What version is this?
+        id: hub-version
+        shell: bash
+        run: |
+          v="$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' hub/Directory.Build.props | head -1)"
+          test -n "$v" || { echo "::error::no <Version> in hub/Directory.Build.props"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Hub $v"
+
       - uses: actions/upload-artifact@v5
         with:
-          name: OpenAudioLink-Hub-win-x64
+          name: OpenAudioLink-Hub-win-x64-${{ steps.hub-version.outputs.version }}
           path: hub/publish
 
   # The RTP statistics are deliberately free of ESP-IDF headers so their
@@ -389,9 +423,20 @@ jobs:
             esptool.py --chip ${{ matrix.target }} merge_bin
             -o testnode-${{ matrix.target }}-flash.bin @flash_args &&
             cp oal_testnode.bin testnode-${{ matrix.target }}-ota.bin
+      # The same argument as the phone's: a node's firmware version is the
+      # thing that decides whether two readings are comparable, and it was
+      # nowhere in the artefact's name.
+      - name: What version is this?
+        id: fw-version
+        run: |
+          v="$(tr -d '[:space:]' < firmware/testnode/version.txt)"
+          test -n "$v" || { echo "::error::no firmware/testnode/version.txt"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Firmware $v"
+
       - uses: actions/upload-artifact@v5
         with:
-          name: testnode-${{ matrix.target }}
+          name: testnode-${{ matrix.target }}-${{ steps.fw-version.outputs.version }}
           path: |
             firmware/testnode/build/testnode-${{ matrix.target }}-flash.bin
             firmware/testnode/build/testnode-${{ matrix.target }}-ota.bin

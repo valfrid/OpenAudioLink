@@ -515,6 +515,13 @@ away between the phone and the speaker.
 
 ## Installing it
 
+**The artefacts carry their versions in their names** — `openaudiolink-phone-0.7.4-debug`, `testnode-esp32s3-0.55.0`,
+`OpenAudioLink-Hub-win-x64-0.104.0` — and the APK inside is named the same
+way. They did not, and a build list where every entry reads
+`openaudiolink-phone-debug` cannot say which is which: an APK already on a
+phone looks exactly like a new one, and somebody told a version had been
+built quite reasonably concluded it had not.
+
 Sideloading, not a store. Download `openaudiolink-phone-debug` from a CI
 run's artifacts, enable "install unknown apps" for whatever transfers it,
 and install. Successive builds share the applicationId and the debug key,
