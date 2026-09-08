@@ -1132,6 +1132,47 @@ The Hub logs it as `deliberateGaps` and shows it under the stall count
 from **0.105.0**. An older Hub against a 0.55.0 node loses the number
 entirely — the node splits the gaps, and nothing reads the field.
 
+### The same link, eleven minutes later
+
+The phone kept streaming, uninterrupted, across this boundary — the same
+sender, `ssrcChanges` zero throughout, its own send-interval counter
+reading 33 late packets in 38 minutes at both ends of it:
+
+```text
+time      | Spk>200 undr rsy fillMin  phase | Ste>200 undr rsy fillMin  phase
+17:59:32  |      38   10   4       1   24.8 |      37   16   7       0   79.8
+18:00:02  |      41   12   4       1   14.6 |      40   17   7       2   24.1
+18:00:32  |      41    9   3       1   21.2 |      41   11   4       0   32.4
+18:01:02  |       3    1   0     122    1.8 |       3    0   0     104    1.9
+18:01:32  |       0    0   0     102    1.7 |       0    0   0     119    1.8
+18:02:02  |       0    0   0     128    1.8 |       0    0   0     130    2.0
+   …                                                                       
+18:12:02  |       0    0   0     131    1.6 |       0    0   0     130    1.8
+```
+
+Eleven further minutes at **zero** gaps over 200 ms, zero underruns, zero
+resyncs, the cushion never falling below 55 ms, and **phase error of 1.6
+to 2.3 milliseconds** on both speakers. That is the synchronisation design
+meeting its target on real hardware, and it is an order better than the
+20 ms the Hub's panel calls good.
+
+**Nothing the node can see changed.** Same BSSID, same channel 11, RSSI
+steady at −48 to −49 dBm, no roam, no disconnect. The producer did not
+restart. So the difference is airtime rather than signal: something else
+was competing for the channel, and then stopped.
+
+The leading candidate is the phone's own other traffic. RSSI says how
+loudly the access point is heard; it says nothing about how long the radio
+waits for a turn to speak. A bulk upload from the same handset — or any
+busy device on channel 11 — delays the audio in the queue **after** it has
+been correctly paced, which is exactly the signature: sending clean at one
+end, arriving in quarter-second clumps at the other.
+
+If that is right, the DSCP 46 marking in phone 0.7.6 addresses it
+directly. Wi-Fi's access categories resolve precisely this contention, and
+voice beats best effort within a single station's own queues as well as
+between stations.
+
 ### A gap the producer did not mean, and how it looks
 
 Two speakers on 0.55.0, the phone producing, over nine minutes:
