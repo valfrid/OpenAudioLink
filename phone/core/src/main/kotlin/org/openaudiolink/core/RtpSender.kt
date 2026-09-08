@@ -8,7 +8,14 @@ import java.util.concurrent.locks.LockSupport
 import kotlin.random.Random
 
 /**
- * The producer: 200 packets a second to every selected speaker.
+ * The producer: 200 packets a second to every selected speaker, while
+ * there is something to play.
+ *
+ * The qualifier is [SilenceGate]'s and it matters: a published Spotify
+ * cast point that nobody has selected produces no audio, and this sends
+ * nothing until it does. Starting the sender is therefore free — it can be
+ * running before Spotify has ever connected, which is what lets *publish*
+ * and *play* be two separate steps a person can watch happen.
  *
  * Unicast, one copy per destination, because OpenAudioLink nodes are on
  * Wi-Fi — where multicast frames go out at a low basic rate with no
@@ -28,12 +35,32 @@ class RtpSender(
 ) {
     private val destinations = CopyOnWriteArrayList<InetAddress>()
     private val clock = SendClock()
+    private val gate = SilenceGate()
 
     @Volatile private var running = false
     private var thread: Thread? = null
 
     @Volatile var packetsSent: Long = 0; private set
     @Volatile var sendErrors: Long = 0; private set
+
+    /**
+     * Packets the gate held because nothing was playing.
+     *
+     * Worth counting rather than merely not sending: a cast point that has
+     * been published for ten minutes and never played has a held count in
+     * the hundreds of thousands and a sent count of zero, and those two
+     * numbers together say "running, waiting" — which is a different thing
+     * from "running, broken" and looks identical without them.
+     */
+    @Volatile var packetsHeld: Long = 0; private set
+
+    /**
+     * Whether audio is actually going out right now.
+     *
+     * The distinction the app puts on screen: publishing a cast point is
+     * not the same as playing through it.
+     */
+    @Volatile var sendingAudio: Boolean = false; private set
 
     /** How often the phone was frozen long enough to give up catching up. */
     @Volatile var resyncs: Long = 0; private set
@@ -114,11 +141,35 @@ class RtpSender(
                          */
                         ring.clear()
                         stream.markDiscontinuity()
+                        // The ring is empty again and the timeline has
+                        // restarted, so the gate starts over with it.
+                        gate.reset()
+                        sendingAudio = false
                         resyncs++
                     }
 
                     is SendClock.Tick.Send -> {
                         repeat(tick.packets) {
+                            /*
+                             * Asked before the ring is read, so a held
+                             * packet never counts as an underrun — see
+                             * SilenceGate. A source that nobody has
+                             * started has not stumbled.
+                             */
+                            val verdict = gate.next(ring.availableFrames)
+                            sendingAudio = !gate.quiet
+
+                            if (verdict == SilenceGate.Verdict.HOLD) {
+                                // The clock still runs while nobody plays.
+                                stream.skip(Rtp.FRAMES_PER_PACKET)
+                                packetsHeld++
+                                return@repeat
+                            }
+
+                            if (verdict == SilenceGate.Verdict.RESUME) {
+                                stream.markDiscontinuity()
+                            }
+
                             ring.readOrSilence(frames, Rtp.FRAMES_PER_PACKET)
                             L24.fromFloat(frames, frames.size, payload)
                             val length = stream.write(packet, payload, Rtp.FRAMES_PER_PACKET)

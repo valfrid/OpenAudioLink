@@ -86,6 +86,19 @@ object Producer {
          * from a cast point Spotify has simply not listed yet.
          */
         val sourceStatus: String? = null,
+        /**
+         * Whether audio is actually leaving the phone.
+         *
+         * Separate from [streaming], and the separation is the point. A
+         * published Spotify cast point that nobody has selected produces
+         * no audio, so the source runs, the sender runs, and the wire
+         * stays empty until somebody in Spotify presses play. Reporting
+         * those two states as one made pressing *Publish* look like it
+         * had started playing something.
+         */
+        val sendingAudio: Boolean = false,
+        /** Packets not sent because there was nothing to play. */
+        val packetsHeld: Long = 0,
         val packetsSent: Long = 0,
         val underruns: Long = 0,
         val resyncs: Long = 0,
@@ -285,6 +298,9 @@ object Producer {
                 streaming = true,
                 sourceLabel = newSource.label,
                 sourceStatus = null,
+                sendingAudio = false,
+                packetsSent = 0,
+                packetsHeld = 0,
                 warning = null,
             )
         }
@@ -296,7 +312,14 @@ object Producer {
         source = null
         sender?.stop()
         sender = null
-        _state.update { it.copy(streaming = false, sourceLabel = null, sourceStatus = null) }
+        _state.update {
+            it.copy(
+                streaming = false,
+                sourceLabel = null,
+                sourceStatus = null,
+                sendingAudio = false,
+            )
+        }
     }
 
     /* ---------- the four controls ---------- */
@@ -487,6 +510,8 @@ object Producer {
                     _state.update {
                         it.copy(
                             packetsSent = rtp.packetsSent,
+                            packetsHeld = rtp.packetsHeld,
+                            sendingAudio = rtp.sendingAudio,
                             underruns = rtp.underruns,
                             resyncs = rtp.resyncs,
                         )
@@ -648,5 +673,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.3"
+    const val VERSION = "0.6.4"
 }

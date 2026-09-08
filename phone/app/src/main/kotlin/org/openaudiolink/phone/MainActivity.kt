@@ -238,45 +238,74 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
         Text("Play from this phone", style = MaterialTheme.typography.titleLarge)
 
         if (state.streaming) {
+            /*
+             * Two states, not one: **published** and **playing**.
+             *
+             * They used to be the same thing, because the sender pumped
+             * padded silence from the moment it started — so pressing
+             * Publish began counting packets before Spotify had been
+             * opened, and the counter, the one signal that anything was
+             * working, said "playing" about a phone that had nothing to
+             * play. SilenceGate keeps the wire empty until there is audio;
+             * this says which of the two is happening.
+             */
+            val waiting = !state.sendingAudio
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Button(onClick = { Producer.stopStream() }) { Text("Stop") }
                 Text(
-                    "${state.sourceLabel} → $chosen speaker(s)",
-                    style = MaterialTheme.typography.bodyMedium,
+                    (if (waiting) "Published · " else "Playing · ") + state.sourceLabel,
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
-            Text(
-                "${state.packetsSent} packets · ${state.underruns} underruns · " +
-                    "${state.resyncs} resyncs" +
-                    if (chosen == 0) " · to nobody" else " · to $chosen speaker(s)",
-                style = MaterialTheme.typography.bodySmall,
-            )
+
+            if (waiting) {
+                Text(
+                    "Nothing is playing yet, so nothing is being sent — the " +
+                        "speakers stay quiet until something starts.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (state.sourceLabel?.startsWith("Spotify") == true) {
+                    /*
+                     * The three steps, in order, because this is the part
+                     * that happens in another app and comes back.
+                     */
+                    Text(
+                        "1. \"$castPointName\" is now in Spotify's device list.\n" +
+                            "2. Open Spotify, pick it, and press play.\n" +
+                            "3. Come back here — the packet count starts moving.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Text(
+                    "waiting · ${state.packetsHeld} packets held" +
+                        if (chosen == 0) " · nothing ticked" else " · $chosen speaker(s) ready",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Text(
+                    "${state.packetsSent} packets · ${state.underruns} underruns · " +
+                        "${state.resyncs} resyncs" +
+                        if (chosen == 0) " · to nobody" else " · to $chosen speaker(s)",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
             /*
              * The source's own words, not this app's summary of them.
              *
-             * The counters above say this app is sending. They say nothing
-             * about whether the source is well, and for Spotify that is the
-             * whole question: librespot can be running and publishing
-             * nothing, which from outside looks exactly like a cast point
-             * Spotify has not listed yet. "Authenticated as …" is the line
-             * that separates those two, and it belongs on the phone rather
-             * than in a log on some other machine.
+             * The counters above say what this app is doing. They say
+             * nothing about whether the source is well, and for Spotify
+             * that is the whole question: librespot can be running and
+             * publishing nothing, which from outside looks exactly like a
+             * cast point Spotify has not listed yet. "Authenticated as …"
+             * is the line that separates those two, and it belongs on the
+             * phone rather than in a log on some other machine.
              */
             state.sourceStatus?.let { said ->
                 Text(said, style = MaterialTheme.typography.bodySmall)
-            }
-
-            if (state.sourceLabel?.startsWith("Spotify") == true) {
-                Text(
-                    "The cast point is live only while this is running. Open " +
-                        "Spotify, pull up the device list, and pick " +
-                        "\"$castPointName\" — leave this running while you do.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
             }
         } else {
             Text(
@@ -391,9 +420,9 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                  */
                 Text(
                     "Signed in — but nothing is published yet. Press Publish and " +
-                        "leave it running: \"$castPointName\" appears in Spotify's " +
-                        "device list while it runs, and disappears when it stops. " +
-                        "It plays on the ticked speakers.",
+                        "leave it running: that puts \"$castPointName\" in Spotify's " +
+                        "device list and sends nothing yet. Then pick it in Spotify " +
+                        "and press play, and the audio goes to the ticked speakers.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

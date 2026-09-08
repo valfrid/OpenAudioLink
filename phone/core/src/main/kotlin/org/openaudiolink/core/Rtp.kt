@@ -72,6 +72,29 @@ class RtpStream(
     }
 
     /**
+     * Accounts for time that passed without a packet.
+     *
+     * The timestamp is a media clock and the class comment above is
+     * emphatic about it: it advances by the frames *sampled*, not by the
+     * packets sent. So a sender that deliberately stays quiet — nothing is
+     * playing, see [SilenceGate] — still owes those frames to the clock,
+     * and must hand them over here. Skipping this instead would make a
+     * resumed stream claim the silence never happened, and a consumer that
+     * places itself on the sender's timeline would seat the new audio
+     * exactly as far in the past as the pause was long.
+     *
+     * The **sequence number does not move**, and that is not an oversight.
+     * Sequence counts packets on the wire, and a receiver reads a gap in
+     * it as loss; a producer that burned sequence numbers on packets it
+     * chose not to send would be reporting its own silence as a broken
+     * network.
+     */
+    fun skip(frames: Int) {
+        require(frames > 0) { "a skip covers at least one frame" }
+        timestamp += frames
+    }
+
+    /**
      * Writes a packet into @p out and advances the counters.
      *
      * @param payload L24 big-endian, interleaved left then right.

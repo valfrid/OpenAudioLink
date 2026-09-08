@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.6.3, built by CI as one APK — see *One build* below.
+Version 0.6.4, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -46,8 +46,8 @@ for `oal_phase` and `oal_netpick`:
 ```text
 phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
-          control requests, 44.1-to-48 resampling. 64 tests. No Android; runs
-          anywhere with a JDK.
+          control requests, 44.1-to-48 resampling, silence suppression.
+          76 tests. No Android; runs anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -117,10 +117,47 @@ Three behaviours follow, all tested:
   owes 12 000 packets; sending them would be five seconds of airtime
   delivering audio nobody can use. It re-anchors, sets the RTP marker bit,
   and starts from now.
-- **An empty buffer sends silence, not nothing.** A gap is a break in the
-  sender's timeline and a consumer answers a break by re-seating itself. A
-  decoder stumbling for 20 ms costs 20 ms of quiet instead of a second of
-  re-priming on four speakers.
+- **An empty buffer sends silence, not nothing — for 200 ms.** A gap is a
+  break in the sender's timeline and a consumer answers a break by
+  re-seating itself, so a decoder stumbling for 20 ms costs 20 ms of quiet
+  instead of a second of re-priming on four speakers. Past 200 ms it is
+  not a stumble, it is a stop, and there is no timeline left to keep
+  continuous: `SilenceGate` stops sending until audio comes back, and
+  marks the packet that resumes.
+
+## Publishing is not playing
+
+Pressing *Publish to Spotify* used to start the packet counter
+immediately, before Spotify had been opened. Nothing was broken — the ring
+pads an empty read with silence so the pacer always has something to send,
+so the phone was streaming digital silence at 200 packets a second to
+speakers nobody had asked to play anything. It also destroyed the only
+signal a person had that anything was working, because the counter ran
+whether or not Spotify ever connected.
+
+`SilenceGate` splits the two, and the app shows them as **Published** and
+**Playing**:
+
+1. *Publish* starts librespot and the sender. The cast point appears in
+   Spotify's device list; the wire stays empty and the screen says
+   "waiting · N packets held".
+2. Somebody picks it in Spotify and presses play. Audio reaches the ring.
+3. The gate opens, the resuming packet carries the RTP marker bit, and the
+   packet count starts moving.
+
+Two details that are easy to get wrong and impossible to hear until two
+speakers disagree:
+
+- **The media clock keeps running while the sender is quiet.**
+  `RtpStream.skip()` advances the timestamp by the frames the silence
+  covered. A producer that resumed with the timestamp it left off with
+  would be claiming the pause never happened, and a consumer placing
+  itself on the sender's timeline would seat the new audio exactly as far
+  in the past as the pause was long.
+- **The sequence number does not move.** Sequence counts packets on the
+  wire and a receiver reads a gap in it as loss, so burning numbers on
+  packets deliberately not sent would report the producer's own silence as
+  a broken network.
 
 ## Sources
 
@@ -249,10 +286,11 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 64 tests covering the header field by field,
+`core` is written and tested: 76 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
-ring, discovery parsing, the peer table's liveness, every control request
-body, the device-versus-Hub rule, and the resampler.
+ring, the silence gate and the skipped-time accounting, discovery parsing,
+the peer table's liveness, every control request body, the
+device-versus-Hub rule, and the resampler.
 
 `app` **compiles, and CI produces the APK**, beside the node firmware and
 the Hub built from the same commit — there is no store listing and there
