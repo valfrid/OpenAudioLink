@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.4.0, built by CI as one APK — see *One build* below.
+Version 0.6.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -22,7 +22,8 @@ Version 0.4.0, built by CI as one APK — see *One build* below.
 Four sources, and the first is the reason the app exists:
 
 1. **Spotify Connect** — librespot publishes a cast point named after the
-   phone. A guest picks it in their own Spotify app.
+   phone. It signs in once, and then appears in the picker of the account
+   that signed it in.
 2. **A vinyl node** already on the network, told where to send.
 3. **A music file** from this phone.
 4. **A test tone**, which needs no permission, file or account.
@@ -156,9 +157,26 @@ about.
 
 **librespot's mDNS name is the cast point.** It is named after the phone,
 because at a party "Anna's phone" tells four people in a room which device
-is which. A guest opens Spotify on their own handset, picks it, and their
-music comes out of the speakers this phone has ticked — no account handed
-over, no cable.
+is which.
+
+**It must sign in once before it appears at all.** Spotify clients do not
+offer unclaimed zeroconf devices — see `LIBRESPOT.md`, proven over
+loopback — so the app has a "Sign in to Spotify" button that runs
+librespot with `--enable-oauth`, opens Spotify's own page in the phone's
+browser, and catches the redirect on `127.0.0.1:5588` on the same handset.
+No password is typed into this app and none is stored; what lands is a
+credential in app-private storage, which is reusable playback access to a
+real account and never leaves the phone.
+
+That sign-in is a **separate run of librespot**, because it prints the
+authorisation URL to stdout — the stream the pipe backend fills with PCM.
+The sign-in run sends audio to `/dev/null` so stdout carries the URL.
+
+**The cast point belongs to the account that signed it in**, so a guest on
+a different account will not see it. A shared household account covers a
+home; **Spotify Jam** covers a party, with guests joining the host's
+session and adding to the queue. "Forget account" clears the credential
+before handing the phone on.
 
 ## One build, and what that costs
 

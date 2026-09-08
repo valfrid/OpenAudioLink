@@ -2208,9 +2208,38 @@ It is named after the phone. At a party "Anna's phone" tells four people
 in a room which device is which, where a product name would show all four
 the same string.
 
-The consequence worth stating: a **guest** opens Spotify on their own
-handset, picks it, and their music comes out of the speakers this phone
-has ticked. Nobody has to hand over an account or a cable.
+### It has to sign in once, and that changes who can use it
+
+**Corrected 2026-09-08.** This entry first claimed a guest could open
+Spotify on their own handset, pick the cast point, and hear their music on
+the ticked speakers. That is wrong, and this project had already
+established why: `docs/LIBRESPOT.md`, from two evenings in August, records
+that **current Spotify clients do not offer unclaimed zeroconf devices**
+— proven over loopback with no network involved. A receiver nobody has
+signed in is invisible however well it announces itself.
+
+So the phone does what the Hub does: **one sign-in, ever**, through
+librespot's `--enable-oauth`. On a phone that is easier than on a Windows
+service, because the browser, the redirect and librespot are all on the
+same device — Spotify's page opens, you approve, the redirect lands on
+`127.0.0.1:5588` on that same handset, and a credential is cached.
+
+The sign-in is a **separate run of the process**, and has to be: librespot
+prints the authorisation URL with `println!`, to stdout, which is the
+stream the pipe backend fills with PCM. One process would put that
+sentence into the audio and hide the URL inside it. The sign-in run sends
+audio to `/dev/null` and keeps stdout for the URL.
+
+**The cast point therefore belongs to the account that signed it in.** A
+guest on a different account does not see it. `LIBRESPOT.md` gives the two
+things that reduce that from a blocker to a footnote, and they apply
+unchanged here: a shared household account covers a home, and **Spotify
+Jam** covers a party — guests join the host's session and add to the
+queue, so one signed-in account serves a room without anyone claiming
+anything.
+
+That is Spotify's rule rather than this design's, and it is the standing
+argument for a second adapter: AirPlay has no account at all.
 
 ### Three things Android forces, none of them obvious
 

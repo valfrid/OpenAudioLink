@@ -287,14 +287,58 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
              */
             Spacer(Modifier.height(16.dp))
             Text("Spotify", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "Publishes \"$castPointName\" to Spotify. Open Spotify — on " +
-                    "this phone or anyone else's — and pick it from the device " +
-                    "list. It plays on the ticked speakers.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Button(onClick = { Producer.startStream(SpotifySource(context, castPointName)) }) {
-                Text("Publish to Spotify")
+
+            /*
+             * Signing in comes first, and the order is not a preference.
+             *
+             * Spotify clients do not show *unclaimed* zeroconf devices —
+             * `docs/LIBRESPOT.md`, established over two evenings and proven
+             * over loopback. So publishing before signing in produces a
+             * cast point that announces perfectly and appears nowhere,
+             * which is the most confusing possible outcome. The button that
+             * fixes that is the one on top.
+             */
+            if (!state.spotifySignedIn) {
+                Text(
+                    "\"$castPointName\" has to sign in to Spotify once before it " +
+                        "shows up in the device list — an unclaimed receiver is " +
+                        "invisible there, however well it announces itself. No " +
+                        "password is typed here: Spotify's own page opens, you " +
+                        "approve, and it comes back.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(
+                    onClick = {
+                        Producer.signInToSpotify(context, castPointName) { url ->
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    },
+                    enabled = !state.signingIn,
+                ) {
+                    Text(if (state.signingIn) "Waiting for Spotify…" else "Sign in to Spotify")
+                }
+            } else {
+                Text(
+                    "Signed in. Publishes \"$castPointName\" to Spotify — open " +
+                        "Spotify and pick it from the device list. It plays on the " +
+                        "ticked speakers.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        Producer.startStream(SpotifySource(context, castPointName))
+                    }) {
+                        Text("Publish to Spotify")
+                    }
+                    // The cast point belongs to the account that signed it
+                    // in, so handing the phone on means forgetting it.
+                    OutlinedButton(onClick = { Producer.forgetSpotify(context) }) {
+                        Text("Forget account")
+                    }
+                }
             }
         }
     }

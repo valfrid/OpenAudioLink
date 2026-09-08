@@ -20,6 +20,7 @@ import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.RtpSender
 import org.openaudiolink.phone.sources.AudioSource
+import org.openaudiolink.phone.sources.SpotifyAccount
 import java.net.InetAddress
 
 /**
@@ -98,6 +99,10 @@ object Producer {
         val announcesSent: Long = 0,
         val probesSent: Long = 0,
         val discoveryError: String? = null,
+        /** Whether the cast point has ever been signed in. */
+        val spotifySignedIn: Boolean = false,
+        /** Set while the one-time sign-in is waiting for the browser. */
+        val signingIn: Boolean = false,
         /** Something a person needs to be told, in their own words. */
         val warning: String? = null,
     ) {
@@ -154,6 +159,7 @@ object Producer {
     fun attach(context: Context, identity: Announce) {
         val wifi = WifiBinding(context).also { binding = it }
         wifi.acquireLocks()
+        readSpotifyState(context)
 
         if (wifi.wifiNetwork() == null) {
             warn("No Wi-Fi. The speakers are on the Wi-Fi, so nothing can reach them yet.")
@@ -489,6 +495,51 @@ object Producer {
         }
     }
 
+    /* ---------- the Spotify account ---------- */
+
+    /**
+     * Signs the cast point in, once.
+     *
+     * Not a login screen: no password is typed here and none is stored.
+     * librespot prints an authorisation URL, the phone's browser opens it,
+     * Spotify redirects to a listener on this same handset, and a
+     * credential lands in app-private storage. After that the cast point
+     * is claimed and simply appears in the picker.
+     */
+    fun signInToSpotify(context: Context, name: String, openUrl: (String) -> Unit) {
+        if (_state.value.signingIn) return
+        _state.update { it.copy(signingIn = true) }
+        scope.launch {
+            val ok = try {
+                SpotifyAccount.signIn(context, name, onUrl = openUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "sign-in failed", e)
+                false
+            }
+            _state.update {
+                it.copy(signingIn = false, spotifySignedIn = SpotifyAccount.isSignedIn(context))
+            }
+            warn(
+                if (ok) {
+                    "Signed in. \"$name\" will now appear in Spotify — publish it and pick it there."
+                } else {
+                    "Sign-in did not finish. adb logcat -s oal.spotify has librespot's own account."
+                }
+            )
+        }
+    }
+
+    fun forgetSpotify(context: Context) {
+        SpotifyAccount.forget(context)
+        _state.update { it.copy(spotifySignedIn = false) }
+        warn("Spotify account forgotten. The cast point needs signing in again before it appears.")
+    }
+
+    /** Reads the signed-in state from disk, for the first draw. */
+    fun readSpotifyState(context: Context) {
+        _state.update { it.copy(spotifySignedIn = SpotifyAccount.isSignedIn(context)) }
+    }
+
     /**
      * The name this phone wears on the network, and in Spotify.
      *
@@ -515,5 +566,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.5.0"
+    const val VERSION = "0.6.0"
 }
