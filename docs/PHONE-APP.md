@@ -225,6 +225,10 @@ and the node was counting those as stalls — which is how a healthy link
 came to report 66 517 ppm with a worst gap of sixteen seconds. Sixteen
 seconds is somebody pausing the music.
 
+**Firmware 0.55.0** carries this. A node still on 0.54.0 keeps counting
+pauses as stalls, so its `arrivalGaps` and a 0.55.0 node's are not the
+same measurement and must not be compared.
+
 RFC 3550 already has the word for it: the marker bit on an audio profile
 marks the first packet after a silent period. The consumer now passes it
 to `oal_rtp_stats_on_marked_packet`, and a gap that ends in a marked

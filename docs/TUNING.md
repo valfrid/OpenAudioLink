@@ -1111,6 +1111,23 @@ average, each sample moving it by a sixteenth, so a 1.12-second hole once
 read as 3.21 ms of jitter. Use `arrivalGaps` for stalls; jitter only
 describes the ordinary spread.
 
+**`arrivalGaps` counted deliberate silence, before 0.55.0.** A producer
+with silence suppression — the phone app has it — stops sending when there
+is nothing to play, so a paused track put a real hole in the arrival
+stream and the node called it a stall. A healthy link read 66 517 ppm with
+a worst gap of sixteen seconds, which was somebody pausing the music.
+
+From 0.55.0 a gap ending in a packet with the RFC 3550 marker bit set —
+the first of a talkspurt, which is exactly what a producer resuming sends
+— is counted as **`deliberateGaps`** instead, and kept out of
+`maxArrivalGapTicks`. Two consequences worth holding on to:
+
+- **`arrivalGaps` from 0.54.0 and from 0.55.0 are not the same
+  measurement.** Do not compare a reading across the upgrade, and do not
+  compare two nodes on different versions.
+- **A stall is now a stall.** If `arrivalGaps` is still high on 0.55.0,
+  something really did fail to arrive on time.
+
 ## If it is still not clean
 
 1. **Late packets, drops near zero** → not enough depth. Raise `delayMs`,
