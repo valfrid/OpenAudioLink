@@ -1,23 +1,31 @@
 # The phone app
 
 An Android **Producer**: it originates the RTP stream itself and carries
-just enough control to get one running. Decision 19 sets the scope and
-decision 20 the network rules; this is how the thing is built and how to
-run it.
+just enough control to get one running. Decision 19 sets the scope,
+decision 20 the network rules and decision 21 the Spotify build; this is
+how the thing is built and how to run it.
 
-Version 0.1.0. The core is tested; the Android half has never been
-compiled — see *Status* at the bottom before expecting it to work.
+Version 0.3.0, built by CI as two APKs — see *Two builds* below.
 
 ## What it does, and what it deliberately does not
 
 | Does | Does not |
 | --- | --- |
 | Send L24/48 kHz stereo RTP to any OpenAudioLink consumer | OTA |
-| Find speakers by multicast discovery | Sample logging |
-| Choose which speakers play, mid-song | Room measurement |
-| Volume, per speaker | Provisioning a node's Wi-Fi |
-| Room correction on and off, per speaker | Anything a Hub does |
+| Publish a Spotify cast point (`spotify` build) | Sample logging |
+| Find speakers by multicast discovery | Room measurement |
+| Choose which speakers play, mid-song | Provisioning a node's Wi-Fi |
+| Volume, per speaker | Anything else a Hub does |
+| Room correction on and off, per speaker | |
 | Drive a vinyl node as its Controller | |
+
+Four sources, and the first is the reason the app exists:
+
+1. **Spotify Connect** — librespot publishes a cast point named after the
+   phone. A guest picks it in their own Spotify app.
+2. **A vinyl node** already on the network, told where to send.
+3. **A music file** from this phone.
+4. **A test tone**, which needs no permission, file or account.
 
 The right-hand column stays the Hub's. A speaker holds its own room
 correction in NVS, so it travels to a party already corrected and the
@@ -37,7 +45,8 @@ for `oal_phase` and `oal_netpick`:
 ```text
 phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
-          control requests. 50 tests. No Android; runs anywhere with a JDK.
+          control requests, 44.1-to-48 resampling. 64 tests. No Android; runs
+          anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -54,7 +63,8 @@ so CI runs `:core:test` on a plain JDK image.
 ```bash
 cd phone
 gradle :core:test          # anywhere
-gradle :app:assembleDebug  # needs ANDROID_HOME
+gradle :app:assemblePlainDebug    # needs ANDROID_HOME
+gradle :app:assembleSpotifyDebug  # ...and fetches librespot
 ```
 
 ## The three Android things that fail silently
@@ -133,11 +143,58 @@ phone does not.
 **Internet radio** arrives at this interface whenever it is built: a
 station is a different `MediaItem`, same decoder, same resampler, same tap.
 
-**Spotify, via librespot, is not in this version** and stays source-only
-when it is — decision 19 and decision 18's position, unchanged: public
-repository, no Spotify branding, no built APK containing it. Sources being
-modules is what makes that possible; the app is still a radio, a library
-player and a tone generator without it.
+**Spotify Connect**, in the `spotify` build only. librespot runs as a
+process with `--backend pipe` and the app reads raw PCM from its stdout —
+the same arrangement the Windows Hub uses, because librespot is a Rust
+program rather than a library with a Java binding. The pipe is also the
+flow control: stop reading and the kernel buffer fills, which blocks
+librespot, so nothing needs a rate limiter.
+
+Spotify is 44.1 kHz, so this is the one source that goes through
+`RationalResampler` — a port of the Hub's, the same 147:160 polyphase FIR,
+so the phone produces the same 48 kHz the Hub does rather than a second
+one nobody could hear the difference in and everybody would have to reason
+about.
+
+**librespot's mDNS name is the cast point.** It is named after the phone,
+because at a party "Anna's phone" tells four people in a room which device
+is which. A guest opens Spotify on their own handset, picks it, and their
+music comes out of the speakers this phone has ticked — no account handed
+over, no cable.
+
+## Two builds
+
+| Flavour | librespot | Artifact |
+| --- | --- | --- |
+| `plain` | no | `openaudiolink-phone-debug` |
+| `spotify` | yes | `openaudiolink-phone-spotify-debug` |
+
+Decision 21. The concern decision 19 recorded is intact — shipping
+librespot in the one artefact everybody installs would take the
+operator's licensing decision for them — but the choice moves from
+install time to download time. `SpotifySupport` exists twice with one
+shape, so the rest of the app asks whether the source exists, never which
+build it is, and `plain` contains no code that could use librespot.
+
+The binary is not in this repository. `librespot-android.yml` builds it on
+demand and publishes it on its own `librespot-android-v*` tag; Gradle
+fetches it and checks it against the SHA256 that release publishes,
+refusing one that publishes no hash — `get-librespot.ps1`, in Gradle.
+
+Three things Android forces, and none is obvious:
+
+- **It ships as `liblibrespot.so` and is not a library.** Android refuses
+  to execute a file from an app's data directory (W^X, since Android 10)
+  but will execute one from the APK's native library directory. Anything
+  matching `lib*.so` in `jniLibs` lands there.
+- **`useLegacyPackaging = true`** goes with it. The modern default keeps
+  native libraries compressed inside the APK, which is fine for something
+  you `dlopen` and useless for something you `exec` — there is no path to
+  hand `ProcessBuilder`.
+- **`--no-default-features`**, or it will not cross-compile: the default
+  audio backend wants ALSA and the default TLS wants OpenSSL. The `pipe`
+  backend is compiled unconditionally and `rustls-tls-webpki-roots`
+  carries its own certificates, so nothing needs a C library.
 
 ### About "24-bit"
 
@@ -147,8 +204,11 @@ away between the phone and the speaker.
 
 ## Installing it
 
-Sideloading, not a store. `gradle :app:assembleDebug` produces an APK;
-enable "install unknown apps" for whatever transfers it, and install.
+Sideloading, not a store. Download the APK you want from a CI run's
+artifacts — `openaudiolink-phone-debug` or
+`openaudiolink-phone-spotify-debug` — enable "install unknown apps" for
+whatever transfers it, and install. Both carry the same applicationId and
+the same debug key, so one replaces the other in place.
 
 **The signing keystore is never committed.** Android requires a signed
 APK, and a self-signed key is enough — but that key is the same class of
@@ -160,16 +220,14 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 50 tests covering the header field by field,
+`core` is written and tested: 64 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
-ring, discovery parsing, the peer table's liveness, and every control
-request body.
+ring, discovery parsing, the peer table's liveness, every control request
+body, the device-versus-Hub rule, and the resampler.
 
-`app` **compiles, and CI produces the APK.** An 11 MB
-`openaudiolink-phone-debug` artefact is attached to every run, beside the
-node firmware and the Hub built from the same commit — there is no store
-listing and there will not be one, so that artefact is how this app
-reaches a phone.
+`app` **compiles, and CI produces the APKs**, beside the node firmware and
+the Hub built from the same commit — there is no store listing and there
+will not be one, so those artefacts are how this app reaches a phone.
 
 It is **built by CI rather than by hand** because the container it was
 written in cannot reach `dl.google.com`: the egress policy denies it, so
@@ -199,14 +257,28 @@ One detail that matters and is easy to get backwards: a
 its own silence-skipping and speed adjustment, so the tap sees audio that
 has already been resampled to 48 kHz.
 
-**A build is not a test.** The APK compiles and installs; that says the
-types line up and the resources resolve, and nothing more. Nothing in
-`app` has run on a phone or reached a speaker, so every runtime behaviour
-described above — discovery finding anything, the tap producing 48 kHz
-audio, the pacing surviving a locked screen — is so far an argument rather
-than a result. The checks below are what turn it into one.
+### What has actually run
 
-The first things to check on a real device, in order:
+**0.1.0 reached a phone**, and found the speakers: discovery worked on the
+first try. Two faults came out of that one screenshot, and both are worth
+recording because neither was visible from the code.
+
+- **Every HTTP request was refused before it left the handset.** Android
+  blocks cleartext HTTP from targetSdk 28, and every node endpoint is
+  plain HTTP on 41001. Discovery is UDP, so it worked; volume, room
+  correction and stream control were all dead, and the app reported that
+  as "this speaker's firmware has no volume control" — blaming working
+  firmware for its own missing manifest flag. Fixed in 0.2.0 with
+  `usesCleartextTraffic`, and the two messages are now different
+  sentences.
+- **The Hub was listed as a speaker.** It announces
+  `["controller","producer"]` — the same producer role a turntable
+  announces — so a list filtered on consumer-or-producer offered to play
+  music at a Windows PC. Roles cannot separate them; the port can, and
+  four tests now pin it.
+
+**Still unproven.** No packet has yet been shown to reach a speaker. The
+first things to check on a real device, in order:
 
 1. Test tone to one speaker. Proves discovery, binding, the packet format
    and the port in one step.
@@ -214,5 +286,13 @@ The first things to check on a real device, in order:
    `foreignPackets` says the packets are being accepted as a real stream
    rather than tolerated.
 3. A track from the library, to check the decoder and the resampler.
-4. Two speakers, and listen for the offset the whole synchronisation design
-   exists to remove.
+4. Spotify: does the cast point appear in the picker, on this phone and on
+   another one?
+5. Two speakers, and listen for the offset the whole synchronisation
+   design exists to remove.
+
+Untested beyond that, and worth knowing before relying on either: the
+vinyl node's *Play this* button has never driven `POST /stream/start` on a
+producer node, and the Spotify source has never been run at all — whether
+librespot's mDNS survives Android's network stack is exactly the kind of
+thing that only a phone can answer.

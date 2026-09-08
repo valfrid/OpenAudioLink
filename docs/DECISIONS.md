@@ -1803,6 +1803,11 @@ time" assumption below is no longer an operator's rule. Nodes walk a fixed
 list, so a phone and a node both beaconing is a preference rather than a
 split. The paragraph is left as written because the failure it describes
 is why the list exists.
+**Amended by decision 21:** "source-only, no built APK containing it" is
+superseded by two published builds, one with librespot and one without.
+The concern it expressed — that shipping librespot in the one artefact
+everybody installs takes the operator's licensing decision for them — is
+kept, by moving that choice from install time to download time.
 
 ### Decision
 
@@ -2138,3 +2143,122 @@ different keys. The order makes the nodes agree with each other, which is
 the harm that mattered; it does not tell the operator they have set up two
 groups. That needs a node to report the access point it landed on against
 what its peers report, which the discovery layer could do and does not.
+
+---
+
+## 21. Spotify on the phone is a second build, not a second app
+
+**Date:** 2026-09-08
+**Status:** accepted and implemented in phone 0.3.0
+**Amends:** decision 19's "source-only, no built APK containing it"
+
+### Decision
+
+The phone app is built twice from one source tree:
+
+| Flavour | Contains librespot | Sources |
+| --- | --- | --- |
+| `plain` | no | vinyl node, music file, test tone |
+| `spotify` | yes | those, plus Spotify Connect |
+
+Both are published by CI. The librespot binary itself is **not** in this
+repository: it is cross-compiled on demand by
+`.github/workflows/librespot-android.yml`, published on its own
+`librespot-android-v*` tag, and fetched at build time against the SHA256
+that release publishes — the same arrangement `get-librespot.ps1` uses for
+Windows, and for the same reasons decision 18 gives.
+
+### Why this amends decision 19 rather than obeying it
+
+Decision 19 said the librespot-backed source would be **source-only, with
+no built APK containing it**. Read literally that makes the feature
+unreachable: building it needs an Android SDK *and* a Rust NDK toolchain,
+which is a working afternoon before any music plays, and the point of the
+phone hub is Spotify at a party — not vinyl to speaker, which the vinyl
+node already does without a phone.
+
+What decision 19 was actually protecting is intact, and it is worth
+separating from the sentence that expressed it. The concern was that
+shipping librespot inside the one artefact everybody installs **makes the
+operator's choice for them**: whether running a reimplementation of
+somebody's streaming protocol is licensed for use with that service is
+not this project's decision to take on a stranger's behalf.
+
+Two flavours keep that choice, and move it from install time to download
+time. A person who wants a multi-room speaker system takes `plain` and
+never has librespot on their phone. A person who wants Spotify takes the
+other, and the release says plainly what is in it.
+
+### What the flavour split is, structurally
+
+`SpotifySupport` exists twice with one shape — `AVAILABLE` and a factory
+returning `AudioSource?`. The `plain` copy answers false and returns null,
+and its source set contains no code that could use librespot at all. The
+rest of the app therefore asks *whether the source exists*, never which
+build it is, and there is no hidden feature waiting behind a flag.
+
+### The cast point is librespot's mDNS name
+
+librespot publishes its own Spotify Connect name, so **that name is the
+cast point** — the model in `docs/CAST-POINTS.md` unchanged, with the
+phone holding one of them. Its destinations are the speakers ticked in
+the app.
+
+It is named after the phone. At a party "Anna's phone" tells four people
+in a room which device is which, where a product name would show all four
+the same string.
+
+The consequence worth stating: a **guest** opens Spotify on their own
+handset, picks it, and their music comes out of the speakers this phone
+has ticked. Nobody has to hand over an account or a cable.
+
+### Three things Android forces, none of them obvious
+
+**librespot runs as a process, not a library.** It is a Rust program with
+no Java binding, and `--backend pipe` makes it write raw PCM to stdout —
+which is exactly what the Windows Hub already does. The pipe is also the
+flow control: stop reading and the kernel buffer fills, which blocks
+librespot. Nothing needs a rate limiter.
+
+**It ships as `liblibrespot.so`, and it is not a library.** Android
+refuses to execute a file from an app's data directory (W^X, since
+Android 10) but will execute one from the APK's native library
+directory. Anything matching `lib*.so` in `jniLibs` lands there, so the
+executable travels under a library's name. `useLegacyPackaging = true` is
+required with it: the modern default keeps native libraries compressed
+inside the APK, which is fine for something you `dlopen` and useless for
+something you `exec`, because there is no path to hand `ProcessBuilder`.
+
+**No default features, or it will not cross-compile.** librespot's
+default audio backend is rodio, which wants ALSA, and its default TLS is
+native-tls, which wants OpenSSL — neither exists on Android. The `pipe`
+backend is compiled unconditionally, and `rustls-tls-webpki-roots`
+carries its own certificates, so
+`--no-default-features --features "rustls-tls-webpki-roots,with-libmdns"`
+needs no C library at all. `with-libmdns` is the pure-Rust mDNS that
+publishes the cast point.
+
+### The resampler is the Hub's, ported
+
+Spotify is 44.1 kHz and the wire is 48 (decision 13), so every Spotify
+track is resampled and no other source is. `RationalResampler.kt` is a
+port of `RationalResampler.cs` — the same 147:160 polyphase FIR, 64 taps
+per phase, Kaiser β 8.6 — rather than a fresh implementation, because a
+phone producing a *different* 48 kHz from the Hub's would be a difference
+nobody could hear and everybody would have to reason about.
+
+Two of its tests are the ones a port actually needs. A sine must come out
+a sine at the same amplitude with the error energy far under the signal,
+which catches a wrong ratio or a broken phase. And **many small calls
+must give bit-identical output to one big call** — librespot hands over
+whatever chunks the pipe gives, and a resampler restarting its phase per
+call would click on every buffer boundary, hundreds of times a second,
+and never fail a test that resamples one big array.
+
+### When to revisit
+
+If the two builds start to diverge in anything but this one source. The
+moment `plain` needs a workaround the other does not, the flavour split
+has stopped being containment and become a fork, and the answer then is
+one build with the choice made at run time — which is a worse answer to
+the licensing question and would need saying out loud.
