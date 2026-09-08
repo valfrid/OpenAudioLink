@@ -168,6 +168,26 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
         )
 
+        /*
+         * The heartbeat, and the reason it is on screen rather than in a
+         * log.
+         *
+         * With no speakers found every control is disabled, and a screen of
+         * grey buttons is what a hung app looks like — there was no way to
+         * tell a working app from a dead one by looking. A count that moves
+         * settles it in two seconds, and the interface name answers the
+         * next question after that: heard 0 on wlan0 is a quiet network,
+         * heard 0 on the wrong interface is a bug.
+         */
+        if (state.discovering) {
+            Text(
+                "on ${state.listeningOn ?: "?"} · heard ${state.datagramsHeard} · " +
+                    "announced ${state.announcesSent} · probes ${state.probesSent}" +
+                    (state.discoveryError?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
         LazyColumn(
             Modifier.weight(1f, fill = false),
             verticalArrangement = Arrangement.spacedBy(8.dp),

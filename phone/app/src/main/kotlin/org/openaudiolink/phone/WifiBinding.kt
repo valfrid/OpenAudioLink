@@ -104,6 +104,27 @@ class WifiBinding(context: Context) {
         }
     }
 
+    /**
+     * Pins an already-open socket to the Wi-Fi.
+     *
+     * The same reasoning as [boundSocket], for a socket this class did not
+     * create — the discovery socket, which has to be a MulticastSocket.
+     * Failure is logged rather than thrown: an unbound socket usually still
+     * works, and losing discovery entirely would be the worse outcome.
+     */
+    fun bindToWifi(socket: java.net.DatagramSocket) {
+        val network = wifiNetwork()
+        if (network == null) {
+            Log.w(TAG, "no Wi-Fi to bind the socket to")
+            return
+        }
+        try {
+            network.bindSocket(socket)
+        } catch (e: Exception) {
+            Log.w(TAG, "could not bind the socket to the Wi-Fi", e)
+        }
+    }
+
     fun acquireLocks() {
         if (multicastLock == null) {
             multicastLock = wifi.createMulticastLock("oal-discovery").apply {

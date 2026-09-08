@@ -25,6 +25,15 @@ class DiscoveryClient(
     private val networkInterface: NetworkInterface? = null,
     private val table: PeerTable = PeerTable(),
     private val clock: () -> Long = { System.currentTimeMillis() },
+    /**
+     * Pins the socket to one network, where the platform can do that.
+     *
+     * On a phone this is the difference between joining the group on the
+     * Wi-Fi and joining it on whatever interface the system happens to
+     * prefer — which, with mobile data up, is the one no speaker is on.
+     * Free of Android here; the caller supplies the binding.
+     */
+    private val bindSocket: ((MulticastSocket) -> Unit)? = null,
 ) {
     /** Called when the visible set changed in a way worth redrawing. */
     var onChange: (() -> Unit)? = null
@@ -33,6 +42,28 @@ class DiscoveryClient(
     private var socket: MulticastSocket? = null
     private var listener: Thread? = null
     private var announcer: Thread? = null
+
+    /*
+     * Counters, because "not working" and "working, nothing out there" look
+     * identical from a screen with an empty list on it. These make the
+     * difference visible: datagrams arriving at all says the socket and the
+     * multicast lock are right, and only the peer table is empty.
+     */
+
+    /** Every datagram that reached the socket, ours and other people's. */
+    @Volatile var datagramsHeard: Long = 0; private set
+
+    /** Announces this device has sent. */
+    @Volatile var announcesSent: Long = 0; private set
+
+    /** Probes sent, including every press of "Look again". */
+    @Volatile var probesSent: Long = 0; private set
+
+    /** The interface the group was actually joined on, for the record. */
+    @Volatile var joinedOn: String? = null; private set
+
+    /** The last thing that went wrong, if anything has. */
+    @Volatile var lastError: String? = null; private set
 
     val peers: PeerTable get() = table
 
@@ -59,12 +90,29 @@ class DiscoveryClient(
             reuseAddress = true
             // TTL 1: OpenAudioLink is link-local by design.
             timeToLive = 1
-            if (chosen != null) {
+            bindSocket?.invoke(this)
+
+            /*
+             * Join on the named interface, and fall back rather than fail.
+             *
+             * An earlier version resolved this name to the *socket's* own
+             * property by accident and joined on whatever that returned;
+             * naming the Wi-Fi interface explicitly is correct, but only
+             * while the name is right. If the join is refused — a name that
+             * no longer exists, an interface that is down — the group is
+             * still worth joining the old way, because a group joined on
+             * the system's choice finds speakers more often than a group
+             * never joined at all.
+             */
+            joinedOn = try {
+                if (chosen == null) throw IllegalStateException("no interface named")
                 networkInterface = chosen
                 joinGroup(InetSocketAddress(group, Discovery.PORT), chosen)
-            } else {
+                chosen.name
+            } catch (e: Exception) {
                 @Suppress("DEPRECATION")
                 joinGroup(group)
+                "system default (${e.message})"
             }
             soTimeout = 1_000
         }
@@ -89,6 +137,7 @@ class DiscoveryClient(
     fun probe() {
         val open = socket ?: return
         val payload = Discovery.encodeProbe().toByteArray(Charsets.UTF_8)
+        probesSent++
         try {
             open.send(DatagramPacket(payload, payload.size,
                 InetAddress.getByName(Discovery.GROUP), Discovery.PORT))
@@ -122,18 +171,35 @@ class DiscoveryClient(
             } catch (_: Exception) {
                 continue   // the 1 s timeout, or a close on the way out
             }
-            val text = String(datagram.data, 0, datagram.length, Charsets.UTF_8)
+            datagramsHeard++
 
-            // Somebody else's probe: answer it, unicast, as the protocol says.
-            if (Discovery.isProbe(text)) {
-                self?.let { reply(open, it, datagram.address, datagram.port) }
-                continue
-            }
+            /*
+             * Nothing in here may escape this thread.
+             *
+             * `onChange` is the caller's code, and on Android an uncaught
+             * exception on *any* thread kills the whole process — so a
+             * callback that threw once would take the app down from a
+             * background thread, with the last frame left on screen and
+             * every tap going nowhere. That is indistinguishable from a
+             * freeze, which is the worst thing for it to look like.
+             */
+            try {
+                val text = String(datagram.data, 0, datagram.length, Charsets.UTF_8)
 
-            val announce = Discovery.parseAnnounce(text) ?: continue
-            if (announce.id == self?.id) continue   // our own voice coming back
-            if (table.heard(announce, datagram.address.hostAddress ?: continue, clock())) {
-                onChange?.invoke()
+                // Somebody else's probe: answer it, unicast, as the protocol says.
+                if (Discovery.isProbe(text)) {
+                    self?.let { reply(open, it, datagram.address, datagram.port) }
+                    continue
+                }
+
+                val announce = Discovery.parseAnnounce(text) ?: continue
+                if (announce.id == self?.id) continue   // our own voice coming back
+                val from = datagram.address.hostAddress ?: continue
+                if (table.heard(announce, from, clock())) {
+                    onChange?.invoke()
+                }
+            } catch (e: Exception) {
+                lastError = "handling a datagram: ${e.message}"
             }
         }
         try {
@@ -148,9 +214,15 @@ class DiscoveryClient(
         while (running) {
             try {
                 open.send(DatagramPacket(payload, payload.size, group, Discovery.PORT))
-            } catch (_: Exception) {
+                announcesSent++
+            } catch (e: Exception) {
+                lastError = e.message
             }
-            if (table.expire(clock()) > 0) onChange?.invoke()
+            try {
+                if (table.expire(clock()) > 0) onChange?.invoke()
+            } catch (e: Exception) {
+                lastError = "expiring peers: ${e.message}"
+            }
             // Every 5 seconds, as the protocol specifies.
             for (i in 0 until 50) {
                 if (!running) return

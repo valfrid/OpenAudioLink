@@ -85,6 +85,19 @@ object Producer {
          * situations and only one of them is worth waiting through.
          */
         val discovering: Boolean = false,
+        /*
+         * What the radio is actually doing, on screen.
+         *
+         * An empty list is the same picture whether the socket is dead,
+         * the interface is wrong, or the room simply has no speakers in
+         * it. A count that moves separates the first from the last, and
+         * the interface name separates the middle one.
+         */
+        val listeningOn: String? = null,
+        val datagramsHeard: Long = 0,
+        val announcesSent: Long = 0,
+        val probesSent: Long = 0,
+        val discoveryError: String? = null,
         /** Something a person needs to be told, in their own words. */
         val warning: String? = null,
     ) {
@@ -151,6 +164,9 @@ object Producer {
                 val client = DiscoveryClient(
                     self = identity,
                     networkInterface = wifi.multicastInterface(),
+                    // Pinned to the Wi-Fi, for the same reason the audio
+                    // socket is: a phone with mobile data up is multi-homed.
+                    bindSocket = { wifi.bindToWifi(it) },
                 )
                 client.onChange = { refreshSpeakers() }
                 /*
@@ -165,7 +181,7 @@ object Producer {
                  */
                 discovery = client
                 client.start()
-                _state.update { it.copy(discovering = true) }
+                _state.update { it.copy(discovering = true, listeningOn = client.joinedOn) }
                 client.probe()
             } catch (e: Exception) {
                 /*
@@ -190,6 +206,7 @@ object Producer {
              */
             while (isActive) {
                 refreshSpeakers()
+                readCounters()
                 delay(2_000)
             }
         }
@@ -331,12 +348,30 @@ object Producer {
             } catch (e: Exception) {
                 Log.w(TAG, "probe failed", e)
             }
+            // Straight away, so the press has a visible effect rather than
+            // waiting up to two seconds for the poll to notice.
+            readCounters()
+            refreshSpeakers()
         }
     }
 
     fun dismissWarning() = _state.update { it.copy(warning = null) }
 
     /* ---------- internals ---------- */
+
+    /** Copies the discovery counters into the state the screen reads. */
+    private fun readCounters() {
+        val client = discovery ?: return
+        _state.update {
+            it.copy(
+                listeningOn = client.joinedOn,
+                datagramsHeard = client.datagramsHeard,
+                announcesSent = client.announcesSent,
+                probesSent = client.probesSent,
+                discoveryError = client.lastError,
+            )
+        }
+    }
 
     private fun client(speaker: Speaker) = NodeClient(speaker.address, speaker.controlPort)
 
@@ -457,5 +492,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.4.2"
+    const val VERSION = "0.4.3"
 }
