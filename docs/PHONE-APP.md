@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.6.4, built by CI as one APK — see *One build* below.
+Version 0.6.5, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -140,7 +140,9 @@ whether or not Spotify ever connected.
 
 1. *Publish* starts librespot and the sender. The cast point appears in
    Spotify's device list; the wire stays empty and the screen says
-   "waiting · N packets held".
+   "waiting 13m · nothing sent". (It says *how long*, not how many packets
+   were held: "155895 packets held" reads like a fault, and it is thirteen
+   minutes of nothing at 5 ms a tick.)
 2. Somebody picks it in Spotify and presses play. Audio reaches the ring.
 3. The gate opens, the resuming packet carries the RTP marker bit, and the
    packet count starts moving.
@@ -222,6 +224,22 @@ but nothing is published yet" — and, while publishing, shows librespot's
 own last line, because "Authenticated as …" is the one sentence that
 separates a receiver Spotify has not listed yet from one that never
 connected.
+
+**Connect playback needs Spotify Premium.** librespot cannot stream on a
+free account, but it *will* sign in on one, claim the cast point, and
+appear in the device list looking exactly like an account that can — and
+then play nothing. Said on screen before the first attempt, because
+otherwise it is indistinguishable from a fault in this app.
+
+**librespot's own lines are on screen while publishing**, the last six of
+them, with warnings and errors marked. Six rather than one: the first
+version showed only the most recent line and what arrived was `failed
+filling up next_track during stopping: Invalid state { context is not
+available }`. That is real — it comes from librespot's `handle_stop`, and
+it means the stop handler found no context to fall back to — but it is
+what happens *after* a session fails, not why. Whether librespot ever
+printed "Authenticated as …" is called out separately, above the lines,
+because everything else hangs off it.
 
 **The cast point belongs to the account that signed it in**, so a guest on
 a different account will not see it. A shared household account covers a

@@ -77,15 +77,29 @@ object Producer {
         val streaming: Boolean = false,
         val sourceLabel: String? = null,
         /**
-         * The last thing the source itself said.
+         * The last few things the source itself said, most recent last.
          *
          * The packet counters below prove this *app* is sending; they say
          * nothing about whether the source is happy. For Spotify that is
          * the entire question — librespot can run, publish nothing, and
          * fail to authenticate, and from outside that is indistinguishable
          * from a cast point Spotify has simply not listed yet.
+         *
+         * A list rather than a line, because showing only the last one
+         * produced a screenshot of librespot's stop handler complaining
+         * about a missing context: true, and downstream of whatever
+         * actually went wrong.
          */
-        val sourceStatus: String? = null,
+        val sourceLog: List<String> = emptyList(),
+        /**
+         * Whether the source is in a state that can play at all.
+         *
+         * Null where the question does not apply. For Spotify it is
+         * whether librespot authenticated, which is the fork everything
+         * else depends on: not authenticated and nothing else matters,
+         * authenticated and still silent is a different investigation.
+         */
+        val sourceReady: Boolean? = null,
         /**
          * Whether audio is actually leaving the phone.
          *
@@ -297,7 +311,8 @@ object Producer {
             it.copy(
                 streaming = true,
                 sourceLabel = newSource.label,
-                sourceStatus = null,
+                sourceLog = emptyList(),
+                sourceReady = null,
                 sendingAudio = false,
                 packetsSent = 0,
                 packetsHeld = 0,
@@ -316,7 +331,8 @@ object Producer {
             it.copy(
                 streaming = false,
                 sourceLabel = null,
-                sourceStatus = null,
+                sourceLog = emptyList(),
+                sourceReady = null,
                 sendingAudio = false,
             )
         }
@@ -526,9 +542,11 @@ object Producer {
                  * starts, and a person watching the screen should not have
                  * to guess whether it ever will.
                  */
-                val said = source?.status
-                if (said != _state.value.sourceStatus) {
-                    _state.update { it.copy(sourceStatus = said) }
+                val playing = source
+                val said = playing?.log ?: emptyList()
+                val ready = playing?.ready
+                if (said != _state.value.sourceLog || ready != _state.value.sourceReady) {
+                    _state.update { it.copy(sourceLog = said, sourceReady = ready) }
                 }
 
                 /*
@@ -539,13 +557,12 @@ object Producer {
                  * would ever notice — the screen would sit showing "Stop"
                  * for a stream that ended before it began.
                  */
-                val playing = source
                 if (playing != null && !playing.isPlaying) {
                     // Its own last words, not a pointer at a log on a
                     // computer the person holding the phone may not have.
-                    val why = playing.status
+                    val why = said.takeLast(3).joinToString("\n")
                     warn("${playing.label} stopped on its own." +
-                        if (why != null) "\n\nIt last said: $why" else "")
+                        if (why.isNotEmpty()) "\n\nIt last said:\n$why" else "")
                     stopStream()
                 }
                 kotlinx.coroutines.delay(1_000)
@@ -673,5 +690,5 @@ object Producer {
 }
 
 object BuildInfo {
-    const val VERSION = "0.6.4"
+    const val VERSION = "0.6.5"
 }

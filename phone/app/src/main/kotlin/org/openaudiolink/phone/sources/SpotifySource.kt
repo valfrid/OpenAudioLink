@@ -42,13 +42,44 @@ class SpotifySource(
 
     override val isPlaying: Boolean get() = running
 
-    @Volatile private var lastLine: String? = null
+    /**
+     * The last few things librespot said, for the screen.
+     *
+     * Ten rather than one. A single line was enough to show that the
+     * cast point had been reached and not enough to show what happened
+     * to it: the one that arrived was librespot's stop handler
+     * complaining that it had no context to fall back to, which is the
+     * *consequence* of a failed session and says nothing about the cause.
+     */
+    private val recent = ArrayDeque<String>()
 
-    override val status: String? get() = lastLine
+    @Volatile private var authenticated = false
+
+    @Synchronized private fun remember(line: String) {
+        recent.addLast(line)
+        while (recent.size > KEPT_LINES) recent.removeFirst()
+    }
+
+    @Synchronized private fun snapshot(): List<String> = recent.toList()
+
+    override val log: List<String> get() = snapshot()
+
+    /**
+     * Authentication is the fork in the road, so it is not left to be
+     * inferred from a line scrolling past.
+     *
+     * Not authenticated: nothing else matters and no amount of pressing
+     * play in Spotify will help. Authenticated and still silent: the
+     * account reached Spotify and the problem is further in — which is a
+     * completely different thing to go and look at.
+     */
+    override val ready: Boolean get() = authenticated
 
     override fun start(ring: PcmRing) {
         if (running) return
         running = true
+        authenticated = false
+        synchronized(this) { recent.clear() }
         thread = Thread({ run(ring) }, "oal-librespot").apply { start() }
     }
 
@@ -228,9 +259,25 @@ class SpotifySource(
         try {
             errors.bufferedReader().forEachLine { line ->
                 Log.i(TAG, "librespot: $line")
-                // The timestamp and level prefix are noise on a phone screen.
-                val trimmed = line.substringAfterLast("] ").trim()
-                if (trimmed.isNotBlank()) lastLine = trimmed
+
+                /*
+                 * The one line worth recognising rather than merely
+                 * displaying. Everything downstream of a failed
+                 * authentication looks like a network fault, and this is
+                 * what tells the two apart.
+                 */
+                if (line.contains(AUTHENTICATED)) authenticated = true
+
+                /*
+                 * The timestamp and module are noise on a phone screen,
+                 * but the *level* is not: it is what separates librespot
+                 * narrating from librespot complaining. So the prefix is
+                 * dropped and a marker kept.
+                 */
+                val text = line.substringAfterLast("] ").trim()
+                if (text.isBlank()) return@forEachLine
+                val loud = line.contains(" ERROR") || line.contains(" WARN")
+                remember(if (loud) "! $text" else text)
             }
         } catch (_: Exception) {
         }
@@ -241,5 +288,11 @@ class SpotifySource(
 
         /** Spotify decodes to 44.1 kHz, always. */
         const val SPOTIFY_RATE = 44_100
+
+        /** How many of librespot's lines are kept for the screen. */
+        const val KEPT_LINES = 10
+
+        /** librespot's own words on the only question that gates the rest. */
+        const val AUTHENTICATED = "Authenticated as"
     }
 }

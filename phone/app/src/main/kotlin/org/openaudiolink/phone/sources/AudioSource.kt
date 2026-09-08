@@ -41,13 +41,27 @@ interface AudioSource {
     val isPlaying: Boolean
 
     /**
-     * What the source would say for itself, if asked.
+     * What the source has been saying for itself, most recent last.
      *
      * Packet counters prove this app is sending; they say nothing about
      * whether the *source* is happy. For Spotify that is the whole
      * question — librespot can be running, publishing nothing, and
      * refusing to authenticate, and from outside that is identical to a
      * cast point Spotify simply has not shown yet.
+     *
+     * **Several lines, not one.** The first attempt showed only the last
+     * one, and the last one was `failed filling up next_track during
+     * stopping` — which is real, and comes from librespot's stop handler,
+     * and says nothing whatever about why a stop was the outcome. The
+     * lines before it are where that lives.
      */
-    val status: String? get() = null
+    val log: List<String> get() = emptyList()
+
+    /**
+     * Whether the source is in the state it needs to be in to play.
+     *
+     * Only Spotify has one of these worth reporting: everything else
+     * either plays or does not exist.
+     */
+    val ready: Boolean? get() = null
 }

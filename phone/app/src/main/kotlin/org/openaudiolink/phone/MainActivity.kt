@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import org.openaudiolink.core.Rtp
 import org.openaudiolink.phone.sources.LibrarySource
 import org.openaudiolink.phone.sources.SpotifySource
 import org.openaudiolink.phone.sources.ToneSource
@@ -279,8 +280,17 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
+                /*
+                 * How long, not how many.
+                 *
+                 * The first version printed the held-packet count, and
+                 * "155895 packets held" reads like something enormous is
+                 * going on. It is a five-millisecond tick — thirteen
+                 * minutes of nothing — so it is shown as the thirteen
+                 * minutes it is.
+                 */
                 Text(
-                    "waiting · ${state.packetsHeld} packets held" +
+                    "waiting ${elapsed(state.packetsHeld)} · nothing sent" +
                         if (chosen == 0) " · nothing ticked" else " · $chosen speaker(s) ready",
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -300,12 +310,35 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
              * nothing about whether the source is well, and for Spotify
              * that is the whole question: librespot can be running and
              * publishing nothing, which from outside looks exactly like a
-             * cast point Spotify has not listed yet. "Authenticated as …"
-             * is the line that separates those two, and it belongs on the
-             * phone rather than in a log on some other machine.
+             * cast point Spotify has not listed yet.
+             *
+             * Authentication is called out rather than left in the
+             * scroll, because it is the fork everything else hangs off.
+             * Below it the last few lines verbatim — one line was not
+             * enough: the one that arrived was librespot's stop handler
+             * complaining it had no context to fall back to, which is
+             * what happens *after* something goes wrong and not what.
              */
-            state.sourceStatus?.let { said ->
-                Text(said, style = MaterialTheme.typography.bodySmall)
+            state.sourceReady?.let { ready ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (ready) {
+                        "librespot: signed in to Spotify."
+                    } else {
+                        "librespot has not signed in to Spotify yet. Until it " +
+                            "does, picking this in the device list cannot play " +
+                            "anything. Connect playback also needs a Premium " +
+                            "account — librespot cannot stream on a free one."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            if (state.sourceLog.isNotEmpty()) {
+                Text(
+                    state.sourceLog.takeLast(LOG_LINES_ON_SCREEN).joinToString("\n"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         } else {
             Text(
@@ -425,6 +458,20 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                         "and press play, and the audio goes to the ticked speakers.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                /*
+                 * Said once, plainly, before the first attempt.
+                 *
+                 * librespot streams only for a Premium account. A free
+                 * one signs in perfectly, claims the cast point, appears
+                 * in the device list, and then plays nothing — which is
+                 * indistinguishable from a bug in this app and would send
+                 * anybody looking in entirely the wrong place.
+                 */
+                Text(
+                    "Needs Spotify Premium: librespot cannot stream on a free " +
+                        "account, though it will sign in and appear like one that can.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         Producer.startStream(SpotifySource(context, castPointName))
@@ -439,6 +486,25 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/** How many of librespot's lines fit on a phone without pushing the rest off. */
+private const val LOG_LINES_ON_SCREEN = 6
+
+/**
+ * Held packets as the time they actually represent.
+ *
+ * A packet is 5 ms, so 200 of them is a second. Six figures of "packets
+ * held" reads like a fault; "waiting 13m" reads like waiting, which is
+ * what it is.
+ */
+private fun elapsed(packets: Long): String {
+    val seconds = packets / (Rtp.SAMPLE_RATE / Rtp.FRAMES_PER_PACKET)
+    return when {
+        seconds < 60 -> "${seconds}s"
+        seconds < 3600 -> "${seconds / 60}m ${seconds % 60}s"
+        else -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
     }
 }
 
