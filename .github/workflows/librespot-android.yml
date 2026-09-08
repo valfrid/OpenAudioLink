@@ -60,11 +60,15 @@ jobs:
         #   * with-libmdns is the pure-Rust mDNS, which is what publishes
         #     the cast point. The alternative wants an Avahi daemon.
         #
-        # -p 26 matches the app's minSdk: a binary built against a newer
-        # API than the phone provides fails to link at run time, which on
-        # Android is a process that dies with no output at all.
+        # --platform 26 matches the app's minSdk: a binary built against a
+        # newer API than the phone provides fails to link at run time,
+        # which on Android is a process that dies with no output at all.
+        #
+        # Spelled out, not -p. cargo-ndk 4 passes -p through to cargo as
+        # --package, so the short form asks it to build a crate named "26"
+        # and it panics saying so.
         run: |
-          cargo ndk -t arm64-v8a -p 26 build \
+          cargo ndk -t arm64-v8a --platform 26 build \
             --release --bin librespot \
             --no-default-features \
             --features "rustls-tls-webpki-roots,with-libmdns"
