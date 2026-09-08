@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.7.3, built by CI as one APK — see *One build* below.
+Version 0.7.4, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -46,8 +46,8 @@ for `oal_phase` and `oal_netpick`:
 ```text
 phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
-          control requests, 44.1-to-48 resampling, silence suppression.
-          82 tests. No Android; runs anywhere with a JDK.
+          control requests, 44.1-to-48 resampling, silence suppression,
+          send-interval measurement. 88 tests. No Android; runs anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -177,6 +177,61 @@ One thing the Spotify tile deliberately does **not** carry is anything
 resembling Spotify's logo. That mark is a trademark and this project has
 no licence to draw it; the tile shows a generic broadcast glyph, and the
 word beside it is a factual statement of what the feature talks to.
+
+## Reading the node's numbers about this phone
+
+An hour of the Hub's sample log, with the phone producing to two speakers,
+splits cleanly into two regimes. The discriminator is `fillMinMs` — how
+empty the consumer's buffer got between samples.
+
+| | good stretch | poor stretch |
+| --- | --- | --- |
+| `fillMinMs` | 98–197 ms | 0–13 ms |
+| gaps over 200 ms | 9 in 600 s | **1 262 in 930 s** |
+| underruns | 2 | 264 |
+| phase error | 0.6–2.1 ms | 10–68 ms |
+
+**The number that says where to look is that both speakers reported the
+same thing.** 1 262 gaps on one, 1 264 on the other, over the same
+fifteen minutes, on radios eight decibels apart. Two receivers do not
+agree to within a fifth of a percent by coincidence: whatever caused those
+gaps happened once, upstream of both of them.
+
+Upstream of both is this phone or the air between it and them, and
+**nothing at either end could tell those apart** — the node knows when a
+packet arrived, and only the producer knows when it was sent. So the
+producer measures it too now, in the firmware's own buckets, and
+*Show details* prints both. Read together they answer it in one line:
+gaps at both ends means this app stalled; gaps only at the node means it
+paced correctly and the network clumped the packets on the way, which
+nothing here can fix.
+
+One thing the packet counts already rule out: the phone kept sending
+**6 000 packets per 30-second sample throughout**, which is the full
+200 per second. It was not going quiet. Whatever produced those gaps
+delayed packets rather than skipping them.
+
+Two changes went in with the measurement. The sending thread now asks for
+`THREAD_PRIORITY_URGENT_AUDIO` — `Thread.MAX_PRIORITY` is very nearly a
+no-op on Android, where the Java priorities are squeezed into a narrow
+band of nice values, and −19 is the band the platform's own audio threads
+run in. And the firmware stops counting deliberate silence as a stall: see
+below.
+
+## Deliberate silence is not a stall
+
+`SilenceGate` means a paused track puts a real hole in the arrival stream,
+and the node was counting those as stalls — which is how a healthy link
+came to report 66 517 ppm with a worst gap of sixteen seconds. Sixteen
+seconds is somebody pausing the music.
+
+RFC 3550 already has the word for it: the marker bit on an audio profile
+marks the first packet after a silent period. The consumer now passes it
+to `oal_rtp_stats_on_marked_packet`, and a gap that ends in a marked
+packet is counted as `deliberateGaps` instead — kept, because "the
+producer went quiet 2 535 times" is worth knowing, just not under the
+heading *stalls*, and kept out of `maxArrivalGapTicks` so the lifetime
+maximum stops reporting the longest anybody left the music paused.
 
 ## Staying in touch
 
@@ -471,7 +526,7 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 82 tests covering the header field by field,
+`core` is written and tested: 88 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, the silence gate and the skipped-time accounting, discovery parsing,
 the peer table's liveness and its second liveness channel, every control request body, the

@@ -543,6 +543,26 @@ private fun Details(state: Producer.State) {
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
+
+            /*
+             * This end of the same measurement the nodes report.
+             *
+             * A node's arrival gaps cannot say whether the producer
+             * stalled or the air clumped the packets; two of them agreeing
+             * to within a fifth of a percent said the cause was upstream
+             * of both, and this is the only place that can tell which.
+             */
+            if (state.sendingAudio) {
+                Text(
+                    "sent unevenly: ${state.sendGaps} gaps · worst " +
+                        "${state.sendGapWorstMs} ms" +
+                        state.sendGapShape.takeIf { it.size == 5 }?.let {
+                            " · <20 ${it[0]} · 20-50 ${it[1]} · 50-100 ${it[2]}" +
+                                " · 100-200 ${it[3]} · >200 ${it[4]}"
+                        }.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
 
         state.sourceReady?.let { ready ->

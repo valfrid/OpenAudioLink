@@ -389,6 +389,80 @@ static void test_small_clumps_are_not_gaps(void)
     CHECK_EQ(s.arrival_gaps, 0);
 }
 
+/*
+ * The phone app stops sending when nothing is playing -- a cast point
+ * nobody has selected, or a paused track -- and marks the packet that
+ * resumes. Counting that silence as a stall is how a healthy link came to
+ * report 66 517 ppm and a worst gap of sixteen seconds, which is somebody
+ * pausing the music described as a catastrophe.
+ */
+static void test_a_marked_packet_ends_a_deliberate_silence(void)
+{
+    TEST("a marked packet ends a deliberate silence");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 100);
+    uint32_t resumed = 100u * FRAMES_PER_PACKET + 48000u * 16u; /* paused 16 s */
+    oal_rtp_stats_on_marked_packet(&s, 100, 100u * FRAMES_PER_PACKET, resumed, SSRC, true);
+
+    CHECK_EQ(s.arrival_gaps, 0);
+    CHECK_EQ(s.deliberate_gaps, 1);
+    /* And it must not poison the lifetime maximum, which is the number a
+     * person reads as "the worst this link has ever done". */
+    CHECK(oal_rtp_stats_max_gap(&s) < 48000u);
+}
+
+/* The same silence, unmarked, is exactly what the stall counter is for. */
+static void test_an_unmarked_silence_is_still_a_stall(void)
+{
+    TEST("an unmarked silence is still a stall");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 100);
+    uint32_t resumed = 100u * FRAMES_PER_PACKET + 48000u;
+    oal_rtp_stats_on_marked_packet(&s, 100, 100u * FRAMES_PER_PACKET, resumed, SSRC, false);
+
+    CHECK_EQ(s.arrival_gaps, 1);
+    CHECK_EQ(s.deliberate_gaps, 0);
+}
+
+/*
+ * A marker bit on an ordinary packet must not become a way to hide a
+ * stall that is only just over the threshold either -- but a gap under the
+ * threshold was never counted, so a marked one is not counted twice.
+ */
+static void test_a_marked_packet_after_no_gap_counts_nothing(void)
+{
+    TEST("a marked packet after no gap counts nothing");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 100);
+    oal_rtp_stats_on_marked_packet(&s, 100, 100u * FRAMES_PER_PACKET,
+                                   100u * FRAMES_PER_PACKET + 1, SSRC, true);
+
+    CHECK_EQ(s.arrival_gaps, 0);
+    CHECK_EQ(s.deliberate_gaps, 0);
+}
+
+/* The plain entry point is the marked one with the flag clear, so every
+ * caller that has not read the marker bit keeps its old behaviour. */
+static void test_the_plain_entry_point_assumes_unmarked(void)
+{
+    TEST("the plain entry point assumes unmarked");
+    oal_rtp_stats_t s;
+    oal_rtp_stats_reset(&s);
+
+    send_clean(&s, 0, 100);
+    oal_rtp_stats_on_packet(&s, 100, 100u * FRAMES_PER_PACKET,
+                            100u * FRAMES_PER_PACKET + 48000u, SSRC);
+
+    CHECK_EQ(s.arrival_gaps, 1);
+    CHECK_EQ(s.deliberate_gaps, 0);
+}
+
 static void test_a_restart_does_not_record_a_giant_gap(void)
 {
     TEST("a restart does not record a giant gap");
@@ -515,6 +589,10 @@ int main(void)
     test_a_stall_shows_as_a_gap_with_no_loss();
     test_small_clumps_are_not_gaps();
     test_a_restart_does_not_record_a_giant_gap();
+    test_a_marked_packet_ends_a_deliberate_silence();
+    test_an_unmarked_silence_is_still_a_stall();
+    test_a_marked_packet_after_no_gap_counts_nothing();
+    test_the_plain_entry_point_assumes_unmarked();
     test_arrival_gaps_survive_a_source_change();
     test_gaps_land_in_one_bucket_each();
     test_the_json_fits_its_buffer();

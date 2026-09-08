@@ -111,6 +111,24 @@ typedef struct {
     uint32_t last_arrival;   /* arrival of the previous accepted packet */
     bool     arrival_known;
     uint32_t arrival_gaps;  /* gaps longer than a packet is worth waiting for */
+
+    /*
+     * Gaps the producer meant, counted apart from the ones it did not.
+     *
+     * A producer with silence suppression stops sending when there is
+     * nothing to play -- the phone app does exactly this, so a cast point
+     * that nobody has started, or a pause between tracks, puts a hole in
+     * the arrival stream that no network fault caused. Counting those as
+     * stalls made a healthy link report 66 517 ppm and a worst gap of
+     * sixteen seconds, which is a paused track described as a catastrophe.
+     *
+     * RFC 3550 already has the word for it: the marker bit on an audio
+     * profile marks the first packet after a silent period. So a gap that
+     * ends in a marked packet is deliberate, and is counted here instead
+     * -- not discarded, because "the producer went quiet 2 535 times" is
+     * worth knowing, just not under the heading "stalls".
+     */
+    uint32_t deliberate_gaps;
     uint32_t max_gap_ticks;  /* the worst one, in RTP timestamp units */
 
     /*
@@ -158,6 +176,22 @@ void oal_rtp_stats_reset(oal_rtp_stats_t *stats);
  */
 bool oal_rtp_stats_on_packet(
     oal_rtp_stats_t *stats, uint16_t seq, uint32_t rtp_time, uint32_t arrival, uint32_t ssrc);
+
+/**
+ * The same, told whether this packet begins a talkspurt.
+ *
+ * @param starts_talkspurt  the packet's RTP marker bit. A producer sets it
+ *                          on the first packet after a deliberate silence,
+ *                          so the gap before it is something it chose
+ *                          rather than something the network did — see
+ *                          `deliberate_gaps`. Everything else is identical.
+ *
+ * `oal_rtp_stats_on_packet` is this with the flag clear, which is what a
+ * caller that has not read the marker bit is entitled to assume.
+ */
+bool oal_rtp_stats_on_marked_packet(
+    oal_rtp_stats_t *stats, uint16_t seq, uint32_t rtp_time, uint32_t arrival,
+    uint32_t ssrc, bool starts_talkspurt);
 
 /** Packets the sequence numbers say should have arrived. */
 uint32_t oal_rtp_stats_expected(const oal_rtp_stats_t *stats);

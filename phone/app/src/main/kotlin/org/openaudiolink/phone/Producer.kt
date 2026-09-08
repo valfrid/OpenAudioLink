@@ -123,6 +123,16 @@ object Producer {
         val sendingAudio: Boolean = false,
         /** Packets not sent because there was nothing to play. */
         val packetsHeld: Long = 0,
+        /**
+         * This end's own view of how evenly it sent.
+         *
+         * The number to read beside a node's `arrivalGaps`. Both agreeing
+         * means this phone stalled; the node alone means the network
+         * clumped the packets on the way, which nothing here can fix.
+         */
+        val sendGaps: Long = 0,
+        val sendGapWorstMs: Long = 0,
+        val sendGapShape: List<Long> = emptyList(),
         val packetsSent: Long = 0,
         val underruns: Long = 0,
         val resyncs: Long = 0,
@@ -337,19 +347,43 @@ object Producer {
         stopStream()
         ring.clear()
 
-        val rtp = RtpSender(ring, socketProvider = {
+        val rtp = RtpSender(
+            ring,
             /*
-             * Bound to the Wi-Fi where there is one, unbound where there is
-             * not — never refused.
+             * The scheduler priority that actually does something.
              *
-             * A phone *hosting* the hotspot has no station network at all,
-             * so `wifiNetwork()` is null and there is nothing to bind to;
-             * that is the party-mode arrangement of decision 20, not a
-             * fault. Refusing to open a socket there would have made the
-             * one deployment this app exists for the one it cannot do.
+             * RtpSender sets Thread.MAX_PRIORITY, which on Android is very
+             * nearly a no-op: the Java priorities are squeezed into a
+             * narrow band of nice values. THREAD_PRIORITY_URGENT_AUDIO is
+             * nice -19, the band the platform's own audio threads run in,
+             * and it is the difference between a 5 ms loop that holds and
+             * one the scheduler feels free to park behind a UI frame.
              */
-            wifi.boundSocket() ?: java.net.DatagramSocket()
-        })
+            onSendingThread = {
+                try {
+                    android.os.Process.setThreadPriority(
+                        android.os.Process.THREAD_PRIORITY_URGENT_AUDIO
+                    )
+                } catch (e: Exception) {
+                    // A device that refuses the priority still plays music.
+                    Log.w(TAG, "could not raise the sending thread's priority", e)
+                }
+            },
+            socketProvider = {
+                /*
+                 * Bound to the Wi-Fi where there is one, unbound where
+                 * there is not — never refused.
+                 *
+                 * A phone *hosting* the hotspot has no station network at
+                 * all, so `wifiNetwork()` is null and there is nothing to
+                 * bind to; that is the party-mode arrangement of decision
+                 * 20, not a fault. Refusing to open a socket there would
+                 * have made the one deployment this app exists for the one
+                 * it cannot do.
+                 */
+                wifi.boundSocket() ?: java.net.DatagramSocket()
+            },
+        )
         rtp.setDestinations(currentDestinations())
         rtp.start()
         sender = rtp
@@ -671,6 +705,9 @@ object Producer {
                             packetsSent = rtp.packetsSent,
                             packetsHeld = rtp.packetsHeld,
                             sendingAudio = rtp.sendingAudio,
+                            sendGaps = rtp.sendGaps.gaps,
+                            sendGapWorstMs = rtp.sendGaps.worstMs,
+                            sendGapShape = rtp.sendGaps.buckets.toList(),
                             underruns = rtp.underruns,
                             resyncs = rtp.resyncs,
                         )
@@ -871,5 +908,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.7.3"
+    const val VERSION = "0.7.4"
 }

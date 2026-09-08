@@ -116,8 +116,12 @@ static void consumer_task(void *arg)
         }
 
         uint32_t arrival = arrival_in_rtp_units();
-        bool usable = oal_rtp_stats_on_packet(
-            &s_state.stats, header.sequence, header.timestamp, arrival, header.ssrc);
+        /* The marker bit travels with the packet and says whether the
+         * silence before it was the producer's choice. Passing it is what
+         * keeps a paused track out of the stall count. */
+        bool usable = oal_rtp_stats_on_marked_packet(
+            &s_state.stats, header.sequence, header.timestamp, arrival, header.ssrc,
+            header.marker);
 
         s_state.last_ssrc = header.ssrc;
         s_state.last_packet_us = (uint64_t)esp_timer_get_time();

@@ -32,6 +32,18 @@ class RtpSender(
     private val ring: PcmRing,
     private val port: Int = Rtp.DEFAULT_PORT,
     private val socketProvider: () -> DatagramSocket = { DatagramSocket() },
+    /**
+     * Run on the sending thread before it sends anything.
+     *
+     * `Thread.MAX_PRIORITY` is set below and on Android it is very nearly
+     * a no-op: the Java priorities are squeezed into a narrow band of nice
+     * values, and the one that actually matters is
+     * `Process.setThreadPriority(THREAD_PRIORITY_URGENT_AUDIO)`, which
+     * sets the Linux nice value the scheduler reads. That call lives in
+     * `android.os` and this module has no Android in it, so the app passes
+     * it in.
+     */
+    private val onSendingThread: () -> Unit = {},
 ) {
     private val destinations = CopyOnWriteArrayList<InetAddress>()
     private val clock = SendClock()
@@ -65,6 +77,16 @@ class RtpSender(
     /** How often the phone was frozen long enough to give up catching up. */
     @Volatile var resyncs: Long = 0; private set
 
+    /**
+     * This end's own view of how evenly it sent — see [SendGaps].
+     *
+     * Read beside the node's `arrivalGaps`. Two speakers reporting the
+     * same gap count to within a fifth of a percent said the cause was
+     * upstream of both of them; only the producer can say whether upstream
+     * means this app or the air.
+     */
+    val sendGaps = SendGaps()
+
     val underruns: Long get() = ring.underruns
     val isRunning: Boolean get() = running
 
@@ -79,7 +101,10 @@ class RtpSender(
     fun start() {
         if (running) return
         running = true
-        thread = Thread({ run() }, "oal-rtp-sender").apply {
+        thread = Thread({
+            onSendingThread()
+            run()
+        }, "oal-rtp-sender").apply {
             // Audio pacing loses to almost nothing else on the device, and
             // being late here is audible in a way that being late almost
             // anywhere else in an app is not.
@@ -132,6 +157,9 @@ class RtpSender(
                     }
 
                     is SendClock.Tick.Resync -> {
+                        // The timeline restarted; the interval before it
+                        // describes a freeze already counted as a resync.
+                        sendGaps.resume()
                         /*
                          * Everything held is now older than the gap that
                          * caused this. Playing it out before the new audio
@@ -168,6 +196,8 @@ class RtpSender(
 
                             if (verdict == SilenceGate.Verdict.RESUME) {
                                 stream.markDiscontinuity()
+                                // A deliberate silence is not a late send.
+                                sendGaps.resume()
                             }
 
                             ring.readOrSilence(frames, Rtp.FRAMES_PER_PACKET)
@@ -187,6 +217,7 @@ class RtpSender(
                                 }
                             }
                             packetsSent++
+                            sendGaps.sent()
                         }
                         clock.sent(tick.packets)
                     }

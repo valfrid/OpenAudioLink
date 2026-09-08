@@ -100,6 +100,13 @@ static void update_jitter(oal_rtp_stats_t *stats, uint32_t rtp_time, uint32_t ar
 bool oal_rtp_stats_on_packet(
     oal_rtp_stats_t *stats, uint16_t seq, uint32_t rtp_time, uint32_t arrival, uint32_t ssrc)
 {
+    return oal_rtp_stats_on_marked_packet(stats, seq, rtp_time, arrival, ssrc, false);
+}
+
+bool oal_rtp_stats_on_marked_packet(
+    oal_rtp_stats_t *stats, uint16_t seq, uint32_t rtp_time, uint32_t arrival,
+    uint32_t ssrc, bool starts_talkspurt)
+{
     if (stats == NULL) {
         return false;
     }
@@ -116,6 +123,7 @@ bool oal_rtp_stats_on_packet(
         uint32_t reordered = stats->reordered;
         uint32_t too_late = stats->too_late;
         uint32_t arrival_gaps = stats->arrival_gaps;
+        uint32_t deliberate = stats->deliberate_gaps;
         uint32_t max_gap = stats->max_gap_ticks;
         uint32_t gap_buckets[OAL_RTP_GAP_BUCKETS];
         memcpy(gap_buckets, stats->gap_buckets, sizeof gap_buckets);
@@ -127,6 +135,7 @@ bool oal_rtp_stats_on_packet(
         stats->reordered = reordered;
         stats->too_late = too_late;
         stats->arrival_gaps = arrival_gaps;
+        stats->deliberate_gaps = deliberate;
         stats->max_gap_ticks = max_gap;
         memcpy(stats->gap_buckets, gap_buckets, sizeof gap_buckets);
         stats->ssrc = ssrc;
@@ -151,6 +160,17 @@ bool oal_rtp_stats_on_packet(
         uint32_t gap = arrival - stats->last_arrival;
         if (gap > OAL_RTP_ARRIVAL_SANE_TICKS) {
             /* a restart, not a gap */
+        } else if (starts_talkspurt && gap > OAL_RTP_ARRIVAL_GAP_TICKS) {
+            /*
+             * The producer meant this one.
+             *
+             * A marked packet is the first after a deliberate silence, so
+             * the hole before it is a pause rather than a stall. Counted
+             * separately and kept out of max_gap_ticks, which otherwise
+             * spends the rest of the session reporting the longest time
+             * anybody left the music paused.
+             */
+            stats->deliberate_gaps++;
         } else {
             if (gap > stats->max_gap_ticks) {
                 stats->max_gap_ticks = gap;
@@ -328,6 +348,10 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                         * beside lossPpm: a link can be flawless by that
                         * measure and unlistenable by this one. */
                        "\"arrivalGaps\":%u,\"arrivalGapPpm\":%u,\"maxArrivalGapTicks\":%u,"
+                       /* Gaps the producer meant: a paused track, or a cast
+                        * point nobody has started. Not a fault, and not
+                        * mixed into arrivalGaps, where it read as one. */
+                       "\"deliberateGaps\":%u,"
                        /* Monotonic, so two samples subtract to the shape of
                         * the interval between them. maxArrivalGapTicks
                         * above is a lifetime maximum and stops moving. */
@@ -343,6 +367,7 @@ int oal_rtp_stats_to_json(const oal_rtp_stats_t *stats, char *out, size_t out_si
                        (unsigned)stats->arrival_gaps,
                        (unsigned)oal_rtp_stats_gap_ppm(stats),
                        (unsigned)oal_rtp_stats_max_gap(stats),
+                       (unsigned)stats->deliberate_gaps,
                        (unsigned)stats->gap_buckets[0], (unsigned)stats->gap_buckets[1],
                        (unsigned)stats->gap_buckets[2], (unsigned)stats->gap_buckets[3],
                        (unsigned)stats->gap_buckets[4]);
