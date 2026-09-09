@@ -25,11 +25,26 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "org.openaudiolink.phone"
+        /*
+         * The identity Google Play will hold forever.
+         *
+         * An applicationId cannot be changed once a package has been
+         * published: Play keys the listing, the reviews, the install base
+         * and the update path on it, and a new one is a different app with
+         * a different listing that no existing installation upgrades to.
+         * So it is worth being deliberate about now and never again.
+         *
+         * It differs from `namespace` above on purpose. The namespace is
+         * where the generated `R` and `BuildConfig` classes live and it
+         * follows the Kotlin source tree; the applicationId is the name
+         * the device and the store use. Keeping them apart means the
+         * store identity could be settled without moving every file.
+         */
+        applicationId = "se.valfrid.openaudiolink"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.8.8"
+        versionCode = 31
+        versionName = "0.8.9"
     }
 
     buildTypes {
@@ -72,7 +87,18 @@ android {
 
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    /*
+     * `buildConfig` is on so the app can read its own versionName.
+     *
+     * It was carried a second time as a hand-written constant, and the
+     * two drifted the moment anybody forgot one of them — which is a
+     * thing that happened repeatedly. One number, declared here, read
+     * everywhere.
+     */
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 /*

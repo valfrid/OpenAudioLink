@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.8, built by CI as one APK — see *One build* below.
+Version 0.8.9, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -746,8 +746,15 @@ the peer table's liveness and its second liveness channel, every control request
 device-versus-Hub rule, and the resampler.
 
 `app` **works on a phone, and CI produces the APK**, beside the node firmware and
-the Hub built from the same commit — there is no store listing and there
-will not be one, so those artefacts are how this app reaches a phone.
+the Hub built from the same commit — there is no store listing yet, so
+those artefacts are how this app reaches a phone.
+
+A Play listing is now planned rather than ruled out; `docs/PLAY-STORE.md`
+holds the plan, what has to be fixed before a first upload, and the one
+decision already settled — the applicationId is `se.valfrid.openaudiolink`
+and cannot change once published. **The APK stays regardless.** It is how
+a build reaches a handset five minutes after a commit, and a store
+release cycle is far too slow to debug a speaker with.
 
 It is **built by CI rather than by hand** because the container it was
 written in cannot reach `dl.google.com`: the egress policy denies it, so

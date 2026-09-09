@@ -971,6 +971,20 @@ private const val PROBE_INTERVAL_MS = 5_000L
  */
 private const val QUIET_MS = 10_000L
 
+/**
+ * The app's version, from the one place that defines it.
+ *
+ * This used to be a hand-written constant beside the `versionName` in
+ * `app/build.gradle.kts`, and keeping two numbers in step by hand worked
+ * exactly as well as that always works: they drifted whenever one was
+ * forgotten, and the announce this phone sends then claimed a version
+ * the APK was not.
+ *
+ * `BuildConfig.VERSION_NAME` is generated from `versionName`, so there is
+ * now one number. That also matters for what comes next — a release
+ * derives its version from the git tag, and a second copy in Kotlin
+ * would be a second thing for the tag to disagree with.
+ */
 object BuildInfo {
-    const val VERSION = "0.8.8"
+    val VERSION: String = BuildConfig.VERSION_NAME
 }

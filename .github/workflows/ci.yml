@@ -45,8 +45,11 @@ jobs:
   # not take the wire-format tests down with it.
   #
   # It also produces the artefact a person installs: there is no store
-  # listing and there will not be one, so a downloadable APK from a known
-  # commit is how this app reaches a phone.
+  # listing yet, so a downloadable APK from a known commit is how this app
+  # reaches a phone. A Play listing is planned -- docs/PLAY-STORE.md -- and
+  # this job stays either way: a store release cycle is far too slow to
+  # debug a speaker with, and the AAB will be an addition to this, on a
+  # tag, not a replacement for it.
   phone-app:
     name: Phone APK
     runs-on: ubuntu-latest
