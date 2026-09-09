@@ -153,6 +153,22 @@ object Producer {
          * the interface name separates the middle one.
          */
         val listeningOn: String? = null,
+        /**
+         * This phone's own address, beside the interface it listens on.
+         *
+         * Cheap, and it answers a question nothing else on the screen can:
+         * whether the phone and the speakers are on the same subnet. Split
+         * the house across two bands — speakers on 2.4 GHz, phone on 5 —
+         * and a router that bridges them is invisible while a router that
+         * routes them is fatal. In the second case discovery finds
+         * nothing, which reads identically to a quiet network, a wrong
+         * interface, or no speakers switched on.
+         *
+         * Two addresses in the same /24 as the speakers' means bridged.
+         * Different ones mean the bands are separate networks and no
+         * amount of waiting will help.
+         */
+        val localAddress: String? = null,
         val datagramsHeard: Long = 0,
         val announcesSent: Long = 0,
         val probesSent: Long = 0,
@@ -286,7 +302,13 @@ object Producer {
                  */
                 discovery = client
                 client.start()
-                _state.update { it.copy(discovering = true, listeningOn = client.joinedOn) }
+                _state.update {
+                    it.copy(
+                        discovering = true,
+                        listeningOn = client.joinedOn,
+                        localAddress = wifi.localAddress(),
+                    )
+                }
                 client.probe()
             } catch (e: Exception) {
                 /*
@@ -534,6 +556,7 @@ object Producer {
         _state.update {
             it.copy(
                 listeningOn = client.joinedOn,
+                localAddress = binding?.localAddress() ?: it.localAddress,
                 datagramsHeard = client.datagramsHeard,
                 announcesSent = client.announcesSent,
                 probesSent = client.probesSent,
@@ -949,5 +972,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.8.3"
+    const val VERSION = "0.8.4"
 }

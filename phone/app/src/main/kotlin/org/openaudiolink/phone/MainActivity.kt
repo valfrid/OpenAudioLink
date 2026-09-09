@@ -641,7 +641,9 @@ private fun Details(state: Producer.State) {
         Text("Details", style = MaterialTheme.typography.titleMedium)
 
         Text(
-            "discovery: on ${state.listeningOn ?: "?"} · heard ${state.datagramsHeard} · " +
+            "discovery: on ${state.listeningOn ?: "?"}" +
+                (state.localAddress?.let { " ($it)" } ?: "") +
+                " · heard ${state.datagramsHeard} · " +
                 "announced ${state.announcesSent} · probes ${state.probesSent}" +
                 (state.discoveryError?.let { " · $it" } ?: ""),
             style = Diagnostic,

@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.3, built by CI as one APK — see *One build* below.
+Version 0.8.4, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -113,6 +113,49 @@ generated and pushed to the nodes with `POST /config {"party":{…}}`. It is
 not in this repository and never will be; it lives in the Hub's data
 directory and is typed into the phone once.
 
+## The home network may be dual-band, but it must be one subnet
+
+Putting the speakers on 2.4 GHz and the phone on 5 GHz is a good idea: the
+phone is the producer and the producer's uplink is the hop that showed up
+in the measurements against the Hub, while the ESP32-S3's radio has no
+choice in the matter. Most home routers publish both bands as one bridged
+LAN, and then this is simply a better arrangement of the same network.
+
+The condition is that the two bands are **bridged, not routed**. OAL's
+discovery is a multicast announce to `239.255.41.10`, and multicast does
+not cross a subnet boundary. A router that puts each band on its own
+subnet — a guest SSID, a separate "IoT" network, some mesh systems in
+their default configuration — leaves a phone that finds no speakers at
+all, which looks identical to a quiet network, a wrong interface, or
+nothing switched on.
+
+So the details line prints this phone's own address next to the interface
+it joined on. Same `/24` as the speakers reported by the Hub, and the
+bands are bridged; a different one, and they are separate networks and no
+amount of waiting will help.
+
+### The band does not decide who can see the cast point
+
+A worry worth answering directly: publishing Spotify Connect from a phone
+on 5 GHz does **not** hide the cast point from a second phone elsewhere in
+the house.
+
+Once the device has been claimed by an account, it is visible through
+Spotify's own servers — the picker on a second phone signed into that
+**same account** lists it whether that phone is on 5 GHz, on 2.4 GHz, or
+on mobile data in another country. Zeroconf on the LAN is only how the
+device is claimed the first time.
+
+A phone signed into a **different** account cannot use it, and that is not
+a network problem either: current Spotify clients no longer show unclaimed
+zeroconf devices at all (`docs/LIBRESPOT.md`), so a guest could not have
+picked it from the same room on the same band. Spotify Jam is the route
+for guests.
+
+What the second phone *does* need is the audio to arrive, and that is the
+first half of this section: whoever is producing must reach the speakers'
+subnet.
+
 ## Pacing, and what a phone does to it
 
 A producer's whole obligation, now that consumers place themselves on the
@@ -153,6 +196,11 @@ so none of them was deleted. They live under *Settings → Show details*,
 off by default. A screen that opens on packet counts and another
 program's stderr is an instrument panel; this is meant to be a thing
 somebody plays music with.
+
+The discovery line under that switch reads `discovery: on wlan0
+(192.168.0.34) · heard … · announced …`. The address is this phone's own,
+and it is there for one question the rest of the screen cannot answer: see
+*The home network may be dual-band* above.
 
 **The cast point's name is editable**, and defaults to `OAL ` plus the
 phone's own name. A Spotify device list is a flat alphabetical pile of
