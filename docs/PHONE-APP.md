@@ -264,6 +264,15 @@ strong candidate rather than a proven cure — but the measurement has at
 least moved the search off the producer, where three rounds of work had
 been aimed.
 
+**And the overnight run does not settle it.** Both runs were clean, but a
+sleeping house is an uncontended channel, which is exactly the condition
+predicted to look like this whether or not the marking does anything. The
+figures are *suggestive* — 0.04 gaps per 30 s against 0.45 in the best
+quiet stretch measured before the change — and suggestive across
+different hours on different traffic is not proof. The test that would
+settle it is deliberate: play to both speakers, then start a large upload
+from the phone.
+
 Two changes went in with the measurement. The sending thread now asks for
 `THREAD_PRIORITY_URGENT_AUDIO` — `Thread.MAX_PRIORITY` is very nearly a
 no-op on Android, where the Java priorities are squeezed into a narrow
@@ -745,6 +754,35 @@ does not fit the new one. It recovers by starting from the beginning, so
 the visible cost is that **transferring playback to this cast point
 restarts the track** instead of resuming where you were. It is inside
 librespot's Connect state machine, not in anything here.
+
+**Overnight, 8–9 September.** Two unbroken runs on a quiet house network,
+with the Hub at 0.105.0 logging `deliberateGaps` for the first time:
+
+| | Spotify, 65 min | Internet radio, **251 min** |
+| --- | --- | --- |
+| gaps over 200 ms | 0.12 per 30 s | **0.04 per 30 s** |
+| underruns | 12 | 192 |
+| resyncs | 3 | 33 |
+| phase error, median | 1.6 ms | 1.6 ms |
+| loss | 106 ppm | 1 070 ppm |
+| `ssrcChanges` | 0 | 0 |
+
+Four hours and eleven minutes of continuous radio, three million packets,
+one sender throughout. **That is the crash fixed and internet radio
+working on hardware**, and it is also the longest unbroken run this
+project has ever measured.
+
+`deliberateGaps` read **2 and 1** across the whole night, which settles
+something left open: the 41-per-30-seconds seen the previous evening were
+real stalls, not the silence gate being counted as one.
+
+Two things worth not glossing over. The **loss in the radio run is ten
+times the Spotify run's** — 1 070 ppm against 106 — and though 0.1 % of
+isolated losses is inaudible, it is unexplained. And the **two speakers
+are not equal**: over the same run, `Stereo` recorded 152 gaps over 200 ms
+to `Speakers`' 21, and 25 re-primes to 2. That is one node's radio link,
+not the producer, and it is the kind of thing a house has rather than a
+bug a build can fix.
 
 **Still unproven**, and each needs hardware rather than code:
 
