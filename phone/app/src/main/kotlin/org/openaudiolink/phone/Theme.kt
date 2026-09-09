@@ -127,14 +127,14 @@ private val OalShapes = Shapes(
  * 0.8.3 did to the system font, and it is not worth re-opening until
  * this screen is confirmed clean.
  */
-private val Roboto = FontFamily(
+internal val OalRoboto = FontFamily(
     Font(R.font.roboto_regular, FontWeight.Normal),
     Font(R.font.roboto_medium, FontWeight.Medium),
     Font(R.font.roboto_bold, FontWeight.Bold),
 )
 
 private fun TextStyle.pin(weight: FontWeight): TextStyle =
-    copy(fontFamily = Roboto, fontWeight = weight)
+    copy(fontFamily = OalRoboto, fontWeight = weight)
 
 private val OalTypography = Typography().let { base ->
     base.copy(

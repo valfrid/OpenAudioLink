@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.7, built by CI as one APK — see *One build* below.
+Version 0.8.8, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
