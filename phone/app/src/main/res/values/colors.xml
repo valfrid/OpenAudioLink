@@ -11,6 +11,4 @@
     <color name="oal_ink">#FF111317</color>
     <color name="oal_accent">#FF62D1A6</color>
 
-    <!-- The light-system ground, matching Theme.kt's light scheme. -->
-    <color name="oal_ground_light">#FFF7F9FA</color>
 </resources>

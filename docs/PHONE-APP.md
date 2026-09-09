@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.0, built by CI as one APK — see *One build* below.
+Version 0.8.1, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -171,11 +171,16 @@ looking at it is concerned.
 **The palette is the Hub's**, taken from `oal.css` rather than chosen
 again: `--bg #111317`, `--panel #1B1F25`, `--accent #62D1A6`, and the
 18dp/12dp rounding those cards use. `Theme.kt` carries them in Compose and
-`themes.xml` paints the window before the first frame, so there is no
-white flash on the way in. Dark first, because the web UI has no light
-mode and matching it is the point; a light scheme exists because Android
-will hand this app to somebody with the system set to light, and it is the
-same colours rearranged rather than a second design.
+`themes.xml` paints the window and the system bars before the first frame,
+so there is no white flash on the way in.
+
+**Dark in every configuration, not "dark first".** 0.8.0 followed the
+system theme, which matches the Hub only on a handset that happens to be
+set to dark — and on one set to light it produced the accent colour and
+none of the rest, a visual change that looked like no visual change. The
+choice is made in `Theme.kt` rather than deferred to a setting somebody
+made for other reasons: one product, one look, usually read in a dim room
+with music playing.
 
 Counters and log lines use a monospace style rather than the body font.
 Proportional digits make every number a different width, so a count that

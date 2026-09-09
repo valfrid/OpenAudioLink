@@ -1,11 +1,9 @@
 package org.openaudiolink.phone
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -23,12 +21,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
  * not have to be told they are the same system. The custom properties
  * there are the source of truth; these are the same values.
  *
- * **Dark first.** The web UI has no light mode and neither did the
- * launcher icon, so the phone matching it is the whole point. A light
- * scheme still exists below because Android will hand this app to somebody
- * with the system set to light and a screen that ignores the setting reads
- * as broken rather than opinionated — but it is the Hub's colours
- * rearranged, not a different design.
+ * **Dark, and not conditionally.** The Hub's web UI has no light mode and
+ * neither does the launcher icon, so an app that follows the system theme
+ * matches the Hub only on handsets that happen to be set to dark. The
+ * first attempt did exactly that, and on a phone set to light it produced
+ * the accent colour and none of the rest — a visual change that looked
+ * like no visual change, which is a fair description of getting half a
+ * design.
+ *
+ * So the choice is made here rather than deferred to a setting somebody
+ * else made for other reasons. This is one product with one look, the
+ * screen is most often read in a dim room with music playing, and matching
+ * the Hub was the whole instruction.
  *
  * The rounding is `oal.css`'s too: 18dp on cards, 12dp on controls. Small
  * thing, and it is most of why two interfaces look related at a glance.
@@ -66,31 +70,6 @@ private val DarkScheme = darkColorScheme(
     outlineVariant = Oal.Border,
     error = Oal.Danger,
     onError = Oal.Ground,
-)
-
-/**
- * The same palette for a light system, rearranged rather than replaced.
- *
- * The accent darkens, because #62d1a6 on white is decorative rather than
- * legible; everything else follows from that one substitution.
- */
-private val LightScheme = lightColorScheme(
-    primary = Color(0xFF12795A),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD3F1E5),
-    onPrimaryContainer = Color(0xFF07281E),
-    secondary = Color(0xFF12795A),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFD3F1E5),
-    onSecondaryContainer = Color(0xFF07281E),
-    background = Color(0xFFF7F9FA),
-    onBackground = Color(0xFF111317),
-    surface = Color.White,
-    onSurface = Color(0xFF111317),
-    surfaceVariant = Color(0xFFEDF1F3),
-    onSurfaceVariant = Color(0xFF5A646E),
-    outline = Color(0xFFC7CFD6),
-    error = Color(0xFFB3261E),
 )
 
 private val OalShapes = Shapes(
@@ -131,7 +110,7 @@ val Diagnostic: TextStyle
 @Composable
 fun OalTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkScheme else LightScheme,
+        colorScheme = DarkScheme,
         typography = OalTypography,
         shapes = OalShapes,
         content = content,

@@ -944,5 +944,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.8.0"
+    const val VERSION = "0.8.1"
 }
