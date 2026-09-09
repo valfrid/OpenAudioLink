@@ -1132,6 +1132,49 @@ The Hub logs it as `deliberateGaps` and shows it under the stall count
 from **0.105.0**. An older Hub against a 0.55.0 node loses the number
 entirely — the node splits the gaps, and nothing reads the field.
 
+### A phone producer against a Hub on Ethernet
+
+Thirteen logs, the same two speakers, the same access point. Longest
+contiguous run from each, `Speakers` unless noted:
+
+| producer | run | >200 ms gaps per 30 s | all gaps/s | underruns/min | loss |
+| --- | --- | --- | --- | --- | --- |
+| Hub, Ethernet | 457 min | 0.01 | 5.8 | 0.0 | 0 ppm |
+| Hub, Ethernet | 433 min | 0.00 | 1.1 | 0.0 | 4 ppm |
+| Hub, Ethernet | 293 min | 0.01 | 1.0 | 0.0 | 0 ppm |
+| Hub, Ethernet | 186 min | 0.00 | 0.9 | 0.0 | 0 ppm |
+| **Phone, quiet night** | 251 min | 0.04 | 3.4 | 0.8 | 1 070 ppm |
+| **Phone, evening** | 29 min | **34.3** | 4.6 | 15.3 | 102 ppm |
+
+Two conclusions, and they are different in size.
+
+**The network is not the problem.** A Hub on Ethernet drives these same
+speakers over this same access point at 0.00–0.01 gaps per 30 s with *no*
+underruns across runs of three to seven hours. Whatever the house's Wi-Fi
+is doing, it is comfortably good enough.
+
+**A phone costs a second wireless hop, and that is most of the
+difference.** With the Hub on Ethernet an audio packet crosses the air
+once, access point to speaker. With the phone it crosses twice — phone to
+access point, then access point to speaker. That doubles the airtime each
+packet consumes, doubles its exposure to contention and retries, and puts
+the first hop on a battery-powered device that is also using its radio for
+everything else it does. The steady ~3× arrival-gap rate and the ~25×
+loss are that hop, and no amount of work inside the app removes them.
+
+**But the number that matters is unchanged.** Median phase error is
+1.6–1.9 ms from the phone and 1.9–2.8 ms from the Hub. The synchronisation
+between two speakers — the thing this project exists for — is as good from
+a 2018 handset as from a wired PC. What the second hop costs is link
+margin, not sync.
+
+**The practical remedy is spectrum, not software.** The speakers are
+2.4 GHz only, so that hop cannot move. The phone's hop can: put the phone
+on the access point's **5 GHz** band and leave the speakers on 2.4. Same
+bridge, same subnet, discovery unaffected — and the phone's audio stops
+competing with the speakers' audio for the same channel, which is exactly
+the contention the evening figures show.
+
 ### The same link, eleven minutes later
 
 The phone kept streaming, uninterrupted, across this boundary — the same
