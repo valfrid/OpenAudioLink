@@ -534,6 +534,69 @@ is blocked on the DAC regardless (`CAST-POINTS.md`).
 idle discards its buffered tail, so the next track does not open with the
 end of the last one.
 
+## Spotify Soloist: the sanctioned version of this, on Linux
+
+In August 2026 Spotify published **Soloist**, an official headless
+Spotify Connect receiver — [spotify/soloist](https://github.com/spotify/soloist),
+[announcement](https://developer.spotify.com/blog/2026-08-13-introducing-spotify-soloist).
+It is the supported version of what this document has been doing
+unofficially, and it is worth knowing about even though **nothing in
+OpenAudioLink can use it today**.
+
+From its README:
+
+- **Linux only** — ARMv7, AArch64, x86_64.
+- **PipeWire or PulseAudio** for audio output.
+- Premium to *set up*; once running, **Free and Premium accounts can
+  connect**.
+- Distributed through a Spotify for Developers account, "used to download
+  Spotify Soloist and issue your device credential".
+- A local **WebSocket API**: playback commands, real-time events, and the
+  queue with full track metadata.
+- Lossless to **24-bit/44.1 kHz** on Premium. Jam is built in.
+
+### Why it changes nothing yet
+
+The Hub is Windows and Soloist is Linux, so it is not a drop-in for the
+binary this document describes. The **phone app cannot use it at all**:
+Android is a Linux kernel but not a Linux system — bionic rather than
+glibc — and there is no PipeWire or PulseAudio on a handset, nor a pipe
+backend to fall back on the way `--backend pipe` is used here. The
+per-device credential and the developer-account download are also the
+opposite of something that can be baked into an APK that strangers
+install.
+
+### Why it is worth writing down
+
+Because it makes **a Linux Hub, or a Linux-based node, worth considering
+for the first time**, and each of the four things below is a real
+improvement rather than a lateral move:
+
+- It replaces a reverse-engineered client with a supported one, which
+  removes the whole risk described in `docs/PLAY-STORE.md`.
+- **24-bit/44.1 fits this project exactly.** L24 is already the wire
+  format and the 147:160 resampler for 44.1→48 is already written and
+  tested.
+- **The WebSocket API replaces reading stderr.** Everything the Hub and
+  the phone know about what Spotify is doing today comes from parsing
+  librespot's log lines — which is why a screenshot once showed the stop
+  handler complaining about a missing context while the actual fault was
+  somewhere upstream. Events and queue metadata are a different class of
+  thing.
+- PulseAudio or PipeWire gives a **null sink to capture from** instead of
+  a pipe, which is a cleaner source for the RTP sender than back-pressure
+  on a file descriptor.
+
+And it answers, for a Linux receiver, the guest problem that *What this
+means for guests* below has no good answer to: with Soloist running, a
+Free account can connect to it.
+
+**Two things not verified.** The repository carries no `LICENSE` — it is
+a README and an issue tracker, with the binary distributed from
+developer.spotify.com under terms that have to be read before any of this
+is relied on. And that the binary is glibc-linked is inferred from
+"Linux" and the PulseAudio requirement, not tested.
+
 ## Trying it
 
 1. Put the binary where the Hub can find it and restart the Hub. The log

@@ -398,6 +398,17 @@ Priority is intentionally not fixed:
   because it needs no new parts and no sample-rate conversion
 - ~~internet radio~~ — done, MP3, AAC and FLAC, see above
 - Home Assistant integration
+- **A Linux host — Hub or Producer node — now that Spotify Soloist
+  exists.** August 2026, an official headless Spotify Connect receiver
+  for Linux on ARMv7, AArch64 and x86_64 (`LIBRESPOT.md`). It cannot run
+  on Windows or on Android, so it changes nothing about what is built
+  today; what it changes is that a Linux host is the only place this
+  project could take Spotify off a reverse-engineered client and onto a
+  supported one. It also brings 24-bit/44.1 lossless — which L24 and the
+  existing 147:160 resampler already suit — a WebSocket event API in
+  place of scraping another program's stderr, and a null sink to capture
+  from rather than a pipe. A Raspberry Pi Consumer is already on this
+  list; the same box could be a Producer for exactly this reason
 - Bluetooth input
 - DSP — including automatic speaker and room calibration with a
   measurement microphone, proposed in `ROOM-CALIBRATION.md`. The same

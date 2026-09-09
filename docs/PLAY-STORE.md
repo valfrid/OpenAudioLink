@@ -109,6 +109,25 @@ The options, unchanged from when the question was first asked:
 
 Option 3 costs the least if the answer turns out to be no.
 
+**Spotify now publishes an official headless client**, and it does not
+rescue this. *Soloist*, August 2026, is a supported Connect receiver for
+Linux — the sanctioned version of what librespot does — and
+`docs/LIBRESPOT.md` covers it. It cannot run in this app: it needs glibc
+and PipeWire or PulseAudio, none of which exist on Android, and it is
+distributed per-device through a developer account rather than as
+something bundled into an APK.
+
+Two ways it bears on the decision above, pointing in opposite directions.
+Against: a legitimate route now exists for this exact use case, so
+shipping the unofficial one is a little harder to defend than it was when
+there was no alternative. In favour of not panicking: the alternative is
+unavailable on the only platform this app runs on, so the choice is
+between librespot and no Spotify, exactly as before.
+
+It matters much more for a **Linux Hub or a Linux-based node**, where it
+would remove this entire risk rather than manage it. That is a real
+option to keep in view, not a reason to delay a phone decision.
+
 Worth being clear about one thing that is *not* a problem: librespot is
 **bundled in the APK**, not downloaded at runtime. Play forbids an app
 fetching and running executable code after installation; an executable
