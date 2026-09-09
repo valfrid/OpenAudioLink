@@ -737,13 +737,6 @@ private fun Details(state: Producer.State) {
             )
         }
 
-        /*
-         * Temporary. See FontProbe: one screenshot of it should name
-         * whatever is drawing some of these lines hollow, which four
-         * builds of guessing did not. Delete both once that is known.
-         */
-        HorizontalDivider()
-        FontProbe()
     }
 }
 

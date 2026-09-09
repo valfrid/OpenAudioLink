@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.9, built by CI as one APK — see *One build* below.
+Version 0.9.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -245,27 +245,8 @@ owner picked under Display → Font size and style. So the app rendered in
 a face neither this project nor the Hub had any say in, and "matches the
 Hub" was true of the palette and the rounding but never the letters.
 
-It showed, too: the screen came back with two kinds of text on it, some
-lines drawn normally and others as hollow, double-walled glyphs. Two
-attempts to explain that from the app's own styles both failed and both
-had to be reverted.
-
-- A **monospace family** (0.8.2) was the wrong tool regardless: it
-  changed the typeface of whole sentences rather than their digits, so
-  the diagnostics read as a different application pasted into this one.
-- `fontFeatureSettings = "tnum"` (0.8.3, out in 0.8.6) is what `oal.css`
-  does with `font-variant-numeric: tabular-nums`, and in a browser it is
-  exactly right. The double-walled glyphs outlived it.
-
-Mapping every line on screen to its actual style is what settled it.
-`bodySmall` appeared on *both* sides of the split — clean for "Needs
-Spotify Premium…", mangled for the discovery line — and so did
-`labelLarge`, clean as the "Published, waiting" label and mangled inside
-every button. Neither size nor weight can explain that. What was left
-was the one thing the app had delegated.
-
-So 0.8.7 stops delegating it. **Roboto** is bundled in `res/font` and
-every text style is pinned to it, for reasons rather than taste:
+**Roboto** is bundled in `res/font` and every text style is pinned to it,
+for reasons rather than taste:
 `oal.css` asks for `Inter, system-ui, -apple-system, "Segoe UI", Roboto,
 Arial, sans-serif` and ships no `@font-face`, so the Hub itself renders
 in Inter only where Inter is installed — on Windows it is Segoe UI.
@@ -275,15 +256,66 @@ public repository needs. The licence sits in `phone/app/licenses/`.
 
 **Three real weights, and no fourth.** 400, 500 and 700 exist as files.
 Asking for anything else has the platform pick the nearest and
-*synthesise* the difference by stroking the glyph — the same class of
-artefact being fixed here — so the two styles that asked for SemiBold
-now ask for Bold, which is nearer the Hub's 700–900 headings anyway.
+*synthesise* the difference by stroking the glyph, so the two styles that
+asked for SemiBold now ask for Bold, which is nearer the Hub's 700–900
+headings anyway.
 
-The counters therefore have no tabular figures and a changing count
-shifts sideways by a pixel. Roboto's own `tnum` could be asked for now
-that the file is known and present, but that request is precisely what
-0.8.3 did to the system font, and it is not worth re-opening until this
-screen is confirmed clean.
+Counters ask that bundled face for its **tabular figures**
+(`fontFeatureSettings = "tnum"`), which is what `oal.css` does with
+`font-variant-numeric: tabular-nums`. They are read by comparing one
+reading against another, and proportional digits make a changing count
+appear to jitter sideways.
+
+### The hollow glyphs were the phone, and four builds went looking in the app
+
+Worth recording in full, because the mistake was in the method rather
+than in any line of code.
+
+For several versions this screen drew some text as dark, double-walled
+letters with a light edge, mixed in among lines that drew correctly — a
+text field's label hollow while the value in the same field was solid.
+The cause was **Samsung's *High contrast fonts*** (Accessibility →
+Visibility enhancements), a system feature that strokes an outline around
+text it judges too low-contrast to read. The device was drawing over the
+app.
+
+Three changes were shipped chasing it, and none of them could have
+worked: a monospace family (0.8.2), `fontFeatureSettings = "tnum"`
+(0.8.3, removed in 0.8.6, now back), and the bundled family above
+(0.8.7). Each cost a build, an install and a screenshot to learn one bit,
+which is the wrong way round.
+
+What settled it was a **test card** (0.8.8, since removed) that rendered
+one string twenty times, holding everything constant and varying one
+property per line. Its answer was not ambiguous:
+
+| varied | result |
+| --- | --- |
+| family — bundled, default, sans, serif, monospace | no difference, all hollow |
+| size — 12, 16, 22 sp | no difference, all hollow |
+| weight — 400, 500, 700 | no difference, all hollow |
+| background — ground, panel, panel2 | no difference, all solid |
+| **colour** | near-white and pure white **solid**; muted, accent, 50% grey **hollow** |
+
+Ordered by contrast against the `#111317` ground it is monotone —
+`#FFFFFF` 18.6:1 and `#F4F6F8` 17.2:1 solid, `#62D1A6` 9.9:1, `#9EA8B3`
+7.7:1 and `#808080` 4.7:1 hollow — with no exceptions anywhere in the
+card. Nothing in Compose behaves that way. A text colour is a fill, and a
+fill does not become an outline because the colour got darker.
+
+Two lessons, both cheap next time:
+
+- **A fault that tracks contrast rather than any property you set is the
+  system.** Ask what the device is doing before changing what the app
+  asks for.
+- **A control has to be a control.** Another app on the same phone
+  rendering normally was taken as evidence against a system cause; it was
+  black text on white, which that feature leaves alone, so it proved
+  nothing. The comparison needed low-contrast text on a dark background.
+
+Anyone keeping High contrast fonts switched on will still see outlines
+here — that is the feature working, on an app whose muted grey and mint
+sit below its threshold by design.
 
 **Underruns are shown as time, and counted per stream.** `PcmRing` counts
 frames and the ring outlives any one sender, so the screen once read

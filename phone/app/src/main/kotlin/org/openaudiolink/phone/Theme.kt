@@ -83,27 +83,41 @@ private val OalShapes = Shapes(
 )
 
 /**
- * The typeface, which until now the app never actually chose.
+ * The typeface, which the app now chooses rather than inherits.
  *
  * Leaving `fontFamily` unset means `FontFamily.Default`, which on Android
  * is the *system* font — and on a Samsung handset that is whatever the
- * owner picked under Display → Font size and style. So this app rendered
- * in a face neither the Hub nor this project had any say in, and the
- * claim that it matched the Hub covered the palette and the rounding but
- * never the letters.
+ * owner picked under Display → Font size and style. The app rendered in a
+ * face neither the Hub nor this project had any say in, and the claim
+ * that it matched the Hub covered the palette and the rounding but never
+ * the letters. Bundling Roboto fixes that, and that is the whole of what
+ * it fixes.
  *
- * It also showed. On a Galaxy A8 on Android 9 the screen came back with
- * two kinds of text on it: some lines drawn normally and others as
- * hollow, double-walled glyphs. Two attempts to explain that from the
- * app's own styles both failed — a monospace family in 0.8.2, then
- * `fontFeatureSettings = "tnum"` in 0.8.3, removed again in 0.8.6 when
- * the effect outlived it. Mapping every line on the screen to its style
- * settled that it was neither: `bodySmall` appeared on both sides of the
- * split, and so did `labelLarge`, which rules out size and weight as the
- * cause. What was left was the one thing the app had delegated.
+ * **It did not fix the hollow glyphs, and nothing here ever could.** For
+ * several versions this screen drew some lines as dark, double-walled
+ * letters with a light edge. The cause was **Samsung's *High contrast
+ * fonts*** (Accessibility → Visibility enhancements), a system feature
+ * that strokes an outline around text it judges too low-contrast to read.
+ * It is the device drawing over the app, not the app.
  *
- * So it delegates it no longer. Roboto is bundled in `res/font` and every
- * style is pinned to it.
+ * Three changes were made chasing it and all three were beside the point:
+ * a monospace family in 0.8.2, `fontFeatureSettings = "tnum"` in 0.8.3
+ * (removed in 0.8.6), and this bundled family in 0.8.7. What finally
+ * settled it was a test card that varied one property at a time, and its
+ * answer was unambiguous: family, size, weight and background surface
+ * made no difference whatsoever, while **colour** did — near-white and
+ * pure white drew solid, muted grey, mint and 50% grey drew hollow,
+ * monotone in contrast against the ground with no exceptions in twenty
+ * samples. Nothing in Compose behaves that way; a text colour is a fill,
+ * and a fill does not become an outline because the colour got darker.
+ *
+ * So: **a fault that reproduces on one device and tracks contrast rather
+ * than any property you set is the system, and the way to find out is to
+ * vary one thing at a time rather than to ship a hypothesis.** Four
+ * builds is what not doing that costs.
+ *
+ * With the setting off, everything below draws as intended, and the app
+ * keeps its own typeface, which is worth having on its own terms.
  *
  * **Roboto specifically**, for reasons rather than taste. `oal.css` asks
  * for `Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial,
@@ -116,16 +130,10 @@ private val OalShapes = Shapes(
  *
  * **Three real weights, and no fourth.** 400, 500 and 700 exist as files;
  * a request for anything else is answered by the platform picking the
- * nearest and *synthesising* the difference, which is a stroke applied to
- * a glyph — the same class of artefact as the one this is fixing. So the
- * two styles that asked for SemiBold (600) now ask for Bold, which is
- * also closer to the Hub, whose headings are 700-900.
- *
- * One thing given up: the counters have no tabular figures, so a changing
- * count shifts sideways by a pixel. Roboto's `tnum` could be asked for
- * now that the file is known and present — but that request is what
- * 0.8.3 did to the system font, and it is not worth re-opening until
- * this screen is confirmed clean.
+ * nearest and synthesising the difference, which is a genuine reason to
+ * avoid asking — just not the reason it was done. The two styles that
+ * wanted SemiBold (600) ask for Bold, which is closer to the Hub's
+ * 700-900 headings anyway.
  */
 internal val OalRoboto = FontFamily(
     Font(R.font.roboto_regular, FontWeight.Normal),
@@ -160,12 +168,23 @@ private val OalTypography = Typography().let { base ->
  * The style every counter and log line uses: `bodySmall`, set back a
  * shade so the instrumentation reads as instrumentation.
  *
- * Colour only, and deliberately so — it inherits the family and weight
- * from the theme like everything else. Two attempts to make this style
- * typographically special are described above; both had to come out.
+ * **Tabular figures are back.** These lines are read by comparing one
+ * reading against another, and proportional digits make each number a
+ * different width, so a count that changes appears to jitter sideways.
+ * `tnum` asks the face for its fixed-width figures and changes nothing
+ * else — which is exactly what `oal.css` does with
+ * `font-variant-numeric: tabular-nums` on the Hub's own counters.
+ *
+ * It was removed in 0.8.6 on the belief that it caused the hollow
+ * glyphs. It did not; Samsung's *High contrast fonts* did, and the test
+ * card showed font features, family, size and weight to be irrelevant to
+ * that. The difference now is that the family is bundled, so `tnum` is a
+ * request to a known Roboto that has the feature rather than to whatever
+ * the handset happened to be set to.
  */
 val Diagnostic: TextStyle
     @Composable get() = MaterialTheme.typography.bodySmall.copy(
+        fontFeatureSettings = "tnum",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
