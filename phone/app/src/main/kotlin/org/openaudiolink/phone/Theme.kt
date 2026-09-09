@@ -7,6 +7,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,46 +83,76 @@ private val OalShapes = Shapes(
 )
 
 /**
- * Typography, and the counters that made it a subject at all.
+ * The typeface, which until now the app never actually chose.
  *
- * `bodySmall` carries every counter in the app — packets, gaps,
- * milliseconds — and those are read by comparing one reading against
- * another. Proportional digits make each number a different width, so a
- * count that changes appears to jitter sideways. Two attempts to fix that
- * were both worse than the jitter.
+ * Leaving `fontFamily` unset means `FontFamily.Default`, which on Android
+ * is the *system* font — and on a Samsung handset that is whatever the
+ * owner picked under Display → Font size and style. So this app rendered
+ * in a face neither the Hub nor this project had any say in, and the
+ * claim that it matched the Hub covered the palette and the rounding but
+ * never the letters.
  *
- * The first was a **monospace family**, and it was the wrong tool: it
- * changed the typeface of whole sentences rather than their digits, so
- * the diagnostics panel read as a different application pasted into this
- * one. The alignment it bought only pays off in columns, and these lines
- * are prose that happens to contain numbers.
+ * It also showed. On a Galaxy A8 on Android 9 the screen came back with
+ * two kinds of text on it: some lines drawn normally and others as
+ * hollow, double-walled glyphs. Two attempts to explain that from the
+ * app's own styles both failed — a monospace family in 0.8.2, then
+ * `fontFeatureSettings = "tnum"` in 0.8.3, removed again in 0.8.6 when
+ * the effect outlived it. Mapping every line on the screen to its style
+ * settled that it was neither: `bodySmall` appeared on both sides of the
+ * split, and so did `labelLarge`, which rules out size and weight as the
+ * cause. What was left was the one thing the app had delegated.
  *
- * The second was `fontFeatureSettings = "tnum"`, which is what the Hub
- * does — `oal.css` sets `font-variant-numeric: tabular-nums` and changes
- * nothing else. In a browser that is exactly right. On the phone this app
- * is actually used on, a Galaxy A8 on Android 9, it rendered every run
- * carrying it as **hollow, stencilled glyphs** — letters as well as
- * digits, which is not a figure variant but a different rendering path
- * for the whole run. A screenshot made it unarguable: the lines with this
- * style were mangled and the plain `bodySmall` lines beside them, same
- * size and same family, were clean.
+ * So it delegates it no longer. Roboto is bundled in `res/font` and every
+ * style is pinned to it.
  *
- * So there is no font feature here and no font family either. Asking for
- * a feature is a request the platform is free to honour strangely, and
- * this one is a nicety — the counters are read one at a time far more
- * often than they are compared column-wise, and a digit that shifts by a
- * pixel is a much smaller problem than a line that cannot be read at all.
+ * **Roboto specifically**, for reasons rather than taste. `oal.css` asks
+ * for `Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+ * sans-serif` and ships no `@font-face`, so the Hub renders in Inter only
+ * where Inter happens to be installed — on Windows it is Segoe UI.
+ * Roboto is the entry in the Hub's own stack that an Android device
+ * would reach, it is Android's native UI face so the app still looks
+ * like an Android app, and it is Apache-2.0, which a public repository
+ * needs. The licence is in `phone/app/licenses/`.
  *
- * If tabular figures are wanted again, the way to get them is to **bundle
- * a font** that has them and use it deliberately, not to ask the system
- * font for a feature and hope.
+ * **Three real weights, and no fourth.** 400, 500 and 700 exist as files;
+ * a request for anything else is answered by the platform picking the
+ * nearest and *synthesising* the difference, which is a stroke applied to
+ * a glyph — the same class of artefact as the one this is fixing. So the
+ * two styles that asked for SemiBold (600) now ask for Bold, which is
+ * also closer to the Hub, whose headings are 700-900.
+ *
+ * One thing given up: the counters have no tabular figures, so a changing
+ * count shifts sideways by a pixel. Roboto's `tnum` could be asked for
+ * now that the file is known and present — but that request is what
+ * 0.8.3 did to the system font, and it is not worth re-opening until
+ * this screen is confirmed clean.
  */
+private val Roboto = FontFamily(
+    Font(R.font.roboto_regular, FontWeight.Normal),
+    Font(R.font.roboto_medium, FontWeight.Medium),
+    Font(R.font.roboto_bold, FontWeight.Bold),
+)
+
+private fun TextStyle.pin(weight: FontWeight): TextStyle =
+    copy(fontFamily = Roboto, fontWeight = weight)
+
 private val OalTypography = Typography().let { base ->
     base.copy(
-        headlineSmall = base.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
-        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.SemiBold, fontSize = 20.sp),
-        titleMedium = base.titleMedium.copy(fontWeight = FontWeight.Medium),
-        labelLarge = base.labelLarge.copy(fontWeight = FontWeight.Medium),
+        displayLarge = base.displayLarge.pin(FontWeight.Normal),
+        displayMedium = base.displayMedium.pin(FontWeight.Normal),
+        displaySmall = base.displaySmall.pin(FontWeight.Normal),
+        headlineLarge = base.headlineLarge.pin(FontWeight.Normal),
+        headlineMedium = base.headlineMedium.pin(FontWeight.Normal),
+        headlineSmall = base.headlineSmall.pin(FontWeight.Bold),
+        titleLarge = base.titleLarge.pin(FontWeight.Bold).copy(fontSize = 20.sp),
+        titleMedium = base.titleMedium.pin(FontWeight.Medium),
+        titleSmall = base.titleSmall.pin(FontWeight.Medium),
+        bodyLarge = base.bodyLarge.pin(FontWeight.Normal),
+        bodyMedium = base.bodyMedium.pin(FontWeight.Normal),
+        bodySmall = base.bodySmall.pin(FontWeight.Normal),
+        labelLarge = base.labelLarge.pin(FontWeight.Medium),
+        labelMedium = base.labelMedium.pin(FontWeight.Medium),
+        labelSmall = base.labelSmall.pin(FontWeight.Medium),
     )
 }
 
@@ -128,8 +160,9 @@ private val OalTypography = Typography().let { base ->
  * The style every counter and log line uses: `bodySmall`, set back a
  * shade so the instrumentation reads as instrumentation.
  *
- * Colour only. See the note above for the two typographic changes that
- * were tried here and taken out again.
+ * Colour only, and deliberately so — it inherits the family and weight
+ * from the theme like everything else. Two attempts to make this style
+ * typographically special are described above; both had to come out.
  */
 val Diagnostic: TextStyle
     @Composable get() = MaterialTheme.typography.bodySmall.copy(

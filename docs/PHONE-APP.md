@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.6, built by CI as one APK — see *One build* below.
+Version 0.8.7, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -238,31 +238,52 @@ choice is made in `Theme.kt` rather than deferred to a setting somebody
 made for other reasons: one product, one look, usually read in a dim room
 with music playing.
 
-**The counters are set in the plain body font, and two attempts to do
-better than that both had to come out.** They are read by comparing one
-reading against another, and proportional digits make a changing count
-appear to jitter sideways — a real annoyance, and smaller than either
-cure turned out to be.
+**The typeface is bundled, and until 0.8.7 the app never chose one.**
+Leaving `fontFamily` unset means `FontFamily.Default`, which on Android
+is the *system* font — and on a Samsung handset that is whatever the
+owner picked under Display → Font size and style. So the app rendered in
+a face neither this project nor the Hub had any say in, and "matches the
+Hub" was true of the palette and the rounding but never the letters.
 
-A **monospace family** was first, and was the wrong tool: it changed the
-typeface of whole sentences rather than their digits, so the diagnostics
-read as a different application pasted into this one, and the alignment
-it bought only pays off in columns these lines are not.
+It showed, too: the screen came back with two kinds of text on it, some
+lines drawn normally and others as hollow, double-walled glyphs. Two
+attempts to explain that from the app's own styles both failed and both
+had to be reverted.
 
-`fontFeatureSettings = "tnum"` replaced it in 0.8.3 — the same thing
-`oal.css` does with `font-variant-numeric: tabular-nums`, and in a
-browser exactly right. On the Galaxy A8 on Android 9 this app is actually
-used on, it rendered every run carrying it as **hollow, stencilled
-glyphs**, letters as well as digits. That is not a figure variant; it is
-a different rendering path for the whole run. A screenshot settled it in
-one image: the `Diagnostic` lines were mangled and the plain `bodySmall`
-lines beside them — same size, same family, differing only in this
-feature and a colour — were clean.
+- A **monospace family** (0.8.2) was the wrong tool regardless: it
+  changed the typeface of whole sentences rather than their digits, so
+  the diagnostics read as a different application pasted into this one.
+- `fontFeatureSettings = "tnum"` (0.8.3, out in 0.8.6) is what `oal.css`
+  does with `font-variant-numeric: tabular-nums`, and in a browser it is
+  exactly right. The double-walled glyphs outlived it.
 
-Removed in 0.8.6. Asking the system font for a feature is a request the
-platform may honour strangely, and a digit that shifts by a pixel is a
-far smaller problem than a line that cannot be read. If tabular figures
-are wanted again, the way to get them is to bundle a font that has them.
+Mapping every line on screen to its actual style is what settled it.
+`bodySmall` appeared on *both* sides of the split — clean for "Needs
+Spotify Premium…", mangled for the discovery line — and so did
+`labelLarge`, clean as the "Published, waiting" label and mangled inside
+every button. Neither size nor weight can explain that. What was left
+was the one thing the app had delegated.
+
+So 0.8.7 stops delegating it. **Roboto** is bundled in `res/font` and
+every text style is pinned to it, for reasons rather than taste:
+`oal.css` asks for `Inter, system-ui, -apple-system, "Segoe UI", Roboto,
+Arial, sans-serif` and ships no `@font-face`, so the Hub itself renders
+in Inter only where Inter is installed — on Windows it is Segoe UI.
+Roboto is the entry in the Hub's own stack an Android device would
+reach, it is Android's native UI face, and it is Apache-2.0, which a
+public repository needs. The licence sits in `phone/app/licenses/`.
+
+**Three real weights, and no fourth.** 400, 500 and 700 exist as files.
+Asking for anything else has the platform pick the nearest and
+*synthesise* the difference by stroking the glyph — the same class of
+artefact being fixed here — so the two styles that asked for SemiBold
+now ask for Bold, which is nearer the Hub's 700–900 headings anyway.
+
+The counters therefore have no tabular figures and a changing count
+shifts sideways by a pixel. Roboto's own `tnum` could be asked for now
+that the file is known and present, but that request is precisely what
+0.8.3 did to the system font, and it is not worth re-opening until this
+screen is confirmed clean.
 
 **Underruns are shown as time, and counted per stream.** `PcmRing` counts
 frames and the ring outlives any one sender, so the screen once read

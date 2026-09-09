@@ -47,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -208,10 +207,17 @@ private fun Brand(state: Producer.State) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column {
+            /*
+             * No weight override. `headlineSmall` is already Bold in the
+             * theme, and Bold is one of the three weights bundled as a
+             * real file — asking here for a fourth (SemiBold, as this
+             * did) makes the platform synthesise the difference by
+             * stroking the glyph, which is the artefact 0.8.7 exists to
+             * remove.
+             */
             Text(
                 "OpenAudioLink",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
             )
             /*
              * The version, on screen, always — not behind the details
