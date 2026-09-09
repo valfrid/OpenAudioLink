@@ -200,3 +200,55 @@ to a device in the same room, which for synchronised audio is not a detail.
 
 The `address` field above exists because of this: a Controller states where
 it is rather than letting the network infer it.
+
+## When a mesh forwards announcements one way only
+
+Discovery assumes multicast reaches every device on the subnet. On a
+single access point it does. Across a **mesh** — two or more nodes
+bridging one LAN — it often does not, and the way it fails is specific
+enough to recognise.
+
+Observed on an ASUS ZenWiFi pair, one main router and one AiMesh node,
+both bands on `192.168.0.0/24`:
+
+- A phone associated with the **main** node saw both speakers.
+- The same phone, standing by the **secondary** node, saw only the
+  speaker associated with that same secondary node.
+
+Nothing was on a different subnet, nothing was misconfigured in the app,
+and audio would have worked to either speaker had they been found —
+**RTP is unicast to the address in the announcement, so only discovery is
+affected**. A device that is already known keeps working; a device that
+has never been heard from cannot be found at all.
+
+**The asymmetry is the diagnosis.** Announcements travelled
+secondary → main but not main → secondary. That is **IGMP snooping**: a
+snooping switch forwards multicast toward the querier — which lives on
+the main router — and prunes it on ports it has not learned a listener
+for. Across a mesh backhaul that learning is unreliable, so the
+downstream direction is dropped while the upstream one is not.
+
+**The fix is to disable IGMP snooping** on the router, LAN-side.
+Multicast then floods the LAN as discovery expects. The cost is nothing
+worth counting here: an announce is a small datagram every five seconds
+per device, not a video stream. Confirmed to resolve exactly this case.
+
+Two settings that are commonly confused with it:
+
+- **Multicast routing / IGMP Proxy** moves multicast between the WAN and
+  the LAN, for ISP IPTV. Discovery never crosses the WAN — `239.255.41.10`
+  is site-local — so this setting is irrelevant either way.
+- **Multicast Rate** in the per-band wireless settings. If it reads
+  *Disable*, multicast frames are dropped outright; a fixed low rate is
+  what to set.
+
+A **wired backhaul** to the secondary node removes the question
+independently of any of this. Wireless backhaul rate-limits multicast on
+its own.
+
+**To tell this apart from a quiet network**, count datagrams rather than
+watching a device list. The phone app prints `heard` under *Show
+details*; a node reports the same thing. A count that climbs while no
+speaker appears means frames arrive and something else is wrong; a count
+that barely moves while standing beside an announcing device means the
+frames are being dropped between the two, which is this.

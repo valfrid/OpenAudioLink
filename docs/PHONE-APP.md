@@ -134,6 +134,25 @@ it joined on. Same `/24` as the speakers reported by the Hub, and the
 bands are bridged; a different one, and they are separate networks and no
 amount of waiting will help.
 
+### One subnet is necessary and not sufficient: mesh nodes drop multicast
+
+A second failure sits behind the first and looks nothing like it. On a
+mesh — two or more access points bridging one LAN — announcements can
+travel in one direction only, so which speakers this app finds depends on
+**which node the phone happens to be associated with**.
+
+Seen on an ASUS ZenWiFi pair, everything on `192.168.0.0/24`: by the main
+router both speakers appeared; by the secondary node only the speaker
+associated with that same node did. The cause was **IGMP snooping**, and
+disabling it on the router fixed it. `protocol/DISCOVERY.md` has the
+mechanism, the two settings usually confused with it, and how to tell
+this apart from a quiet network using the `heard` counter.
+
+Worth knowing for reading a fault here: only *discovery* is affected.
+Audio is unicast to the address inside the announcement, so a speaker
+already found keeps playing across the mesh perfectly well. It is being
+found the first time that fails.
+
 ### The band does not decide who can see the cast point
 
 A worry worth answering directly: publishing Spotify Connect from a phone
