@@ -81,23 +81,39 @@ private val OalShapes = Shapes(
 )
 
 /**
- * Typography, and the one decision in it that is not cosmetic.
+ * Typography, and the counters that made it a subject at all.
  *
  * `bodySmall` carries every counter in the app — packets, gaps,
  * milliseconds — and those are read by comparing one reading against
  * another. Proportional digits make each number a different width, so a
- * count that changes appears to jitter sideways.
+ * count that changes appears to jitter sideways. Two attempts to fix that
+ * were both worse than the jitter.
  *
- * The first attempt fixed that with a **monospace family**, and it was the
- * wrong tool: it changed the typeface of whole sentences, not just their
- * digits, so the diagnostics panel read as a different application pasted
- * into this one. The alignment it bought only pays off in columns, and
- * these lines are prose that happens to contain numbers.
+ * The first was a **monospace family**, and it was the wrong tool: it
+ * changed the typeface of whole sentences rather than their digits, so
+ * the diagnostics panel read as a different application pasted into this
+ * one. The alignment it bought only pays off in columns, and these lines
+ * are prose that happens to contain numbers.
  *
- * `fontFeatureSettings = "tnum"` is the right one. It asks the *same*
- * typeface for its tabular figures, which is precisely what the Hub does
- * — `oal.css` sets `font-variant-numeric: tabular-nums` on its own
- * counters and changes nothing else about them.
+ * The second was `fontFeatureSettings = "tnum"`, which is what the Hub
+ * does — `oal.css` sets `font-variant-numeric: tabular-nums` and changes
+ * nothing else. In a browser that is exactly right. On the phone this app
+ * is actually used on, a Galaxy A8 on Android 9, it rendered every run
+ * carrying it as **hollow, stencilled glyphs** — letters as well as
+ * digits, which is not a figure variant but a different rendering path
+ * for the whole run. A screenshot made it unarguable: the lines with this
+ * style were mangled and the plain `bodySmall` lines beside them, same
+ * size and same family, were clean.
+ *
+ * So there is no font feature here and no font family either. Asking for
+ * a feature is a request the platform is free to honour strangely, and
+ * this one is a nicety — the counters are read one at a time far more
+ * often than they are compared column-wise, and a digit that shifts by a
+ * pixel is a much smaller problem than a line that cannot be read at all.
+ *
+ * If tabular figures are wanted again, the way to get them is to **bundle
+ * a font** that has them and use it deliberately, not to ask the system
+ * font for a feature and hope.
  */
 private val OalTypography = Typography().let { base ->
     base.copy(
@@ -108,10 +124,15 @@ private val OalTypography = Typography().let { base ->
     )
 }
 
-/** The style every counter and log line uses. See the note above. */
+/**
+ * The style every counter and log line uses: `bodySmall`, set back a
+ * shade so the instrumentation reads as instrumentation.
+ *
+ * Colour only. See the note above for the two typographic changes that
+ * were tried here and taken out again.
+ */
 val Diagnostic: TextStyle
     @Composable get() = MaterialTheme.typography.bodySmall.copy(
-        fontFeatureSettings = "tnum",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
