@@ -743,6 +743,8 @@ object Producer {
                 if (playing != null && !playing.isPlaying) {
                     // Its own last words, not a pointer at a log on a
                     // computer the person holding the phone may not have.
+                    // A station that will not open lands here, which is
+                    // where a bad URL should arrive.
                     val why = said.takeLast(3).joinToString("\n")
                     warn("${playing.label} stopped on its own." +
                         if (why.isNotEmpty()) "\n\nIt last said:\n$why" else "")
@@ -944,5 +946,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.8.1"
+    const val VERSION = "0.8.2"
 }

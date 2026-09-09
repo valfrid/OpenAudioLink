@@ -2,6 +2,9 @@ package org.openaudiolink.phone.sources
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -58,6 +61,32 @@ class LibrarySource(
     override val label: String get() = title
 
     private var player: ExoPlayer? = null
+
+    /**
+     * Every touch of the player happens here, and it is not a preference.
+     *
+     * ExoPlayer binds to the Looper of the thread that built it —
+     * `Util.getCurrentOrMainLooper()`, so the main one when the caller has
+     * none — and then asserts that every later call arrives from that same
+     * thread. Break the rule and it throws
+     * `IllegalStateException: Player is accessed on the wrong thread`.
+     *
+     * That is a real crash this app shipped. `RadioSource` resolves a
+     * playlist on a background thread and then started the player from it,
+     * so the very first `setMediaItem` was rejected and an uncaught
+     * exception on a bare thread took the process down — pressing Play on
+     * a station closed the app.
+     *
+     * The local-file path only escaped because the file picker's callback
+     * runs on the main thread, which is luck rather than design. And the
+     * same rule would have been broken from the other end eventually:
+     * `Producer` stops a source that has ended from a coroutine on
+     * `Dispatchers.IO`, and `release()` from there is the identical fault.
+     *
+     * So the confinement lives here, where the player does, and callers
+     * may start and stop this source from wherever they like.
+     */
+    private val onPlayerThread = Handler(Looper.getMainLooper())
 
     @Volatile private var ring: PcmRing? = null
     @Volatile private var playing = false
@@ -147,6 +176,12 @@ class LibrarySource(
         if (playing) return
         this.ring = ring
         playing = true
+        onPlayerThread.post { open() }
+    }
+
+    private fun open() {
+        // Stopped while this was queued: there is nothing to build.
+        if (!playing) return
 
         val renderers = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -208,20 +243,39 @@ class LibrarySource(
             }
         }
 
-        player = ExoPlayer.Builder(context, renderers).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            // The speakers play; the phone does not. The sink still runs,
-            // because it is what paces the decoder.
-            volume = 0f
-            prepare()
-            play()
+        player = try {
+            ExoPlayer.Builder(context, renderers).build().apply {
+                setMediaItem(MediaItem.fromUri(uri))
+                // The speakers play; the phone does not. The sink still
+                // runs, because it is what paces the decoder.
+                volume = 0f
+                prepare()
+                play()
+            }
+        } catch (e: Exception) {
+            /*
+             * A decoder that will not open is a source that did not start,
+             * not a dead app. `Producer` polls `isPlaying` and reports it,
+             * which is how a bad station URL should arrive: as a line on
+             * the screen.
+             */
+            Log.e(TAG, "could not open $uri", e)
+            playing = false
+            null
         }
     }
 
     override fun stop() {
         playing = false
-        player?.release()
-        player = null
         ring = null
+        // Released where it was built. See onPlayerThread.
+        onPlayerThread.post {
+            player?.release()
+            player = null
+        }
+    }
+
+    private companion object {
+        const val TAG = "oal.library"
     }
 }

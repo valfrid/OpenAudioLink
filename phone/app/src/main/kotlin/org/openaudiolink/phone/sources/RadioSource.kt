@@ -71,6 +71,25 @@ class RadioSource(
     }
 
     private fun resolveAndPlay(ring: PcmRing) {
+        try {
+            open(ring)
+        } catch (e: Exception) {
+            /*
+             * Nothing on this thread may escape.
+             *
+             * An uncaught exception on a bare thread kills the process,
+             * and this one runs a network fetch on a URL somebody typed —
+             * the single most likely thing in the app to throw. A station
+             * that will not open is a line on the screen, not a closed
+             * app.
+             */
+            Log.e(TAG, "station ${station.name} did not open", e)
+            note = "could not open this station: ${e.message ?: e::class.simpleName}"
+            started = false
+        }
+    }
+
+    private fun open(ring: PcmRing) {
         val url = try {
             resolve(station.url)
         } catch (e: Exception) {
@@ -90,6 +109,14 @@ class RadioSource(
         if (!started) return
         note = "playing $url"
         Log.i(TAG, "station ${station.name}: $url")
+        /*
+         * `LibrarySource` confines every player call to the main thread
+         * itself, so starting it from here is safe. It was not always:
+         * ExoPlayer binds to the Looper of whichever thread built it and
+         * rejects calls from any other, so this line used to throw
+         * `Player is accessed on the wrong thread` and, uncaught on a bare
+         * thread, close the app the moment anybody pressed Play.
+         */
         LibrarySource(context, Uri.parse(url), station.name)
             .also { player = it }
             .start(ring)

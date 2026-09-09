@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.1, built by CI as one APK — see *One build* below.
+Version 0.8.2, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -432,6 +432,23 @@ The Hub's `RadioSource` is a week of work by comparison and the difference
 is not skill: Windows decodes FLAC only in its own container, ships no Ogg
 demuxer, and its MP3 reader wants a seekable stream — which a station is
 the opposite of. Android's decoders were written for streaming.
+
+**One thread owns the player**, and finding that out cost a shipped crash.
+ExoPlayer binds to the Looper of whichever thread built it and then
+asserts that every later call arrives from the same one; break it and you
+get `IllegalStateException: Player is accessed on the wrong thread`.
+`RadioSource` resolves a playlist on a background thread and started the
+player from there, so the first `setMediaItem` was rejected and an
+uncaught exception on a bare thread closed the app the moment anybody
+pressed Play on a station.
+
+The local-file path escaped only because the file picker's callback runs
+on the main thread — luck, not design — and the same rule would have been
+broken from the other end eventually, since `Producer` stops a finished
+source from a coroutine on `Dispatchers.IO` and `release()` from there is
+the identical fault. The confinement now lives in `LibrarySource`, where
+the player does, so callers may start and stop a source from wherever
+they like.
 
 What is not free is resolving what somebody pasted, so `StationPlaylist`
 is ported from the Hub with its reasoning intact: half of what people call
