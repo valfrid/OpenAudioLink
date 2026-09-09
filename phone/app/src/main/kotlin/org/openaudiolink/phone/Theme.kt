@@ -86,10 +86,18 @@ private val OalShapes = Shapes(
  * `bodySmall` carries every counter in the app — packets, gaps,
  * milliseconds — and those are read by comparing one reading against
  * another. Proportional digits make each number a different width, so a
- * count that changes appears to jitter sideways and two lines of figures
- * do not line up. There is no tabular-figures switch in Compose's default
- * font stack, so the next best thing is a monospace family for exactly
- * those lines, which is what `Diagnostic` below is for.
+ * count that changes appears to jitter sideways.
+ *
+ * The first attempt fixed that with a **monospace family**, and it was the
+ * wrong tool: it changed the typeface of whole sentences, not just their
+ * digits, so the diagnostics panel read as a different application pasted
+ * into this one. The alignment it bought only pays off in columns, and
+ * these lines are prose that happens to contain numbers.
+ *
+ * `fontFeatureSettings = "tnum"` is the right one. It asks the *same*
+ * typeface for its tabular figures, which is precisely what the Hub does
+ * — `oal.css` sets `font-variant-numeric: tabular-nums` on its own
+ * counters and changes nothing else about them.
  */
 private val OalTypography = Typography().let { base ->
     base.copy(
@@ -103,7 +111,7 @@ private val OalTypography = Typography().let { base ->
 /** The style every counter and log line uses. See the note above. */
 val Diagnostic: TextStyle
     @Composable get() = MaterialTheme.typography.bodySmall.copy(
-        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontFeatureSettings = "tnum",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 

@@ -94,6 +94,27 @@ class PcmRing(capacityFrames: Int) {
         return got / Rtp.CHANNELS
     }
 
+    /**
+     * Forgets what has been counted, for a new stream.
+     *
+     * Separate from [clear], which throws away *audio* and is called
+     * mid-stream — on a resync, and on every seek or track change the
+     * decoder reports. Resetting the counters there would erase the
+     * evidence of the very stumble that caused it.
+     *
+     * This is for the other case: a new source, a new sender, a fresh
+     * `packetsSent`. Without it the two are on different clocks, and a
+     * screen showing "10451 packets · 17856 underruns" is comparing this
+     * stream against everything since the app launched — which reads as
+     * more silence than audio and is simply two different measurements
+     * side by side.
+     */
+    @Synchronized
+    fun resetCounters() {
+        overruns = 0
+        underruns = 0
+    }
+
     /** Forgets everything held, for a source change. */
     @Synchronized
     fun clear() {

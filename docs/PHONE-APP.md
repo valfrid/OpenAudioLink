@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.2, built by CI as one APK — see *One build* below.
+Version 0.8.3, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -49,7 +49,7 @@ phone/
   core/   plain Kotlin on the JVM — the wire format, pacing, discovery,
           control requests, 44.1-to-48 resampling, silence suppression,
           send-interval measurement, the station model and playlist
-          resolver. 101 tests. No Android; runs anywhere with a JDK.
+          resolver. 104 tests. No Android; runs anywhere with a JDK.
   app/    the Android half — UI, decoder, foreground service, radio locks.
           Needs the Android SDK.
 ```
@@ -182,11 +182,22 @@ choice is made in `Theme.kt` rather than deferred to a setting somebody
 made for other reasons: one product, one look, usually read in a dim room
 with music playing.
 
-Counters and log lines use a monospace style rather than the body font.
-Proportional digits make every number a different width, so a count that
-changes appears to jitter sideways and two rows of figures do not line up
-— and lining figures up against each other is the entire purpose of that
-panel.
+Counters ask the body font for its **tabular figures**
+(`fontFeatureSettings = "tnum"`), which is what `oal.css` does with
+`font-variant-numeric: tabular-nums`. A monospace family was tried first
+and was the wrong tool: it changed the typeface of whole sentences rather
+than their digits, so the diagnostics read as a different application
+pasted into this one, and the alignment it bought only pays off in columns
+these lines are not.
+
+**Underruns are shown as time, and counted per stream.** `PcmRing` counts
+frames and the ring outlives any one sender, so the screen once read
+`10451 packets · 17856 underruns` — a per-stream count beside a
+since-launch one, which looks like more silence than audio and is really
+372 ms of padding inside a minute of music. `resetCounters()` is now
+called when a stream starts, separately from `clear()`, which throws away
+audio mid-stream and must not erase the evidence of the stumble that
+caused it.
 
 **The marks are placeholders, drawn in `Glyphs.kt`** as vector paths
 rather than fetched: they tint with the theme, add no dependency to a
@@ -633,7 +644,7 @@ you want reproducible updates on your own device.
 
 ## Status
 
-`core` is written and tested: 101 tests covering the header field by field,
+`core` is written and tested: 104 tests covering the header field by field,
 byte order, the sequence and timestamp wraps, the pacing cases above, the
 ring, the silence gate and the skipped-time accounting, discovery parsing,
 the peer table's liveness and its second liveness channel, every control request body, the

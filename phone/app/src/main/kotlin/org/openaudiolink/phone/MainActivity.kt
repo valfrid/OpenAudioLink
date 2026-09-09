@@ -650,8 +650,8 @@ private fun Details(state: Producer.State) {
         if (state.streaming) {
             Text(
                 if (state.sendingAudio) {
-                    "sending: ${state.packetsSent} packets · ${state.underruns} " +
-                        "underruns · ${state.resyncs} resyncs"
+                    "sending: ${state.packetsSent} packets · " +
+                        "${silence(state.underruns)} silence · ${state.resyncs} resyncs"
                 } else {
                     // How long, not how many: a packet is 5 ms, and six
                     // figures of "held" reads like a fault rather than
@@ -712,6 +712,20 @@ private fun Details(state: Producer.State) {
 
 /** How many of librespot's lines fit without pushing everything else off. */
 private const val LOG_LINES_ON_SCREEN = 6
+
+/**
+ * Underruns as the time they represent, not the frames they are counted in.
+ *
+ * `PcmRing` counts frames, and a frame count sitting next to a packet
+ * count invites exactly the comparison it cannot survive: "10451 packets ·
+ * 17856 underruns" reads as more silence than audio, when it is 372 ms of
+ * padding inside nearly a minute of music. Milliseconds are what the rest
+ * of this system is measured in and what a person can weigh.
+ */
+private fun silence(frames: Long): String {
+    val ms = frames / (Rtp.SAMPLE_RATE / 1000)
+    return if (ms < 1000) "$ms ms" else "%.1f s".format(ms / 1000.0)
+}
 
 /** Held packets as the time they actually represent — 200 of them a second. */
 private fun elapsed(packets: Long): String {

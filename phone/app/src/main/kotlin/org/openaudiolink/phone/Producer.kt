@@ -349,6 +349,9 @@ object Producer {
 
         stopStream()
         ring.clear()
+        // Counted per stream, like packetsSent, or the two are on
+        // different clocks and the screen compares them anyway.
+        ring.resetCounters()
 
         val rtp = RtpSender(
             ring,
@@ -946,5 +949,5 @@ private const val PROBE_INTERVAL_MS = 5_000L
 private const val QUIET_MS = 10_000L
 
 object BuildInfo {
-    const val VERSION = "0.8.2"
+    const val VERSION = "0.8.3"
 }
