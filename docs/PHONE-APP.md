@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.8.4, built by CI as one APK — see *One build* below.
+Version 0.8.5, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -188,6 +188,14 @@ Shaped like the Hub's `play.html`, because it is the same job for the same
 person and two products that do one thing should not have to be learned
 twice: a brand line with a health dot, a banner for what is playing, the
 rooms, and a row of tiles answering *what would you like to hear*.
+
+**The version is on the brand line, always.** Not behind the details
+switch and not only in the announce, because this app is installed by
+hand from a CI artefact and two builds can differ by a feature while
+looking identical. That cost a round: a fault reported "in 0.8.4" was
+0.8.3 still installed, and the only way to tell was noticing that a
+field 0.8.4 adds was absent from the screenshot. The Hub's footer prints
+name, version and protocol for the same reason.
 
 **The instrumentation is behind a switch.** The packet counters, the
 discovery heartbeat and librespot's own lines were each added because a

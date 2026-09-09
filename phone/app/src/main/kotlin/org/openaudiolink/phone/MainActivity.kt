@@ -207,11 +207,32 @@ private fun Brand(state: Producer.State) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "OpenAudioLink",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Column {
+            Text(
+                "OpenAudioLink",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            /*
+             * The version, on screen, always — not behind the details
+             * switch and not only in the announce.
+             *
+             * This app is installed by hand from a CI artefact, so two
+             * builds can differ by a feature and look identical, and a
+             * screenshot is the only thing anybody has to go on. That
+             * cost a round already: a report of a fault "in 0.8.4" was
+             * really 0.8.3 still installed, and the only way to tell was
+             * noticing that a field 0.8.4 adds was missing.
+             *
+             * The Hub's footer does exactly this — name, version,
+             * protocol — for the same reason.
+             */
+            Text(
+                "v${BuildInfo.VERSION}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
