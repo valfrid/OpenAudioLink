@@ -173,6 +173,8 @@ object Producer {
         val announcesSent: Long = 0,
         val probesSent: Long = 0,
         val discoveryError: String? = null,
+        /** Whether this device is mounted rather than carried. See Prefs. */
+        val wallPanel: Boolean = false,
         /** Whether the cast point has ever been signed in. */
         val spotifySignedIn: Boolean = false,
         /** Set while the one-time sign-in is waiting for the browser. */
@@ -882,6 +884,7 @@ object Producer {
             it.copy(
                 castName = Prefs.castName(context),
                 showDetails = Prefs.showDetails(context),
+                wallPanel = Prefs.wallPanel(context),
                 stations = Prefs.stations(context),
             )
         }
@@ -904,6 +907,18 @@ object Producer {
     fun setShowDetails(context: Context, show: Boolean) {
         Prefs.setShowDetails(context, show)
         _state.update { it.copy(showDetails = show) }
+    }
+
+    /**
+     * Wall-panel mode, which the activity applies on its next resume.
+     *
+     * Stored and mirrored into state in one step, like the details switch:
+     * the screen reads state, the activity reads Prefs, and both have to
+     * see the change for the switch to move *and* the window to follow.
+     */
+    fun setWallPanel(context: Context, on: Boolean) {
+        Prefs.setWallPanel(context, on)
+        _state.update { it.copy(wallPanel = on) }
     }
 
     /* ---------- radio stations ---------- */

@@ -23,6 +23,7 @@ object Prefs {
     private const val KEY_DETAILS = "showDetails"
     private const val KEY_SELECTED = "selectedSpeakers"
     private const val KEY_STATIONS = "stations"
+    private const val KEY_WALL_PANEL = "wallPanel"
 
     /**
      * What a cast point is called before anybody renames it.
@@ -78,6 +79,28 @@ object Prefs {
 
     fun setShowDetails(context: Context, show: Boolean) {
         prefs(context).edit().putBoolean(KEY_DETAILS, show).apply()
+    }
+
+    /**
+     * Whether this device is a wall panel rather than something in a
+     * pocket.
+     *
+     * One setting rather than a separate build, because the two differ
+     * only in how the screen behaves: a panel is landscape, stays lit, and
+     * gives its whole surface to the app. Everything below it — the
+     * sender, discovery, the sources — is identical, and a second APK that
+     * differed in three window flags would be a second thing to keep in
+     * step for no benefit.
+     *
+     * It is deliberately **not** the same question as "is this a tablet".
+     * A seven-year-old phone screwed to a wall is a panel; a tablet
+     * someone carries around is not.
+     */
+    fun wallPanel(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_WALL_PANEL, false)
+
+    fun setWallPanel(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_WALL_PANEL, on).apply()
     }
 
     /**

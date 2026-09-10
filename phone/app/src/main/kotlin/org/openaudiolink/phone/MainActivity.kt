@@ -2,9 +2,11 @@ package org.openaudiolink.phone
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +52,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.Station
 import org.openaudiolink.phone.sources.LibrarySource
@@ -109,6 +114,8 @@ class MainActivity : ComponentActivity() {
         // placeholder that changes a moment later.
         Producer.readSettings(this)
 
+        applyWallPanel()
+
         /*
          * The screen first, the service second.
          *
@@ -131,6 +138,63 @@ class MainActivity : ComponentActivity() {
         }
 
         ProducerService.start(this)
+    }
+
+    /**
+     * Re-applied on every resume, because the setting can change while the
+     * screen is up and a panel that only becomes a panel after a restart
+     * is a setting people will think is broken.
+     */
+    override fun onResume() {
+        super.onResume()
+        applyWallPanel()
+    }
+
+    /**
+     * What makes a screen a wall panel: landscape, lit, and undecorated.
+     *
+     * Three window properties and no separate build. Turning it off puts
+     * every one of them back, so the same APK is a phone in a pocket or a
+     * panel on a wall depending on one switch — which matters because the
+     * panel is expected to *be* a seven-year-old phone before it is ever a
+     * tablet.
+     *
+     * **Landscape** is locked rather than preferred, since a device screwed
+     * to a wall has no way to be turned and its accelerometer will happily
+     * decide otherwise.
+     *
+     * **Lit** is `FLAG_KEEP_SCREEN_ON` rather than a wake lock: it is
+     * scoped to this window, so it lapses the moment the app is not in
+     * front, and there is nothing to leak or forget to release.
+     *
+     * **Undecorated** hides the status and navigation bars, with a swipe
+     * bringing them back transiently — a panel showing a battery icon and
+     * three navigation buttons is a phone lying on a shelf, and the swipe
+     * is how somebody gets out without a factory reset.
+     */
+    private fun applyWallPanel() {
+        val panel = Prefs.wallPanel(this)
+
+        requestedOrientation = if (panel) {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+
+        if (panel) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+
+        val bars = WindowCompat.getInsetsController(window, window.decorView)
+        if (panel) {
+            bars.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            bars.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     private fun nameOf(uri: Uri): String =
@@ -627,6 +691,26 @@ private fun Settings(state: Producer.State) {
         )
         OutlinedButton(onClick = { Producer.forgetSpotify(context) }) {
             Text(if (state.spotifySignedIn) "Forget account" else "Start over")
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Wall panel", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Landscape, screen always on, no status or navigation bars. " +
+                        "Swipe from an edge to get them back.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Switch(
+                checked = state.wallPanel,
+                onCheckedChange = { Producer.setWallPanel(context, it) },
+            )
         }
 
         Spacer(Modifier.height(4.dp))

@@ -53,13 +53,42 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.OpenAudioLink">
 
+        <!--
+            configChanges keeps the activity alive across a rotation or a
+            keyboard appearing. Compose redraws from state either way, and
+            a wall panel that tears down and rebuilds its activity when the
+            accelerometer twitches is a panel that flickers on a wall.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                Also offerable as the home app, which is what makes a wall
+                panel a wall panel.
+
+                Declaring it changes nothing on an ordinary phone: Android
+                only asks which launcher to use when somebody presses Home,
+                and a person who never chooses this one never sees it. On a
+                device screwed to a wall, choosing it means the app comes
+                back after a reboot, after a crash, and after anyone
+                presses Home — without adb, without device owner, and
+                without a BOOT_COMPLETED receiver, which from Android 10
+                cannot reliably start an activity anyway.
+
+                DEFAULT is required alongside HOME or the chooser will not
+                offer it.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.9.1, built by CI as one APK — see *One build* below.
+Version 0.10.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -232,6 +232,21 @@ looking identical. That cost a round: a fault reported "in 0.8.4" was
 0.8.3 still installed, and the only way to tell was noticing that a
 field 0.8.4 adds was absent from the screenshot. The Hub's footer prints
 name, version and protocol for the same reason.
+
+**Wall-panel mode**, one switch rather than a second build. On it the
+screen locks to landscape, stays lit with `FLAG_KEEP_SCREEN_ON`, and
+hides the status and navigation bars with a swipe bringing them back —
+because a device screwed to a wall cannot be turned, must not sleep, and
+showing a battery icon and three navigation buttons makes it a phone
+lying on a shelf. Off, every one of those goes back, so the same APK is
+a pocket app or a panel.
+
+The manifest also offers the activity as a **home app**. That changes
+nothing on an ordinary phone — Android only asks which launcher to use
+when somebody presses Home — but on a panel, choosing it means the app
+returns after a reboot, after a crash and after anyone presses Home,
+with no `adb`, no device owner and no `BOOT_COMPLETED` receiver, which
+from Android 10 cannot reliably start an activity anyway.
 
 **The send counters outlive the sending.** They are shown whenever the
 stream has sent anything at all, not only while audio is flowing. Gating
