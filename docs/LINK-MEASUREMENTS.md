@@ -702,6 +702,137 @@ matches the loss to within 8 %. If this is radio noise, no scheduling
 change, buffer size or access-point rule fixes it, and three attempts at
 exactly those is what this entry exists to stop repeating.
 
+## Run 43: the phone as producer, and the offset is as good as the Hub's
+
+**4.90 h, channel 11, both nodes on their own mesh point** — Speakers on
+`…0b:d0` (the router node), Stereo on `…13:b1` (the secondary), wired
+backhaul between them. That is **run 42's topology and channel exactly**,
+so for once the producer is the single variable: an Android phone on
+**5 GHz at the secondary mesh point**, running the OpenAudioLink app and
+Spotify at the same time, in place of the Hub on Ethernet.
+
+3.53 million packets, `ssrcChanges` 0, `timelineBreaks` 0, no
+disconnects, no roams, no restarts. One sender for the whole run.
+
+### The offset does not care that the producer is a phone
+
+| offset (ring fill) | run 42, Hub on Ethernet | **run 43, phone on 5 GHz** |
+| --- | --- | --- |
+| Median | 2.0 ms | **2.0 ms** |
+| p90 | 6 ms | **5 ms** |
+| p99 | 20 ms | **13 ms** |
+| Under 20 ms | 98.8 % | **99.8 %** |
+| Over 40 ms | 0.7 % | **0.0 %** |
+
+The two speakers never drifted more than **27 ms** apart in five hours,
+and were within 20 ms of each other 99.8 % of the time. This is the
+number the whole synchronisation design exists to protect, and a
+five-year-old handset on Wi-Fi holds it slightly *better* than a wired
+PC did on the same speakers a day earlier.
+
+Phase error against the sender's timeline agrees: median −1.90 ms on both
+nodes, p5 −2.00, p95 −0.70 and −1.30.
+
+### Delivery is worse, and by a factor of five
+
+| | run 42, Hub | **run 43, phone** |
+| --- | --- | --- |
+| Underruns/h, Speakers | 0.6 | **5.7** |
+| Underruns/h, Stereo | 1.2 | **4.9** |
+| Arrival gaps, Speakers | 0.48 % | **0.74 %** |
+| Arrival gaps, Stereo | 0.42 % | **0.77 %** |
+| Loss, Speakers | ~0 | **759 ppm** |
+| Loss, Stereo | 32 ppm | **212 ppm** |
+
+Nothing here is audible on its own — 2 679 and 740 lost packets are
+0.076 % and 0.021 %, every one of them concealed (`filledHoles` equals
+`lossEvents` exactly on both nodes) — but it is five to nine times the
+underrun rate the Hub produced across the same air.
+
+### Every underrun accounted for, which the series has never managed
+
+Correlating the two nodes minute by minute splits the disturbances into
+two populations that do not overlap.
+
+**Common-mode — 7 events.** Identical underrun counts on both nodes in
+the same minute, each with exactly one resync on each, and **no loss and
+no arrival gap over 200 ms**:
+
+    21:50  both +4    22:37  both +2    00:49  both +3    01:05  both +5
+    21:57  both +4    23:34  both +3    00:54  +2 / +3
+
+**One-sided — 6 events.** A gap over 200 ms on one node only, usually
+with a burst of loss, one underrun, one resync:
+
+    Speakers  20:36 (+2 gaps)  21:19 (66 lost)  21:30  22:47 (270 lost)  00:23 (74 lost)
+    Stereo    21:09 (7 lost)
+
+The arithmetic closes exactly. Speakers: 23 common-mode + 5 one-sided =
+**28**, its total. Stereo: 24 common-mode + 0 = **24**, its total. Every
+underrun in five hours belongs to one bucket or the other, with nothing
+left over.
+
+That is a clean division of responsibility. **The common-mode events are
+the producer** — two independent receivers on different access points
+cannot lose the same audio at the same instant, with nothing missing from
+the wire, unless nothing was sent. Seven such stalls in 4.9 hours, about
+one every 42 minutes, and they account for 82 % of Speakers' underruns
+and *all* of Stereo's. They are what a phone costs over a wired PC, and
+they are the entire delta in the table above.
+
+**The one-sided events are that node's own path**, and they are lopsided
+five to one against Speakers — the node on the far side of the backhaul
+from the phone. The worst was a **2.29-second outage at 22:47**, 270
+packets, which is the only event in the run long enough to hear.
+
+### The far side of the backhaul loses more, both ways round
+
+Run 42 had the producer on the router node and Stereo across the
+backhaul; Stereo lost 112 packets and Speakers lost none. Run 43 has the
+producer on the secondary node and Speakers across the backhaul;
+Speakers loses 2 679 and Stereo 740. **The node further from the producer
+loses more in both runs**, with the roles swapped between them.
+
+The backhaul is wired, and Ethernet does not drop one packet in five
+hundred, so the crossing itself is not the mechanism — the extra
+access-point transmission at the far end is the candidate. What the pair
+of runs does establish is that it is a property of the topology rather
+than of either node: Speakers was the clean one in run 42 and the dirty
+one here, without moving, and its RSSI was −46 then and −49 now.
+
+### A correction
+
+The evening this run started, the two mesh points sharing channel 11 was
+offered as a possible cause of the loss asymmetry, with splitting them
+suggested as a fix. **That was wrong and runs 41 and 42 had already
+settled it**: run 41 found each channel good for one mesh point and bad
+for the other, and run 42 found channel 11 good for both, improving
+Stereo twenty-one-fold. Channel 11 on both nodes is the established
+configuration and this run is further evidence for it, not against.
+
+### Incidental
+
+The clocks are settled and agree with run 39's fit: **+14.9 ppm on
+Speakers and +11.7 on Stereo**, sigma 5.9 on both, over a 3 570-second
+span, `clockSuspect` 0. Three parts per million between the two crystals.
+
+The Hub's **poll RTT degraded**: median 69 ms but p95 **638 ms** and a
+maximum of 1 068. The Hub polls both nodes across the mesh while the
+phone is producing, and this is new — run 42's Hub was the producer and
+the poller at once without it. It costs nothing audible, the control
+plane and the audio path being separate, but it is the first sign in this
+series that the mesh backhaul is carrying more than it did.
+
+### Next
+
+**Read the phone's own send counters before stopping a stream.** The app
+prints `sent unevenly: N gaps · worst X ms` with the same buckets the
+nodes use, accumulated for the life of the stream. If the seven
+common-mode events are the sender stalling, that line will show seven
+gaps in the 100–200 ms band or above, from the producer's side, and the
+diagnosis stops being an inference from two receivers agreeing. It is one
+screenshot taken before pressing Stop, and this run did not take it.
+
 ## Run 42: channel 11, and the problem is solved
 
 **4.84 h, channel 11, both nodes on their own mesh point.** Speakers on
