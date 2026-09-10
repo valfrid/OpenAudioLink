@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.9.0, built by CI as one APK — see *One build* below.
+Version 0.9.1, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -215,6 +215,16 @@ looking identical. That cost a round: a fault reported "in 0.8.4" was
 0.8.3 still installed, and the only way to tell was noticing that a
 field 0.8.4 adds was absent from the screenshot. The Hub's footer prints
 name, version and protocol for the same reason.
+
+**The send counters outlive the sending.** They are shown whenever the
+stream has sent anything at all, not only while audio is flowing. Gating
+them on "is audio flowing right now" threw away the record of a run at
+the exact moment it became worth reading: a Spotify queue that empties
+overnight leaves the silence gate holding, so the screen next morning
+said `waiting 4h 45m · nothing sent` and nothing else — no packet count
+and no gap histogram, for a five-hour stream that had just ended. The
+Hub's log had recorded seven producer-side stalls that night, and the one
+line that could confirm them from the sending end had erased itself.
 
 **The instrumentation is behind a switch.** The packet counters, the
 discovery heartbeat and librespot's own lines were each added because a

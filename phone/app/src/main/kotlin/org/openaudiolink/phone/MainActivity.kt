@@ -677,28 +677,50 @@ private fun Details(state: Producer.State) {
         )
 
         if (state.streaming) {
-            Text(
-                if (state.sendingAudio) {
-                    "sending: ${state.packetsSent} packets · " +
-                        "${silence(state.underruns)} silence · ${state.resyncs} resyncs"
-                } else {
-                    // How long, not how many: a packet is 5 ms, and six
-                    // figures of "held" reads like a fault rather than
-                    // like waiting.
-                    "waiting ${elapsed(state.packetsHeld)} · nothing sent"
-                },
-                style = Diagnostic,
-            )
+            /*
+             * What is being done right now, which is not the same question
+             * as what this stream has done.
+             */
+            if (!state.sendingAudio) {
+                // How long, not how many: a packet is 5 ms, and six
+                // figures of "held" reads like a fault rather than
+                // like waiting.
+                Text("waiting ${elapsed(state.packetsHeld)} · nothing sent", style = Diagnostic)
+            }
 
             /*
-             * This end of the same measurement the nodes report.
+             * The totals, shown whenever there are any — **not** only
+             * while audio is flowing.
              *
-             * A node's arrival gaps cannot say whether the producer
-             * stalled or the air clumped the packets; two of them agreeing
-             * to within a fifth of a percent said the cause was upstream
-             * of both, and this is the only place that can tell which.
+             * Gating these on `sendingAudio` threw the record of a run
+             * away at the exact moment it became worth reading. A Spotify
+             * queue that empties overnight leaves the gate holding, so a
+             * screen checked in the morning said "waiting 4h 45m · nothing
+             * sent" and nothing else: no packet count, no gap histogram,
+             * for a five-hour stream that had just finished. The Hub's
+             * sample log had recorded seven producer-side stalls that
+             * night and this line is the only thing that can confirm them
+             * from the sending end — and it had erased itself.
+             *
+             * A stream that has sent nothing at all still shows nothing,
+             * which is the case the gate was really for.
              */
-            if (state.sendingAudio) {
+            if (state.packetsSent > 0) {
+                Text(
+                    "sent: ${state.packetsSent} packets · " +
+                        "${silence(state.underruns)} silence · ${state.resyncs} resyncs",
+                    style = Diagnostic,
+                )
+
+                /*
+                 * This end of the same measurement the nodes report.
+                 *
+                 * A node's arrival gaps cannot say whether the producer
+                 * stalled or the air clumped the packets; two of them
+                 * agreeing to within a fifth of a percent said the cause
+                 * was upstream of both, and this is the only place that
+                 * can tell which.
+                 */
                 Text(
                     "sent unevenly: ${state.sendGaps} gaps · worst " +
                         "${state.sendGapWorstMs} ms" +
