@@ -22,7 +22,11 @@ on:
       revision:
         description: "Packaging revision. Bump when the patch below changes."
         required: true
-        default: "2"
+        default: "3"
+      ndk:
+        description: "NDK package to build with, pinned for reproducibility."
+        required: true
+        default: "27.2.12479018"
 
 permissions:
   contents: write
@@ -62,6 +66,35 @@ jobs:
           sed -i 's|pub const OS: &str = std::env::consts::OS;|pub const OS: \&str = "linux";  // OpenAudioLink: see librespot-android.yml|' "$f"
           grep -n 'pub const OS' "$f"
 
+      - name: Pin the NDK
+        # The runner exports an ANDROID_NDK_ROOT of whatever version its
+        # image happens to carry that week, so a binary built here was
+        # reproducible only by accident — and the property that matters
+        # most (page alignment, below) is one the NDK version decides.
+        # Pinning makes it a property of this repository instead.
+        #
+        # If the package name is wrong the step fails and prints what is
+        # available; pass a different `ndk` input rather than editing this
+        # file, since the right answer changes with the runner image.
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if ! yes | "$sdkmanager" "ndk;${{ inputs.ndk }}" > /dev/null; then
+            echo "::error::NDK ${{ inputs.ndk }} is not installable. Available:"
+            "$sdkmanager" --list 2>/dev/null | grep -E '^\s+ndk;' | sort -u
+            exit 1
+          fi
+          root="$ANDROID_HOME/ndk/${{ inputs.ndk }}"
+          test -d "$root"
+          # Both names, and both to a real path. The warning that used to
+          # live on the build step was about setting ANDROID_NDK_HOME from
+          # the workflow's `env` context, where a runner-set variable reads
+          # as empty and overrides the good one. Writing an absolute path
+          # to $GITHUB_ENV is a different thing and is safe.
+          echo "ANDROID_NDK_ROOT=$root" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$root" >> "$GITHUB_ENV"
+          echo "NDK: $root"
+
       - name: Rust for Android
         run: |
           rustup toolchain install stable --profile minimal
@@ -70,12 +103,22 @@ jobs:
 
       - name: Build
         working-directory: librespot
-        # No ANDROID_NDK_HOME here. The runner already exports
-        # ANDROID_NDK_ROOT and cargo-ndk reads it; setting the other name
-        # from `${{ env.* }}` yields an empty string, because runner-set
-        # variables are shell environment, not the workflow's env context —
-        # and an empty ANDROID_NDK_HOME overrides the good one.
-        #
+        env:
+          # **16 KB page alignment, which Google Play requires.**
+          #
+          # Play rejects an app with `targetSdk` 35 or higher whose native
+          # code is not laid out for 16 KB memory pages, and this binary
+          # ships inside the APK as `liblibrespot.so`. Recent NDKs align
+          # that way by default and older ones do not, so it is asked for
+          # explicitly rather than inherited — the next step then proves
+          # it rather than trusting either.
+          #
+          # It cannot be caught downstream: every phone this project is
+          # developed on uses 4 KB pages, so a misaligned binary runs
+          # perfectly here and is refused at upload.
+          RUSTFLAGS: >-
+            -C link-arg=-Wl,-z,max-page-size=16384
+            -C link-arg=-Wl,-z,common-page-size=16384
         # No default features, and that is the whole trick.
         #
         #   * the default audio backend is rodio, which wants ALSA — there is
@@ -118,6 +161,38 @@ jobs:
           ls -l
           file liblibrespot.so || true
 
+      - name: Prove the 16 KB alignment
+        # A linker flag that was accepted is not the same as a binary that
+        # is aligned, and the difference is only visible here. Google Play
+        # checks every LOAD segment; so does this, and it fails the build
+        # rather than publishing a release that cannot be uploaded.
+        run: |
+          set -euo pipefail
+          so=out/liblibrespot.so
+          readelf="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          [ -x "$readelf" ] || readelf=readelf
+          echo "reading with $readelf"
+          "$readelf" -l "$so" | tee headers.txt
+
+          loads=$(awk '$1=="LOAD"' headers.txt | wc -l)
+          if [ "$loads" -eq 0 ]; then
+            echo "::error::no LOAD segments found — the check parsed nothing and cannot vouch for anything"
+            exit 1
+          fi
+
+          bad=0
+          while read -r align; do
+            v=$(( align ))
+            printf 'LOAD align %s = %d bytes\n' "$align" "$v"
+            [ "$v" -ge 16384 ] || bad=1
+          done < <(awk '$1=="LOAD"{print $NF}' headers.txt)
+
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::liblibrespot.so is not 16 KB aligned. Google Play refuses this at upload, and no phone with 4 KB pages will show the fault. Check that the NDK accepted -Wl,-z,max-page-size=16384."
+            exit 1
+          fi
+          echo "All $loads LOAD segments aligned to at least 16 KB."
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
@@ -125,7 +200,15 @@ jobs:
           name: librespot ${{ inputs.version }} for Android (arm64), rev ${{ inputs.revision }}
           body: |
             librespot ${{ inputs.version }}, cross-compiled for
-            `aarch64-linux-android` (arm64-v8a), API 26.
+            `aarch64-linux-android` (arm64-v8a), API 26, with NDK
+            `${{ inputs.ndk }}`.
+
+            **16 KB page aligned**, linked with
+            `-Wl,-z,max-page-size=16384` and verified segment by segment
+            before this release was published. Google Play refuses native
+            code that is not, for any app at `targetSdk` 35 or above, and
+            no handset with 4 KB pages will show the fault — so it is
+            checked at build time or not at all.
 
             **Patched in one place**, and the release is versioned
             separately because of it: `core/src/config.rs` reports the

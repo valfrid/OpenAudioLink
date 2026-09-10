@@ -118,18 +118,38 @@ val librespotVersion = providers.gradleProperty("oal.librespot.version").orElse(
 val librespotRepo = providers.gradleProperty("oal.librespot.repo")
     .orElse("valfrid/OpenAudioLink")
 
+/*
+ * The packaging revision, which this used to ignore.
+ *
+ * `librespot-android.yml` publishes to `librespot-android-v<version>-<rev>`
+ * and this fetched `librespot-android-v<version>` with no revision at all,
+ * so every rebuild landed on a tag the app never looked at. It worked only
+ * because an early revision-less release happened to exist.
+ *
+ * Empty means the old tag, which is what is published today. Set it to the
+ * revision once a new one exists:
+ *
+ *     ./gradlew :app:assembleDebug -Poal.librespot.revision=3
+ *
+ * or change the default here. The first build that needs the 16 KB aligned
+ * binary is the one that needs this set.
+ */
+val librespotRevision = providers.gradleProperty("oal.librespot.revision").orElse("")
+
 val fetchLibrespot by tasks.registering {
     description = "Downloads the published librespot build for arm64 into the app."
     group = "build setup"
 
     val version = librespotVersion.get()
     val repo = librespotRepo.get()
+    val revision = librespotRevision.get().takeIf { it.isNotBlank() }?.let { "-$it" }.orEmpty()
     val target = layout.projectDirectory
         .file("src/main/jniLibs/arm64-v8a/liblibrespot.so").asFile
     outputs.file(target)
 
     doLast {
-        val base = "https://github.com/$repo/releases/download/librespot-android-v$version"
+        val base =
+            "https://github.com/$repo/releases/download/librespot-android-v$version$revision"
         target.parentFile.mkdirs()
 
         val expected = try {
@@ -137,8 +157,9 @@ val fetchLibrespot by tasks.registering {
                 .readText().trim().substringBefore(' ')
         } catch (e: Exception) {
             throw GradleException(
-                "librespot-android-v$version publishes no SHA256, or could not be reached " +
-                    "($e). Refusing to install it. Run the librespot-android workflow first."
+                "librespot-android-v$version$revision publishes no SHA256, or could not be " +
+                    "reached ($e). Refusing to install it. Run the librespot-android workflow " +
+                    "first, and check -Poal.librespot.revision matches the tag it published."
             )
         }
 

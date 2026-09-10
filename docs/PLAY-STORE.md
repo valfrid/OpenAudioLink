@@ -51,30 +51,45 @@ Google Play requires apps with native code and `targetSdk` 35 or higher
 to support 16 KB memory pages. This app ships `liblibrespot.so`, so it is
 in scope.
 
-`.github/workflows/librespot-android.yml` builds it with `cargo ndk -t
-arm64-v8a --platform 26` and **does not pin an NDK version** — it uses
-whatever `ANDROID_NDK_ROOT` the GitHub runner happens to export that
-week. Whether the current binary is 16 KB aligned is therefore not a
-question the repository can answer, which is its own problem: the answer
-changes silently when GitHub updates its image.
+**The build side is done; the published binary is not yet rebuilt.**
 
-Two things to do, and they are worth doing together:
+`.github/workflows/librespot-android.yml` used to build with `cargo ndk
+-t arm64-v8a --platform 26` and **no pinned NDK**, taking whatever
+`ANDROID_NDK_ROOT` the GitHub runner exported that week — so whether the
+binary qualified was not a question the repository could answer, and the
+answer changed silently when GitHub updated its image. It now:
 
-- **Pin the NDK version** in that workflow, so the binary is reproducible
-  and the alignment is a property of the repository rather than of the
-  runner.
-- **Link with `-Wl,-z,max-page-size=16384`** and verify the result rather
-  than trusting the default. Recent NDKs align to 16 KB on their own;
-  older ones do not, and "recent" is exactly what is not pinned here.
+- **pins the NDK** through an `ndk` input, so alignment is a property of
+  this repository rather than of the runner, and fails with the list of
+  available packages if the pin is wrong;
+- **links with `-Wl,-z,max-page-size=16384`** rather than inheriting
+  whatever the toolchain defaults to;
+- **proves it before publishing** — a step reads every `LOAD` segment
+  with `llvm-readelf -l` and fails the build if any is aligned below
+  16 KB, so a release that Play would refuse never gets created. A linker
+  flag that was accepted is not the same as a binary that is aligned.
 
-Verify with `llvm-readelf -l liblibrespot.so` and check the `LOAD`
-segment alignment, in CI, as a build step that fails — the same
-discipline `ci.yml` already applies to "is librespot actually in the
-APK?", and for the same reason.
+**Still to do**, and it needs a person to press the button:
 
-**This cannot be caught by testing.** The Galaxy A8 this app is developed
-on uses 4 KB pages, so a misaligned binary works perfectly there and
-fails on newer hardware — and Play rejects the bundle before any of that.
+1. Run the workflow at **revision 3** to publish an aligned binary.
+2. Point the app at it — `-Poal.librespot.revision=3`, or change the
+   default in `app/build.gradle.kts`.
+3. Flip the check in `ci.yml` from `::warning::` to `::error::`, since
+   from then on a misaligned binary is a regression rather than the
+   status quo.
+
+A second fault found while fixing this: the workflow publishes to
+`librespot-android-v<version>-<revision>` and the app fetched
+`librespot-android-v<version>` with **no revision at all**, so every
+rebuild landed on a tag nothing looked at. It worked only because an
+early revision-less release happened to exist. The Gradle side now takes
+`oal.librespot.revision`, defaulting to empty so today's build is
+unchanged.
+
+**None of this can be caught by testing.** The Galaxy A8 this app is
+developed on uses 4 KB pages, so a misaligned binary works perfectly
+there and is refused at upload, which is why the check has to live in
+the build.
 
 ### 2. Spotify, via librespot — still open
 
@@ -255,7 +270,9 @@ Spotify decision goes the other way:
 
 1. ~~Settle the applicationId.~~ Done: `se.valfrid.openaudiolink`.
 2. ~~One source for the version.~~ Done: `BuildConfig.VERSION_NAME`.
-3. Pin the NDK and prove 16 KB alignment in CI.
+3. ~~Pin the NDK and prove 16 KB alignment in the build.~~ Done. Still
+   needs the binary rebuilt at revision 3, the app pointed at it, and
+   the CI check flipped from a warning to an error.
 4. Add lint to the build.
 5. Real release signing, failing loudly without credentials.
 6. `versionName` and `versionCode` derived from the tag.
