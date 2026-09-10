@@ -111,34 +111,47 @@ jobs:
           "$ANDROID_HOME"/build-tools/35.0.0/aapt2 dump badging "$apk" \
             | grep -i "native-code\|extractNativeLibs" || true
 
-      # A warning today, a blocker before the first App Bundle.
-      #
       # Google Play refuses native code that is not laid out for 16 KB
       # pages, for any app at targetSdk 35 or above. It cannot be caught by
       # testing: every handset this project runs on uses 4 KB pages, so a
       # misaligned binary works perfectly and is refused at upload.
       #
-      # librespot-android.yml now links for it and proves it before
-      # publishing, but the release this build downloads predates that. So
-      # this reports rather than fails, and becomes an error once the app
-      # points at a rebuilt revision -- see docs/PLAY-STORE.md.
+      # The published binary already satisfies it -- all four LOAD segments
+      # at 0x4000 -- so this fails rather than warns. It is a regression
+      # detector: whatever produced an aligned binary was the runner's NDK
+      # default rather than anything this repository asked for, and
+      # librespot-android.yml now asks explicitly. If a future rebuild
+      # comes back misaligned, the phone build stops here rather than at
+      # the Play console.
+      #
+      # -W, and it is not cosmetic: without it GNU readelf wraps each
+      # program header over two lines and the last field of a LOAD line is
+      # an address, not the alignment.
       - name: Is librespot 16 KB page aligned?
         working-directory: phone
         run: |
-          set -uo pipefail
+          set -euo pipefail
           so=app/src/main/jniLibs/arm64-v8a/liblibrespot.so
-          readelf -l "$so" > headers.txt || { echo "::warning::could not read $so"; exit 0; }
+          readelf -lW "$so" > headers.txt
           loads=$(awk '$1=="LOAD"' headers.txt | wc -l)
+          if [ "$loads" -eq 0 ]; then
+            echo "::error::no LOAD segments in $so — the check parsed nothing and cannot vouch for anything"
+            exit 1
+          fi
           bad=0
           while read -r align; do
+            case "$align" in
+              0x[0-9a-fA-F]*) ;;
+              *) echo "::error::unparsable alignment '$align' — the header format changed"; exit 1 ;;
+            esac
             printf 'LOAD align %s = %d bytes\n' "$align" "$(( align ))"
             [ "$(( align ))" -ge 16384 ] || bad=1
           done < <(awk '$1=="LOAD"{print $NF}' headers.txt)
-          if [ "$loads" -eq 0 ] || [ "$bad" -ne 0 ]; then
-            echo "::warning::liblibrespot.so is not 16 KB page aligned. Google Play will refuse the bundle. Rebuild it with librespot-android.yml and set -Poal.librespot.revision to the tag it publishes."
-          else
-            echo "All $loads LOAD segments aligned to at least 16 KB."
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::liblibrespot.so is not 16 KB page aligned. Google Play refuses the bundle, and no phone with 4 KB pages shows the fault. Rebuild with librespot-android.yml and point -Poal.librespot.revision at the tag it publishes."
+            exit 1
           fi
+          echo "All $loads LOAD segments aligned to at least 16 KB."
 
       - name: Name the file after the version too
         working-directory: phone/app/build/outputs/apk/debug

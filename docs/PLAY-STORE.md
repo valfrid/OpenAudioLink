@@ -69,14 +69,24 @@ answer changed silently when GitHub updated its image. It now:
   16 KB, so a release that Play would refuse never gets created. A linker
   flag that was accepted is not the same as a binary that is aligned.
 
-**Still to do**, and it needs a person to press the button:
+**And the binary already published passes.** All four `LOAD` segments of
+the current `liblibrespot.so` sit at `0x4000`, so this was never actually
+blocking an upload — it was *unverified*, which is a different thing. The
+runner's NDK happened to do the right thing on the day; nothing in the
+repository asked for it or checked it, and nothing would have noticed had
+the next runner image changed.
 
-1. Run the workflow at **revision 3** to publish an aligned binary.
-2. Point the app at it — `-Poal.librespot.revision=3`, or change the
-   default in `app/build.gradle.kts`.
-3. Flip the check in `ci.yml` from `::warning::` to `::error::`, since
-   from then on a misaligned binary is a regression rather than the
-   status quo.
+So the phone build now **fails** rather than warns if the binary it
+downloads is misaligned. It is a regression detector rather than a
+to-do, and no rebuild is needed before a Play upload.
+
+**A parser bug worth recording**, because it nearly inverted this
+conclusion: the first version of the check read the last field of each
+`LOAD` line, and GNU `readelf -l` wraps every program header over two
+lines — so the field was an address, and segment one came back as
+alignment `0x0`. It would have condemned a binary that was correct. Both
+checks now pass `-W`, and both refuse to interpret anything that does not
+look like a hex alignment rather than guessing.
 
 A second fault found while fixing this: the workflow publishes to
 `librespot-android-v<version>-<revision>` and the app fetched
@@ -270,9 +280,8 @@ Spotify decision goes the other way:
 
 1. ~~Settle the applicationId.~~ Done: `se.valfrid.openaudiolink`.
 2. ~~One source for the version.~~ Done: `BuildConfig.VERSION_NAME`.
-3. ~~Pin the NDK and prove 16 KB alignment in the build.~~ Done. Still
-   needs the binary rebuilt at revision 3, the app pointed at it, and
-   the CI check flipped from a warning to an error.
+3. ~~Pin the NDK and prove 16 KB alignment.~~ Done, and the published
+   binary already passes — the phone build fails now if it ever stops.
 4. Add lint to the build.
 5. Real release signing, failing loudly without credentials.
 6. `versionName` and `versionCode` derived from the tag.

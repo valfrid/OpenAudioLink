@@ -172,7 +172,12 @@ jobs:
           readelf="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           [ -x "$readelf" ] || readelf=readelf
           echo "reading with $readelf"
-          "$readelf" -l "$so" | tee headers.txt
+          # -W, and it is not cosmetic. Without it GNU readelf wraps every
+          # program header over two lines, so the last field of a LOAD
+          # line is an address rather than the alignment — which is how
+          # the first version of this check read 0x0 for segment one and
+          # would have condemned a perfectly good binary.
+          "$readelf" -lW "$so" | tee headers.txt
 
           loads=$(awk '$1=="LOAD"' headers.txt | wc -l)
           if [ "$loads" -eq 0 ]; then
@@ -182,6 +187,13 @@ jobs:
 
           bad=0
           while read -r align; do
+            # An alignment is a small hex power of two. Anything else means
+            # the column moved again, and guessing at it is what this is
+            # for: fail rather than read an address as a verdict.
+            case "$align" in
+              0x[0-9a-fA-F]*) ;;
+              *) echo "::error::unparsable alignment '$align' — the header format changed"; exit 1 ;;
+            esac
             v=$(( align ))
             printf 'LOAD align %s = %d bytes\n' "$align" "$v"
             [ "$v" -ge 16384 ] || bad=1
