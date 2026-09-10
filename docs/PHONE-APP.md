@@ -833,25 +833,59 @@ class of secret as the Wi-Fi credentials this project keeps out of the
 repository, because whoever holds it can publish an update that a phone
 installs over this one without asking.
 
-Make it once:
+**`keytool` comes with any JDK**, and this project does not otherwise
+need one — the phone app is built by CI because the container it is
+written in cannot reach `dl.google.com`. So it is probably installed and
+not on `PATH`. In PowerShell:
 
-```bash
-keytool -genkeypair -v -keystore oal-release.jks \
+```powershell
+Get-Command keytool -ErrorAction SilentlyContinue
+Get-ChildItem "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -ErrorAction SilentlyContinue
+Get-ChildItem "C:\Program Files\Eclipse Adoptium\*\bin\keytool.exe" -ErrorAction SilentlyContinue
+```
+
+Android Studio bundles one under `jbr\bin`. Failing that,
+`winget install EclipseAdoptium.Temurin.21.JDK`.
+
+Make the key once. It will ask for a store password, then a name and
+organisation — none of which anything checks, so they can be anything you
+will recognise — and finally a key password:
+
+```powershell
+& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" `
+  -genkeypair -v -keystore oal-release.jks `
   -alias oal -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-Then add four repository secrets — Settings → Secrets and variables →
+`-validity 10000` is about twenty-seven years, which is the point: this
+key has to outlive every version of the app.
+
+Then four repository secrets — Settings → Secrets and variables →
 Actions:
 
 | Secret | What goes in it |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 oal-release.jks` |
+| `ANDROID_KEYSTORE_BASE64` | the keystore, base64 — see below |
 | `ANDROID_KEYSTORE_PASSWORD` | the store password |
 | `ANDROID_KEY_ALIAS` | `oal`, or whatever `-alias` you used |
 | `ANDROID_KEY_PASSWORD` | the key password |
 
-Keep the `.jks` itself somewhere backed up and off this repository. A
-secret is not a backup: GitHub will not give it back to you.
+The base64, on Windows — `base64 -w0` is a Linux command and does not
+exist here:
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("oal-release.jks")) |
+  Set-Clipboard
+```
+
+That puts it on the clipboard ready to paste. It is one very long line
+with no newlines, which is what the workflow expects.
+
+**Then back the `.jks` up somewhere off this machine and off GitHub.** A
+secret is not a backup — GitHub will not show it to you again — and
+losing this file means no installed copy of the app can ever be updated,
+only uninstalled and reinstalled, taking the Spotify sign-in and the
+saved stations with it.
 
 ### Cutting a release
 
