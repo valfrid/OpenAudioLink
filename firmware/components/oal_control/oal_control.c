@@ -277,6 +277,33 @@ static int format_ota(char *out, size_t out_size)
  * handlers and does not touch these.
  */
 static char s_roles[OAL_ROLES_STR_MAX];
+static char s_pending[OAL_ROLES_STR_MAX + 96];
+
+/*
+ * What this node is actually running, captured once at start.
+ *
+ * `roles`, `channel` and `output` are all stored settings that take effect
+ * at the next boot, so the stored value and the running one differ for as
+ * long as somebody leaves between changing one and restarting. `/status`
+ * used to report the two inconsistently — `roles` from the running config
+ * and `channel`/`output` straight from NVS — which is worse than either
+ * rule on its own: a stored change was invisible in one field and looked
+ * already applied in the other two.
+ *
+ * The rule is now the one this file already applies to `volume`: every
+ * field says what the node is *doing*, and anything stored but not yet
+ * running appears in `pending`. Control starts at boot, so the values
+ * taken here are the running ones by construction.
+ *
+ * This is the fault that cost an evening. A dongle was told to become a
+ * consumer, the change did not land, and every reading available said
+ * "producer" without distinguishing "the request never arrived" from
+ * "stored, waiting for a restart". Neither the Hub nor the node could
+ * tell those apart, so both looked broken and neither was.
+ */
+static oal_channel_t s_running_channel;
+static oal_output_t s_running_output;
+
 static char s_wifi[256];
 static char s_controller[160];
 static char s_join[96];
@@ -310,7 +337,7 @@ static char s_ota[176];
  * whenever a field is added, which is the whole point of the number being
  * here.
  */
-static char s_body[2560];
+static char s_body[2688];   /* +128 for "pending", which the loud size check would otherwise fail on a node carrying long EQ vectors */
 
 /* ---------- GET / ---------- */
 
@@ -326,6 +353,70 @@ static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, NODE_PAGE, HTTPD_RESP_USE_STRLEN);
+}
+
+/*
+ * What a reboot would change, and nothing else.
+ *
+ * Only the fields whose stored value differs from the running one, so an
+ * empty result is `null` rather than a copy of the settings above — a
+ * client can then treat "is there anything pending" as one test instead
+ * of three comparisons it has to know to make.
+ */
+static const char *pending_json(void)
+{
+    const oal_roles_t stored_roles = oal_config_get_roles();
+    const oal_channel_t stored_channel = oal_config_get_channel();
+    const oal_output_t stored_output = oal_config_get_output();
+
+    const bool roles_differ = stored_roles != s_config.roles;
+    const bool channel_differs = stored_channel != s_running_channel;
+    const bool output_differs = stored_output != s_running_output;
+
+    if (!roles_differ && !channel_differs && !output_differs) {
+        return "null";
+    }
+
+    char roles_text[OAL_ROLES_STR_MAX] = "";
+    if (roles_differ && oal_roles_to_json(stored_roles, roles_text, sizeof(roles_text)) < 0) {
+        return "null";
+    }
+
+    /* Appended one field at a time rather than assembled from a wall of
+     * ternaries: the comma between two optional members is the kind of
+     * thing that is obviously right here and quietly wrong there. */
+    int at = 0;
+    int written = snprintf(s_pending, sizeof(s_pending), "{");
+    if (written < 0) {
+        return "null";
+    }
+    at = written;
+
+#define PENDING_APPEND(...)                                                  \
+    do {                                                                     \
+        int n = snprintf(s_pending + at, sizeof(s_pending) - (size_t)at,      \
+                         __VA_ARGS__);                                       \
+        if (n < 0 || n >= (int)sizeof(s_pending) - at) {                     \
+            return "null";                                                   \
+        }                                                                    \
+        at += n;                                                             \
+    } while (0)
+
+    if (roles_differ) {
+        PENDING_APPEND("\"roles\":%s", roles_text);
+    }
+    if (channel_differs) {
+        PENDING_APPEND("%s\"channel\":\"%s\"", at > 1 ? "," : "",
+                       oal_channel_name(stored_channel));
+    }
+    if (output_differs) {
+        PENDING_APPEND("%s\"output\":\"%s\"", at > 1 ? "," : "",
+                       oal_output_name(stored_output));
+    }
+    PENDING_APPEND("}");
+#undef PENDING_APPEND
+
+    return s_pending;
 }
 
 static esp_err_t status_handler(httpd_req_t *req)
@@ -455,17 +546,26 @@ static esp_err_t status_handler(httpd_req_t *req)
                         * the ring settable there is no longer any constant
                         * the Hub could have hardcoded correctly. */
                        "\"ringMs\":%u,\"maxTargetMs\":%u,\"maxDelayMs\":%u,"
+                       /* What a reboot would change: only the settings
+                        * stored since this node started, so `null` means
+                        * "what you see above is what it is". Everything
+                        * else in this document reports what the node is
+                        * doing, which is the rule `volume` states below
+                        * and the one the other reboot-scoped settings
+                        * used to break in both directions. */
+                       "\"pending\":%s,"
                        "\"ota\":%s,"
                        "\"controller\":%s,\"join\":%s,"
                        "\"httpdStackFreeB\":%u,"
                        "\"audio\":{\"state\":\"idle\"}}",
                        s_config.id, s_config.name, roles,
-                       oal_channel_name(oal_config_get_channel()),
+                       /* Running, not stored — see s_running_channel. */
+                       oal_channel_name(s_running_channel),
                        /* What the speaker is actually doing, not what is
                         * stored: they differ for as long as it takes an
                         * NVS write to fail, and the sound is the truth. */
                        (unsigned)oal_playout_volume(),
-                       oal_output_name(oal_config_get_output()),
+                       oal_output_name(s_running_output),
                        oal_playout_output_ready() ? "true" : "false",
                        arrived ? "\"" : "", arrived ? arrived : "null",
                        arrived ? "\"" : "",
@@ -480,7 +580,7 @@ static esp_err_t status_handler(httpd_req_t *req)
                        eq_preamp, eq_left, eq_right,
                        (unsigned)reported_ring_ms(),
                        (unsigned)oal_playout_max_target_ms(),
-                       (unsigned)delay_ceiling(), ota,
+                       (unsigned)delay_ceiling(), pending_json(), ota,
                        controller, join,
                        (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (len <= 0 || len >= (int)sizeof(s_body)) {
@@ -1717,6 +1817,10 @@ esp_err_t oal_control_start(const oal_control_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
     s_config = *config;
+
+    /* Before anything can change them: see the note beside these. */
+    s_running_channel = oal_config_get_channel();
+    s_running_output = oal_config_get_output();
 
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
     server_config.server_port = CONTROL_PORT;

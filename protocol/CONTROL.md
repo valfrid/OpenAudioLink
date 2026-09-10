@@ -64,6 +64,7 @@ is actually in.
   "id": "oal-9f8e7d6c-…",
   "name": "Kitchen",
   "roles": ["consumer"],
+  "pending": { "roles": ["producer"] },
   "hw": "esp32s3-pcm5102a",
   "fw": "0.1.0",
   "uptimeS": 1234,
@@ -454,6 +455,37 @@ the next cycle comes round shortly. A failed poll leaves the previous
 reading in place rather than blanking it, and readings carry the time
 they were taken so nothing is shown as fresher than it is.
 
+## Running, stored, and `pending`
+
+**Every field on `/status` reports what the node is doing**, not what is
+in NVS. `volume` has always said so; `roles`, `channel` and `output` now
+do too.
+
+That matters because those three take effect **at the next boot**. Between
+a `POST /config` and a restart the stored value and the running one
+differ, and `/status` used to report the difference inconsistently —
+`roles` from the running config, `channel` and `output` straight from
+storage. So a stored change was invisible in one field and looked already
+applied in the other two, and no client could tell "the request never
+arrived" from "stored, waiting for a restart".
+
+`pending` closes that. It carries **only** the settings whose stored value
+differs from the running one, and is `null` when there are none:
+
+```json
+"pending": { "roles": ["consumer"], "output": "usb" }
+```
+
+so a client tests one field rather than knowing to compare three. A
+Controller showing a device should read it as *"a reboot would change
+this"* — the node is not misconfigured, it is waiting.
+
+This was written after an evening lost to its absence: a dongle was told
+to become a consumer, the command did not land because the node was
+associated to a distant access point at −79 dBm, and every reading
+available said "producer" with no way to tell a lost request from a
+pending one.
+
 ## Revision history
 
 - 0.1 — initial draft: HTTP/JSON, Phase 2.4 command set.
@@ -462,3 +494,6 @@ they were taken so nothing is shown as fresher than it is.
   `/config`, and `claimed` on announcements. Then `output`, `delayMs`,
   `ringMs` and `input` on `/config`, reported back as `output`, `delayMs`,
   `ringMs`, `maxTargetMs`, `maxDelayMs` and `inputStage` on `/status`.
+  Then `pending` on `/status`, with `roles`, `channel` and `output`
+  changed to report the running value rather than the stored one — see
+  *Running, stored, and `pending`* above.

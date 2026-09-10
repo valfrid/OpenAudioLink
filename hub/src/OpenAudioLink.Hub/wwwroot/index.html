@@ -614,6 +614,32 @@ and swap supplies between two nodes to find out.">Clock</th>
       c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const say = text => { document.getElementById('message').textContent = text; };
 
+    /*
+     * Stored settings need a restart, so ask for one rather than printing
+     * a chore.
+     *
+     * Roles, channel and output all take effect at the next boot. The old
+     * message said so and left it there, which is how a dongle sat holding
+     * a change nobody realised was waiting while every reading said it had
+     * not happened. The node reports it in `pending` now, and this offers
+     * the one action that makes it real.
+     *
+     * Offered, not taken: a speaker may be mid-song, and a silent reboot
+     * in the middle of a party is worse than a setting that waits.
+     */
+    async function offerReboot(deviceId, stored) {
+      if (!confirm(`${stored}\n\nThis takes effect at the next boot. Reboot now?`)) {
+        say(`${stored} Waiting for a reboot — the Roles column shows it as pending.`);
+        return;
+      }
+      say('Rebooting device…');
+      const response = await fetch(
+        `/api/devices/${encodeURIComponent(deviceId)}/reboot`, { method: 'POST' });
+      say(response.ok
+        ? `${stored} Device is rebooting.`
+        : `${stored} Reboot request failed — reboot it by hand.`);
+    }
+
     // Seconds are unreadable past a few minutes, and how long a node has
     // been up is mostly a question of "did it reboot?" — so the coarsest
     // unit that answers it wins.
@@ -1975,7 +2001,26 @@ and swap supplies between two nodes to find out.">Clock</th>
         // role it holds: a node that claimed Controller (decision 9) is
         // still a node, and hiding its buttons left a turntable that took
         // charge with no way to reboot or reconfigure it.
-        const actions = d.hardwareProfile === 'windows-hub' ? '' :
+        /*
+       * Roles, and what a reboot would make them.
+       *
+       * Roles, channel and output are stored settings that only take
+       * effect at the next start, so a node can be running one thing and
+       * holding another. Showing only the running value made a stored
+       * change indistinguishable from a command that never arrived --
+       * which cost an evening on a dongle told to become a consumer while
+       * associated to a distant access point at -79 dBm. The node reports
+       * `pending` for exactly this; the arrow is it.
+       */
+      const rolesCell = (d, roles) => {
+        const running = esc(roles.join(', ') || 'none');
+        const waiting = d.status?.pending?.roles;
+        if (!waiting || !waiting.length) return running;
+        return `${running} <span class="rssi fair">&rarr; ${esc(waiting.join(', '))}` +
+               ` at next boot</span>`;
+      };
+
+      const actions = d.hardwareProfile === 'windows-hub' ? '' :
           `<button data-cmd="reboot" data-id="${esc(d.id)}"${disabled}>Reboot</button> ` +
           // Beside Reboot because that is what people reached for, and it
           // is the wrong tool: a node one metre from an access point kept
@@ -2114,7 +2159,7 @@ and swap supplies between two nodes to find out.">Clock</th>
          * see what it would be replacing, and refuse a silent downgrade. */
         return `<tr data-firmware="${esc(d.firmwareVersion ?? '')}"` +
           `${open ? ' class="expanded"' : ''}>` +
-          `<td>${dot}</td><td>${esc(d.name)}</td><td>${esc(roles.join(', ') || 'none')}</td>` +
+          `<td>${dot}</td><td>${esc(d.name)}</td><td>${rolesCell(d, roles)}</td>` +
           `<td>${channelCell(d)}</td>` +
           `<td>${controllerCell(d)}</td>` +
           `<td>${inputCell(d)}</td>` +
@@ -2653,7 +2698,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ roles }),
         });
         if (response.ok) {
-          say('Roles stored — reboot the node for them to take effect.');
+          await offerReboot(id, `Roles stored: ${roles.join(', ')}.`);
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set roles: ${error.error ?? response.status}`);
@@ -2680,7 +2725,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ channel }),
         });
         if (response.ok) {
-          say('Speaker profile stored — reboot the node for it to take effect.');
+          await offerReboot(id, 'Speaker profile stored.');
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the speaker profile: ${error.error ?? response.status}`);
@@ -2841,7 +2886,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ micGainDb }),
         });
         if (response.ok) {
-          say(`Microphone gain set to ${micGainDb} dB — reboot this node for it to take effect.`);
+          await offerReboot(id, `Microphone gain set to ${micGainDb} dB.`);
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the gain: ${error.error ?? response.status}`);
@@ -2924,7 +2969,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ ringMs }),
         });
         if (response.ok) {
-          say(`Ring set to ${ringMs} ms — reboot this node for it to take effect.`);
+          await offerReboot(id, `Ring set to ${ringMs} ms.`);
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the ring: ${error.error ?? response.status}`);
@@ -2994,7 +3039,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ output: next }),
         });
         if (response.ok) {
-          say(`Output set to ${next} — reboot this node for it to take effect.`);
+          await offerReboot(id, `Output set to ${next}.`);
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the output: ${error.error ?? response.status}`);
@@ -3031,7 +3076,7 @@ and swap supplies between two nodes to find out.">Clock</th>
           body: JSON.stringify({ input: next }),
         });
         if (response.ok) {
-          say(`Capture set to ${next} — reboot this node for it to take effect.`);
+          await offerReboot(id, `Capture set to ${next}.`);
         } else {
           const error = await response.json().catch(() => ({}));
           say(`Could not set the input: ${error.error ?? response.status}`);

@@ -185,6 +185,22 @@ public sealed record DeviceStatus
     public bool? OutputReady { get; init; }
 
     /// <summary>
+    /// What a reboot would change: roles, audio channel and output stage
+    /// are stored settings that only take effect at the next start, so
+    /// between a change and a restart the node is running one thing and
+    /// holding another.
+    /// </summary>
+    /// <remarks>
+    /// Null when nothing is waiting, which is the normal case, and null
+    /// from firmware older than the field — where a pending change is
+    /// simply invisible, as it was when this was written. Before it, a
+    /// node told to change roles reported the running value with no way to
+    /// distinguish "the command never arrived" from "stored, waiting for a
+    /// restart", and an evening went into the difference.
+    /// </remarks>
+    public PendingSettings? Pending { get; init; }
+
+    /// <summary>
     /// Playback level, 0-100, as the node reports it actually is — not as
     /// the Hub last asked for. The two differ while a request is in flight
     /// and after one that failed, and a slider that shows what was asked
@@ -224,6 +240,33 @@ public sealed record DeviceStatus
 
     /// <summary>When the Hub last read this, so a stale reading is visible as stale.</summary>
     public DateTimeOffset ObservedAt { get; init; }
+}
+
+/// <summary>
+/// Settings a node has stored but is not yet running: they take effect at
+/// its next boot.
+/// </summary>
+/// <remarks>
+/// Only the ones that actually differ appear; a node with nothing waiting
+/// reports no pending block at all rather than an echo of its own
+/// settings, so "is anything waiting" is one test rather than three
+/// comparisons a client has to know to make.
+/// </remarks>
+/// <param name="Roles">The roles it would take, or null if unchanged.</param>
+/// <param name="AudioChannel">The channel profile it would play, or null.</param>
+/// <param name="Output">The output stage it would use, or null.</param>
+public sealed record PendingSettings(
+    IReadOnlyList<string>? Roles,
+    string? AudioChannel,
+    string? Output)
+{
+    /// <summary>
+    /// Whether this is worth showing at all. A node that reported the block
+    /// with every field null is saying nothing, and should read as nothing.
+    /// </summary>
+    public bool Any => (Roles is { Count: > 0 })
+        || !string.IsNullOrWhiteSpace(AudioChannel)
+        || !string.IsNullOrWhiteSpace(Output);
 }
 
 /// <summary>

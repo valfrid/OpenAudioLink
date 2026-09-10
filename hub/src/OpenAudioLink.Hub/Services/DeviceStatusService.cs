@@ -104,6 +104,13 @@ public sealed class DeviceStatusService : BackgroundService
                 AudioChannel = status.AudioChannel,
                 Output = status.Output,
                 OutputReady = status.OutputReady,
+                // Carried across explicitly, like everything else here.
+                // See the note below on DelayMs: a property on the record
+                // does nothing until a line in this list fills it.
+                Pending = status.Pending is null ? null : new PendingSettings(
+                    status.Pending.Roles,
+                    status.Pending.AudioChannel,
+                    status.Pending.Output),
                 Volume = status.Volume,
                 /*
                  * Read here as well as declared on DeviceStatus.
@@ -260,6 +267,13 @@ public sealed class DeviceStatusService : BackgroundService
         [JsonPropertyName("outputReady")]
         public bool? OutputReady { get; init; }
 
+        /// <summary>
+        /// What a reboot would change. Absent or null on a node with
+        /// nothing waiting, and on firmware older than the field.
+        /// </summary>
+        [JsonPropertyName("pending")]
+        public PendingResponse? Pending { get; init; }
+
         [JsonPropertyName("input")]
         public InputStatus? Input { get; init; }
 
@@ -268,6 +282,23 @@ public sealed class DeviceStatusService : BackgroundService
 
         [JsonPropertyName("join")]
         public JoinStatus? Join { get; init; }
+    }
+
+    /// <summary>
+    /// The node's reboot-scoped settings that differ from what it is
+    /// running. Every member is optional: only the ones that changed are
+    /// sent, so a null field means "this one is not waiting".
+    /// </summary>
+    private sealed record PendingResponse
+    {
+        [JsonPropertyName("roles")]
+        public IReadOnlyList<string>? Roles { get; init; }
+
+        [JsonPropertyName("channel")]
+        public string? AudioChannel { get; init; }
+
+        [JsonPropertyName("output")]
+        public string? Output { get; init; }
     }
 
     private sealed record InputStatus
