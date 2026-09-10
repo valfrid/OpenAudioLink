@@ -817,7 +817,7 @@ debug keystore is generated fresh on every runner — two debug builds
 carry different signatures and **Android refuses to install one over the
 other**.
 
-`release.yml` exists for the other job. Push a tag and it builds a
+`release-phone.yml` exists for the other job. Push a tag and it builds a
 properly signed release APK, verifies it, and publishes it as a GitHub
 Release with a `.sha256` beside it. A release asset is a plain URL, which
 is what a browser on the panel — and later the in-app updater — can
@@ -857,11 +857,17 @@ secret is not a backup: GitHub will not give it back to you.
 
 ```bash
 # versionCode and versionName in phone/app/build.gradle.kts first
-git tag v0.10.1 && git push origin v0.10.1
+git tag phone-v0.10.1 && git push origin phone-v0.10.1
 ```
 
+`phone-v*`, matching what this repository already does: the Hub releases
+on `hub-v*` and librespot on `librespot-android-v*`. Three things on
+three clocks, and `release.yml` — which publishes the Hub package and the
+node firmware, including the rolling `hub-latest` that `update-hub.ps1`
+fetches — is a different workflow that this one does not touch.
+
 The workflow **fails if the tag and `versionName` disagree** — a release
-tagged `v0.11.0` containing `0.10.0` updates nothing, since Android
+tagged `phone-v0.11.0` containing `0.10.0` updates nothing, since Android
 compares `versionCode` and the updater compares `versionName`, and that
 is a fault which otherwise shows up as a panel that quietly stops
 updating. It also re-checks on the release build what `ci.yml` checks on

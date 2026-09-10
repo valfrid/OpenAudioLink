@@ -1,159 +1,234 @@
-name: Release the phone app
-
-# Tagged releases, which exist so a wall panel can update itself.
+# Publishes a downloadable Hub package and the node firmware.
 #
-# `ci.yml` builds a debug APK on every push and uploads it as an Actions
-# **artifact**. That is right for development and useless for updating: an
-# artifact download needs a GitHub token, so no app can fetch one. A
-# release asset is a plain URL that anything can GET, which is what the
-# in-app updater reads.
+# CI already builds both on every push, but its artifacts need a GitHub
+# login to fetch and expire after ninety days. A release asset is a plain
+# public URL that never expires, which is what lets the update script be a
+# single command with no token and no browser step:
 #
-# It is also why this is signed properly. CI's debug keystore is generated
-# fresh on every runner, so two debug builds carry different signatures and
-# Android refuses to install one over the other. An update path needs one
-# key that never changes -- see the signing block in app/build.gradle.kts.
+#     & "$env:ProgramFiles\OpenAudioLink\scripts\update-hub.ps1"
+#
+# Triggered by a tag, so publishing is a deliberate act rather than
+# something every commit does:
+#
+#     git tag hub-v0.7.0 && git push origin hub-v0.7.0
+#
+# The version in the tag must match hub/Directory.Build.props, and this
+# refuses the build if it does not — an installer that reports a different
+# version from the one on the tin is worse than no installer.
+name: Release
 
+# Two kinds of release, because they answer different questions.
+#
+#   hub-v0.7.0   a deliberate act. Tagged, permanent, the version somebody
+#                is told to install.
+#   hub-latest   whatever the working branch last built. Moves, marked
+#                prerelease, and exists so that upgrading never requires
+#                remembering to tag first. This is what makes
+#                update-hub.ps1 useful during a week of daily changes.
+#
+# The rolling one costs nothing: the package is already built on every
+# push, and this only publishes it somewhere a script can reach without a
+# token. CI artifacts cannot be — they need a login and expire after
+# ninety days.
 on:
   push:
-    tags: ["v*"]
-  # Deliberately runnable by hand as well, because the first time anybody
-  # does this the secrets will be wrong and re-tagging to find out is a
-  # poor way to spend an afternoon.
+    tags:
+      - "hub-v*"
+    branches:
+      - main
+      - "claude/**"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Signed APK
+  # Node firmware, published beside the Hub so the Hub can fetch it the same
+  # way it fetches itself: a release asset is a public URL, and a CI artifact
+  # needs a login and expires. That is the difference between "press Update"
+  # and "find the right zip on a laptop, unpack it, upload it".
+  #
+  # Its own version, from firmware/testnode/version.txt, because a node and
+  # the Hub are released independently and always have been. The two live in
+  # one release only because a release is a convenient place to put files.
+  firmware:
+    name: Node firmware (esp32s3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: SDK components
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-
-      # The tag is the claim; versionName is what the APK will actually
-      # report. A release tagged v0.11.0 containing 0.10.0 updates nothing
-      # -- Android compares versionCode, and the updater compares
-      # versionName -- so a mismatch is caught here rather than by a panel
-      # that quietly stops updating.
-      - name: Does the tag match the app?
+      - name: Read the firmware version
         id: version
-        working-directory: phone
+        run: echo "version=$(cat firmware/testnode/version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4
+          target: esp32s3
+          path: firmware/testnode
+          command: >
+            idf.py build &&
+            cd build &&
+            esptool.py --chip esp32s3 merge_bin
+            -o testnode-esp32s3-flash.bin @flash_args &&
+            cp oal_testnode.bin testnode-esp32s3-ota.bin
+      - name: Name the files after what is in them
         run: |
-          set -euo pipefail
-          v="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)"
-          test -n "$v" || { echo "::error::no versionName in app/build.gradle.kts"; exit 1; }
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-
-          ref="${GITHUB_REF_NAME:-}"
-          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            if [ "$ref" != "v$v" ]; then
-              echo "::error::tag $ref does not match versionName $v — expected v$v"
-              exit 1
-            fi
-            echo "tag=$ref" >> "$GITHUB_OUTPUT"
-          else
-            echo "Manual run: would publish v$v"
-            echo "tag=v$v" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Unpack the signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [ -z "${KEYSTORE_BASE64:-}" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Create a keystore, then add it and its three passwords as repository secrets — docs/PHONE-APP.md, 'Releases and updating'."
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/oal.jks"
-          echo "Keystore is $(stat -c%s "$RUNNER_TEMP/oal.jks") bytes"
-
-      - name: Build
-        working-directory: phone
-        env:
-          OAL_KEYSTORE: ${{ runner.temp }}/oal.jks
-          OAL_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          OAL_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          OAL_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --stacktrace
-
-      # Three things that each fail quietly, checked loudly. The first two
-      # are ci.yml's checks on the debug build; a release is the one that
-      # matters, so they are repeated rather than assumed.
-      - name: Check what is about to be published
-        working-directory: phone
-        run: |
-          set -euo pipefail
-          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
-          echo "APK: $apk ($(stat -c%s "$apk") bytes)"
-
-          # Signed, and by whom. An unsigned APK does not install at all;
-          # one signed by a key nobody recognises does not update.
-          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs "$apk"
-
-          # librespot present, or Spotify silently does nothing.
-          unzip -l "$apk" | grep -q 'lib/arm64-v8a/liblibrespot\.so' || {
-            echo "::error::liblibrespot.so is not in the APK"; exit 1; }
-
-          # 16 KB pages: no phone with 4 KB pages shows the fault.
-          so=app/src/main/jniLibs/arm64-v8a/liblibrespot.so
-          readelf -lW "$so" > headers.txt
-          while read -r align; do
-            [ "$(( align ))" -ge 16384 ] || {
-              echo "::error::liblibrespot.so is not 16 KB page aligned"; exit 1; }
-          done < <(awk '$1=="LOAD"{print $NF}' headers.txt)
-          echo "signed, librespot present, 16 KB aligned"
-
-      - name: Name it and hash it
-        id: package
-        working-directory: phone/app/build/outputs/apk/release
-        run: |
-          set -euo pipefail
           v="${{ steps.version.outputs.version }}"
-          apk="$(ls *.apk | head -1)"
-          mv "$apk" "openaudiolink-phone-$v.apk"
-          # The updater refuses a download that does not match this, the
-          # same rule build.gradle.kts applies to librespot.
-          sha256sum "openaudiolink-phone-$v.apk" > "openaudiolink-phone-$v.apk.sha256"
-          cat "openaudiolink-phone-$v.apk.sha256"
+          mkdir -p release
+          cp firmware/testnode/build/testnode-esp32s3-ota.bin   "release/testnode-esp32s3-$v-ota.bin"
+          cp firmware/testnode/build/testnode-esp32s3-flash.bin "release/testnode-esp32s3-$v-flash.bin"
+          # So a Hub can say which build it holds without opening it.
+          ( cd release && sha256sum *.bin > testnode-esp32s3-$v.sha256 )
+      - uses: actions/upload-artifact@v5
+        with:
+          name: firmware-release-files
+          path: release/
+          if-no-files-found: error
+
+  hub:
+    name: Hub win-x64 package
+    runs-on: windows-latest
+    # The release carries both halves (decision 18), so the firmware has to
+    # exist before the release is cut. Not a promise in a document: the Hub
+    # job cannot start until the image is built, and the upload below fails
+    # on an unmatched file.
+    needs: [firmware]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Work out what is being published
+        shell: pwsh
+        run: |
+          $props = Get-Content hub/Directory.Build.props -Raw
+          if ($props -notmatch '<Version>([^<]+)</Version>') { throw 'No <Version> in Directory.Build.props' }
+          $declared = $Matches[1]
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            # A tagged release is a promise about a version number, so the
+            # tag and the tree have to agree. An installer that reports a
+            # different version from the one on the tin is worse than no
+            # installer.
+            $tagged = $env:GITHUB_REF_NAME -replace '^hub-v', ''
+            if ($tagged -ne $declared) {
+              throw "Tag says $tagged and hub/Directory.Build.props says $declared. Bump one of them."
+            }
+            "tag=$env:GITHUB_REF_NAME"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "name=Hub $declared"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "prerelease=false"                | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+          else {
+            # The rolling one. Named with the version and the commit so the
+            # releases page says what it is, but always the same tag so it
+            # replaces itself rather than accumulating.
+            $short = $env:GITHUB_SHA.Substring(0, 7)
+            "tag=hub-latest"                              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "name=Hub $declared (latest, $short)"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "prerelease=true"                             | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+          "version=$declared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: version
+
+      # Windows has no Ogg demuxer, and the FLAC internet radio serves is
+      # Ogg-FLAC — so without this the Hub cannot play the stations FLAC
+      # was added for. See the same step in ci.yml for the full reasoning.
+      # Built rather than committed: a binary in a public repository is a
+      # thing nobody can review.
+      - name: Build libFLAC with Ogg support
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install libflac:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build libFLAC" }
+
+      - name: Publish self-contained win-x64
+        run: >
+          dotnet publish src/OpenAudioLink.Hub --configuration Release
+          --runtime win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          --output publish
+        working-directory: hub
+
+      - name: Include the install and update scripts
+        run: Copy-Item -Path scripts -Destination publish\scripts -Recurse
+        working-directory: hub
+
+      - name: Include libFLAC beside the Hub
+        shell: pwsh
+        run: |
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          Copy-Item "$root\bin\FLAC.dll" hub\publish
+          Copy-Item "$root\bin\ogg.dll" hub\publish
+
+          # A release without the licence beside the binary is not one to
+          # publish, so this throws rather than warns.
+          $copyright = Get-ChildItem "$root\share" -Recurse -Filter copyright |
+            Where-Object { $_.FullName -match 'flac' } | Select-Object -First 1
+          if (-not $copyright) { throw "No libFLAC copyright file found under $root\share" }
+          Copy-Item $copyright.FullName hub\publish\libFLAC-LICENSE.txt
+
+          # The zip is what people install, so what goes into it is worth
+          # printing where a release can be audited after the fact.
+          Write-Host "--- native libraries in this release ---"
+          Get-ChildItem hub\publish |
+            Where-Object { $_.Name -match 'FLAC|ogg' } | Format-Table Name, Length
+
+      - name: Zip it
+        shell: pwsh
+        run: |
+          $name = "OpenAudioLink-Hub-win-x64-${{ steps.version.outputs.version }}.zip"
+          Compress-Archive -Path hub/publish/* -DestinationPath $name
+          "asset=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        id: package
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: firmware-release-files
+          path: firmware-release
+
+      # The rolling release is one build, not an archive.
+      #
+      # Uploading replaces an asset of the *same* name and leaves every
+      # other one in place — and these names carry versions, so each build
+      # added a file rather than replacing one. The API then returns them
+      # in upload order, which makes the first the oldest. A Hub was
+      # offered 0.7.0 and told it was up to date while 0.9.2 sat in the
+      # same release.
+      #
+      # Both readers now pick the highest version rather than the first,
+      # so this is belt as well as braces; but a release listing five old
+      # builds is confusing to a person too.
+      - name: Clear the rolling release's old assets
+        if: steps.version.outputs.prerelease == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $existing = gh release view hub-latest --json assets -q '.assets[].name' 2>$null
+          if (-not $existing) {
+            Write-Host "No rolling release yet; nothing to clear."
+            exit 0
+          }
+          foreach ($name in $existing) {
+            if ($name) {
+              Write-Host "Removing stale asset $name"
+              gh release delete-asset hub-latest $name --yes 2>$null
+            }
+          }
+          exit 0
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: OpenAudioLink phone ${{ steps.version.outputs.version }}
-          body: |
-            The OpenAudioLink phone app, version ${{ steps.version.outputs.version }}.
-
-            **Install it by opening the `.apk` below on the device.** Android
-            will ask once for permission to install from this browser. An
-            app already installed from an earlier release updates in place
-            and keeps its Spotify sign-in, saved stations and settings —
-            every release is signed with the same key, and Android refuses
-            an update signed with a different one.
-
-            `.sha256` is the hash the in-app updater checks before
-            installing. Verify a manual download the same way if you like:
-
-            ```
-            sha256sum -c openaudiolink-phone-${{ steps.version.outputs.version }}.apk.sha256
-            ```
-
-            Built from `${{ github.sha }}`. arm64 only, Android 8.0 and
-            later. It contains librespot, which is not built by, endorsed
-            by, or affiliated with Spotify — see `docs/CAST-POINTS.md`.
+          name: ${{ steps.version.outputs.name }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
           files: |
-            phone/app/build/outputs/apk/release/openaudiolink-phone-*.apk
-            phone/app/build/outputs/apk/release/openaudiolink-phone-*.apk.sha256
+            ${{ steps.package.outputs.asset }}
+            firmware-release/*
+          # Never the newest thing on the releases page unless it is a
+          # tagged one: somebody browsing should find a real release.
+          make_latest: ${{ steps.version.outputs.prerelease == 'false' }}
+          # The asset name is what update-hub.ps1 reads the version out of,
+          # so it must keep the OpenAudioLink-Hub-win-x64-<version> shape.
           fail_on_unmatched_files: true

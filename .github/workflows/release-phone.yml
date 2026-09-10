@@ -1,0 +1,163 @@
+name: Release the phone app
+
+# Tagged releases, which exist so a wall panel can update itself.
+#
+# `ci.yml` builds a debug APK on every push and uploads it as an Actions
+# **artifact**. That is right for development and useless for updating: an
+# artifact download needs a GitHub token, so no app can fetch one. A
+# release asset is a plain URL that anything can GET, which is what the
+# in-app updater reads.
+#
+# It is also why this is signed properly. CI's debug keystore is generated
+# fresh on every runner, so two debug builds carry different signatures and
+# Android refuses to install one over the other. An update path needs one
+# key that never changes -- see the signing block in app/build.gradle.kts.
+
+on:
+  push:
+    # `phone-v*`, matching this repository's existing convention: the Hub
+    # releases on `hub-v*` and librespot on `librespot-android-v*`. Three
+    # things on three clocks, and a bare `v*` would have caught tags meant
+    # for one of the others.
+    tags: ["phone-v*"]
+  # Deliberately runnable by hand as well, because the first time anybody
+  # does this the secrets will be wrong and re-tagging to find out is a
+  # poor way to spend an afternoon.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Signed APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      # The tag is the claim; versionName is what the APK will actually
+      # report. A release tagged v0.11.0 containing 0.10.0 updates nothing
+      # -- Android compares versionCode, and the updater compares
+      # versionName -- so a mismatch is caught here rather than by a panel
+      # that quietly stops updating.
+      - name: Does the tag match the app?
+        id: version
+        working-directory: phone
+        run: |
+          set -euo pipefail
+          v="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          test -n "$v" || { echo "::error::no versionName in app/build.gradle.kts"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+          ref="${GITHUB_REF_NAME:-}"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            if [ "$ref" != "phone-v$v" ]; then
+              echo "::error::tag $ref does not match versionName $v — expected phone-v$v"
+              exit 1
+            fi
+            echo "tag=$ref" >> "$GITHUB_OUTPUT"
+          else
+            echo "Manual run: would publish phone-v$v"
+            echo "tag=phone-v$v" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Unpack the signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Create a keystore, then add it and its three passwords as repository secrets — docs/PHONE-APP.md, 'Releases and updating'."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/oal.jks"
+          echo "Keystore is $(stat -c%s "$RUNNER_TEMP/oal.jks") bytes"
+
+      - name: Build
+        working-directory: phone
+        env:
+          OAL_KEYSTORE: ${{ runner.temp }}/oal.jks
+          OAL_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          OAL_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          OAL_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      # Three things that each fail quietly, checked loudly. The first two
+      # are ci.yml's checks on the debug build; a release is the one that
+      # matters, so they are repeated rather than assumed.
+      - name: Check what is about to be published
+        working-directory: phone
+        run: |
+          set -euo pipefail
+          apk="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          echo "APK: $apk ($(stat -c%s "$apk") bytes)"
+
+          # Signed, and by whom. An unsigned APK does not install at all;
+          # one signed by a key nobody recognises does not update.
+          "$ANDROID_HOME"/build-tools/35.0.0/apksigner verify --print-certs "$apk"
+
+          # librespot present, or Spotify silently does nothing.
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/liblibrespot\.so' || {
+            echo "::error::liblibrespot.so is not in the APK"; exit 1; }
+
+          # 16 KB pages: no phone with 4 KB pages shows the fault.
+          so=app/src/main/jniLibs/arm64-v8a/liblibrespot.so
+          readelf -lW "$so" > headers.txt
+          while read -r align; do
+            [ "$(( align ))" -ge 16384 ] || {
+              echo "::error::liblibrespot.so is not 16 KB page aligned"; exit 1; }
+          done < <(awk '$1=="LOAD"{print $NF}' headers.txt)
+          echo "signed, librespot present, 16 KB aligned"
+
+      - name: Name it and hash it
+        id: package
+        working-directory: phone/app/build/outputs/apk/release
+        run: |
+          set -euo pipefail
+          v="${{ steps.version.outputs.version }}"
+          apk="$(ls *.apk | head -1)"
+          mv "$apk" "openaudiolink-phone-$v.apk"
+          # The updater refuses a download that does not match this, the
+          # same rule build.gradle.kts applies to librespot.
+          sha256sum "openaudiolink-phone-$v.apk" > "openaudiolink-phone-$v.apk.sha256"
+          cat "openaudiolink-phone-$v.apk.sha256"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: OpenAudioLink phone ${{ steps.version.outputs.version }}
+          body: |
+            The OpenAudioLink phone app, version ${{ steps.version.outputs.version }}.
+
+            **Install it by opening the `.apk` below on the device.** Android
+            will ask once for permission to install from this browser. An
+            app already installed from an earlier release updates in place
+            and keeps its Spotify sign-in, saved stations and settings —
+            every release is signed with the same key, and Android refuses
+            an update signed with a different one.
+
+            `.sha256` is the hash the in-app updater checks before
+            installing. Verify a manual download the same way if you like:
+
+            ```
+            sha256sum -c openaudiolink-phone-${{ steps.version.outputs.version }}.apk.sha256
+            ```
+
+            Built from `${{ github.sha }}`. arm64 only, Android 8.0 and
+            later. It contains librespot, which is not built by, endorsed
+            by, or affiliated with Spotify — see `docs/CAST-POINTS.md`.
+          files: |
+            phone/app/build/outputs/apk/release/openaudiolink-phone-*.apk
+            phone/app/build/outputs/apk/release/openaudiolink-phone-*.apk.sha256
+          fail_on_unmatched_files: true
