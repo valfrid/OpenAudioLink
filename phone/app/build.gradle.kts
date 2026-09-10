@@ -47,20 +47,59 @@ android {
         versionName = "0.10.0"
     }
 
+    /*
+     * Release signing, from outside the tree and never from inside it.
+     *
+     * A release keystore is the same class of secret as the Wi-Fi
+     * credentials this project keeps out of the repository: whoever holds
+     * it can publish an update that a phone installs over this one without
+     * asking. So it arrives as a path and three passwords, from Gradle
+     * properties or the environment, and nothing here has a default.
+     *
+     * **The key must never change.** Android refuses to install an update
+     * signed by a different key than the installed app, with no way round
+     * it but uninstalling — which takes the Spotify sign-in and the saved
+     * stations with it. One key, kept somewhere it cannot be lost, for the
+     * life of the application id.
+     *
+     * The debug build is untouched: it still signs with the throwaway
+     * debug key, which is why CI can build an APK on every push without
+     * any of this being configured.
+     */
+    val keystore = providers.gradleProperty("oal.keystore")
+        .orElse(providers.environmentVariable("OAL_KEYSTORE"))
+    val keystorePassword = providers.gradleProperty("oal.keystore.password")
+        .orElse(providers.environmentVariable("OAL_KEYSTORE_PASSWORD"))
+    val keyAlias = providers.gradleProperty("oal.key.alias")
+        .orElse(providers.environmentVariable("OAL_KEY_ALIAS"))
+    val keyPassword = providers.gradleProperty("oal.key.password")
+        .orElse(providers.environmentVariable("OAL_KEY_PASSWORD"))
+    val signable = keystore.isPresent && keystorePassword.isPresent
+        && keyAlias.isPresent && keyPassword.isPresent
+
+    if (signable) {
+        signingConfigs.create("release") {
+            storeFile = file(keystore.get())
+            storePassword = keystorePassword.get()
+            this.keyAlias = keyAlias.get()
+            this.keyPassword = keyPassword.get()
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             /*
-             * Signed with the debug key unless a keystore is supplied.
+             * Null rather than the debug key when nothing is configured.
              *
-             * A release keystore is never committed. It is the same class
-             * of secret as the Wi-Fi credentials this project already
-             * keeps out of the tree: whoever holds it can publish an
-             * update that a phone installs over this one without warning.
-             * Supply one through ~/.gradle/gradle.properties if you want
-             * reproducible updates on your own device.
+             * Falling back to debug is what this used to do, and it is the
+             * worst of the options: it produces an APK that installs
+             * perfectly, updates nothing that came before it, and cannot
+             * be updated by anything after it — a mistake that is only
+             * visible months later. Unsigned plus the loud check below
+             * fails while somebody is still looking.
              */
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (signable) signingConfigs.getByName("release") else null
         }
     }
 
@@ -188,6 +227,32 @@ val fetchLibrespot by tasks.registering {
  */
 tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLibFolders") }
     .configureEach { dependsOn(fetchLibrespot) }
+
+/*
+ * A release build with no key stops here rather than shipping.
+ *
+ * The APK would otherwise be produced unsigned, and an unsigned APK does
+ * not install — which is a confusing way to learn that four secrets were
+ * missing, and only after the build claimed success.
+ */
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }
+    .configureEach {
+        doFirst {
+            val keystore = providers.gradleProperty("oal.keystore")
+                .orElse(providers.environmentVariable("OAL_KEYSTORE"))
+            if (!keystore.isPresent) {
+                throw GradleException(
+                    "A release build needs a signing key, and none is configured.\n" +
+                        "  Set oal.keystore, oal.keystore.password, oal.key.alias and\n" +
+                        "  oal.key.password as Gradle properties, or the same names as\n" +
+                        "  OAL_KEYSTORE, OAL_KEYSTORE_PASSWORD, OAL_KEY_ALIAS and\n" +
+                        "  OAL_KEY_PASSWORD in the environment.\n" +
+                        "  See docs/PHONE-APP.md, 'Releases and updating'.\n" +
+                        "  For a throwaway build, use assembleDebug instead."
+                )
+            }
+        }
+    }
 
 dependencies {
     implementation(project(":core"))

@@ -808,6 +808,86 @@ The wire is 24-bit. A 16-bit 44.1 kHz file resampled to 48 kHz is still
 that file — the format adds no information. What it avoids is throwing any
 away between the phone and the speaker.
 
+## Releases and updating
+
+`ci.yml` builds a debug APK on every push and uploads it as an Actions
+**artifact**. That is right for development and useless for updating: an
+artifact download needs a GitHub token, so no app can fetch one, and CI's
+debug keystore is generated fresh on every runner — two debug builds
+carry different signatures and **Android refuses to install one over the
+other**.
+
+`release.yml` exists for the other job. Push a tag and it builds a
+properly signed release APK, verifies it, and publishes it as a GitHub
+Release with a `.sha256` beside it. A release asset is a plain URL, which
+is what a browser on the panel — and later the in-app updater — can
+actually fetch.
+
+### The key, which must never change
+
+Android will not install an update signed by a different key than the
+installed app. There is no way round it but uninstalling, which takes the
+Spotify sign-in and the saved stations with it. **One key, for the life of
+`se.valfrid.openaudiolink`**, kept somewhere it cannot be lost — the same
+class of secret as the Wi-Fi credentials this project keeps out of the
+repository, because whoever holds it can publish an update that a phone
+installs over this one without asking.
+
+Make it once:
+
+```bash
+keytool -genkeypair -v -keystore oal-release.jks \
+  -alias oal -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Then add four repository secrets — Settings → Secrets and variables →
+Actions:
+
+| Secret | What goes in it |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 oal-release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | the store password |
+| `ANDROID_KEY_ALIAS` | `oal`, or whatever `-alias` you used |
+| `ANDROID_KEY_PASSWORD` | the key password |
+
+Keep the `.jks` itself somewhere backed up and off this repository. A
+secret is not a backup: GitHub will not give it back to you.
+
+### Cutting a release
+
+```bash
+# versionCode and versionName in phone/app/build.gradle.kts first
+git tag v0.10.1 && git push origin v0.10.1
+```
+
+The workflow **fails if the tag and `versionName` disagree** — a release
+tagged `v0.11.0` containing `0.10.0` updates nothing, since Android
+compares `versionCode` and the updater compares `versionName`, and that
+is a fault which otherwise shows up as a panel that quietly stops
+updating. It also re-checks on the release build what `ci.yml` checks on
+the debug one: that it is signed and by whom, that librespot is inside
+it, and that librespot is 16 KB page aligned.
+
+`workflow_dispatch` runs it by hand too, because the first attempt will
+have a secret wrong and re-tagging to find that out is a poor way to
+spend an afternoon.
+
+### Building one locally
+
+```bash
+cd phone
+./gradlew :app:assembleRelease \
+  -Poal.keystore=/path/to/oal-release.jks \
+  -Poal.keystore.password=… -Poal.key.alias=oal -Poal.key.password=…
+```
+
+Without those, a release build **stops with a message** rather than
+producing an unsigned APK. It used to fall back to the debug key, which
+is the worst of the options: an APK that installs perfectly, updates
+nothing before it, and can be updated by nothing after it — a mistake
+only visible months later. `assembleDebug` needs none of this and is
+unaffected.
+
 ## Installing it
 
 **The artefacts carry their versions in their names** — `openaudiolink-phone-0.7.5-debug`, `testnode-esp32s3-0.55.0`,

@@ -283,7 +283,10 @@ Spotify decision goes the other way:
 3. ~~Pin the NDK and prove 16 KB alignment.~~ Done, and the published
    binary already passes — the phone build fails now if it ever stops.
 4. Add lint to the build.
-5. Real release signing, failing loudly without credentials.
+5. ~~Real release signing, failing loudly without credentials.~~ Done,
+   with `release.yml` publishing a signed APK on a tag. Needs the four
+   repository secrets creating — `docs/PHONE-APP.md`, *Releases and
+   updating*. The same key serves a Play upload if that happens.
 6. `versionName` and `versionCode` derived from the tag.
 7. `PRIVACY.md`, `TESTING.md`, `CHANGELOG.md`, and the listing text.
 8. Decide the Spotify question.
