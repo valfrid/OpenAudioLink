@@ -14,7 +14,7 @@ Version 0.9.1, built by CI as one APK — see *One build* below.
 | Send L24/48 kHz stereo RTP to any OpenAudioLink consumer | OTA |
 | Publish a Spotify cast point | Sample logging |
 | Find speakers by multicast discovery | Room measurement |
-| Choose which speakers play, mid-song | Provisioning a node's Wi-Fi |
+| Choose which speakers play, mid-song | Pushing party-network credentials |
 | Volume, per speaker | Anything else a Hub does |
 | Room correction on and off, per speaker | |
 | Drive a vinyl node as its Controller | |
@@ -33,11 +33,28 @@ The right-hand column stays the Hub's. A speaker holds its own room
 correction in NVS, so it travels to a party already corrected and the
 phone never needs to know a measurement was made.
 
-**The phone cannot provision.** A speaker reaches a party network only
-because a Hub pushed that pair into its NVS beforehand, so "bring your
-hub" is really "bring your hub, having once met mine". Letting a phone
-write Wi-Fi credentials into other people's speakers is a much larger
-security question than this app is worth.
+**Provisioning needs no Hub, and never did.** An unprovisioned node opens
+its own setup access point — `OpenAudioLink-XXXXXX` — and serves a form
+for SSID, password, name, roles, channel and output, then reboots onto
+the network. It is the same pattern as any other smart device in a
+house: connect, open a browser, fill it in. `oal_wifi.c` has the portal,
+and it re-opens itself if the network later disappears, refusing to retry
+while somebody is still connected to it.
+
+This entry used to read "the phone cannot provision", which overstated a
+much narrower thing. **What the phone does not do is push the
+party-network credentials**: the pre-shared pair a node needs in NVS
+*beforehand* to follow a phone hotspot without being re-provisioned, which
+the Hub generates and sends with `POST /config {"party":{…}}`. So "bring
+your hub" is really "bring your hub, having once met mine" — and that is
+about standalone party mode, not about getting a speaker onto a network
+in the first place.
+
+Even that is a scope decision rather than a limit. It is one HTTP POST to
+port 41001, which this app already talks to for volume and room
+correction; it is left out because letting a phone write Wi-Fi
+credentials into other people's speakers is a much larger security
+question than this app is worth.
 
 ## How it is built
 

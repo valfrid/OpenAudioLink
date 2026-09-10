@@ -7,7 +7,18 @@ Part of protocol-suite 0.1.
 
 OTA is pull-based: the Controller tells a device to fetch a firmware image
 over HTTP, and the device installs it into its inactive OTA slot and
-reboots. The Hub acts as the firmware repository.
+reboots.
+
+**The Hub is not privileged here — it just happens to hold the file.** A
+device is given a URL and fetches it; nothing in the protocol says who
+serves it. Any Controller that can name a URL the device can reach can
+drive an update, which is what makes a Hub-less deployment possible in
+principle. Today the Hub is the only thing that does, because it is the
+only thing with a firmware store and an HTTP server.
+
+There is one real constraint on that, and it is not in this protocol but
+in the device: see *Plain HTTP, and what it would take to fetch a
+release* below.
 
 ## Flow
 
@@ -64,6 +75,34 @@ leaves the device reporting exactly what it reported before. Without the
 version on display that is indistinguishable from an update that did
 nothing.
 
+## Plain HTTP, and what it would take to fetch a release
+
+The obvious question, given that the device fetches a URL: why not point
+it straight at a GitHub release and drop the upload-to-Hub step
+altogether? Nothing in this protocol forbids it. The device does.
+
+`ota_task()` in `oal_control.c` calls `esp_https_ota()` with a config
+carrying only `.url`, `.timeout_ms` and `.keep_alive_enable` — **no
+`crt_bundle_attach` and no `cert_pem`** — and `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE`
+is not set. There are therefore no root certificates to verify a server
+against, so in practice only **plain HTTP** works. GitHub is HTTPS-only.
+That is why this document says "over HTTP" and means it.
+
+Closing it is small: enable the certificate bundle and attach it. Two
+things to test rather than assume before relying on it:
+
+- **Redirects.** GitHub sends release downloads to
+  `objects.githubusercontent.com`, so the fetch is cross-host and lands on
+  a different certificate than the one first presented.
+- **Memory.** A TLS handshake wants tens of kilobytes, and the OTA path
+  already carries a note about `esp_https_ota` allocating from the pool
+  that leaves a node unable to be updated when it is short.
+
+What it would buy is worth the work: the Hub would stop needing to be a
+file host, a phone or any other Controller could drive an update without
+serving anything itself, and an image would be fetched from the same
+place CI published it rather than from a copy somebody uploaded by hand.
+
 ## Not yet in 0.1 (planned per roadmap 2.6)
 
 - device-side checksum/signature verification before reboot
@@ -74,3 +113,6 @@ nothing.
 ## Revision history
 
 - 0.1 — initial draft: pull-based OTA from the Hub over plain HTTP.
+  Later corrected in place: the Hub is where the file happens to live,
+  not a role the protocol requires. Plain HTTP is a device limit — no
+  certificate bundle is compiled in — rather than a protocol one.
