@@ -8,6 +8,8 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Metadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -15,6 +17,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
+import androidx.media3.extractor.metadata.icy.IcyHeaders
+import androidx.media3.extractor.metadata.icy.IcyInfo
+import org.openaudiolink.core.IcyTitle
+import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.Rtp
 import java.nio.ByteBuffer
@@ -90,6 +96,26 @@ class LibrarySource(
 
     @Volatile private var ring: PcmRing? = null
     @Volatile private var playing = false
+
+    /*
+     * What the stream says it is playing, when it says anything.
+     *
+     * Media3 already parses Shoutcast and Icecast metadata -- IcyInfo for
+     * the interleaved `StreamTitle`, IcyHeaders for the station name -- so
+     * this is a listener rather than a parser. The Hub does not have this
+     * and deliberately did not build it: `RadioSource.cs` records that
+     * stripping a block every `icy-metaint` bytes is arithmetic whose
+     * failures look exactly like a corrupt stream, and that it was "worth
+     * adding once the GUI has somewhere to show a title, and not before".
+     * The wall panel is that GUI, and on this side ExoPlayer has already
+     * done the arithmetic.
+     *
+     * A local file gets nothing here, which is correct: its name is
+     * already the label, and a tag is not what a panel is short of.
+     */
+    @Volatile private var metadata: NowPlaying? = null
+
+    override val nowPlaying: NowPlaying? get() = metadata
 
     /** Set from the sink's flush, read by the buffer handler. */
     @Volatile private var channels = Rtp.CHANNELS
@@ -245,6 +271,27 @@ class LibrarySource(
 
         player = try {
             ExoPlayer.Builder(context, renderers).build().apply {
+                addListener(object : Player.Listener {
+                    /*
+                     * Both kinds arrive here, and not together: the
+                     * headers once at connect, the stream title again on
+                     * every track. So the station is remembered and
+                     * re-attached rather than overwritten by the next
+                     * title that arrives without one.
+                     */
+                    override fun onMetadata(metadataEntries: Metadata) {
+                        var title: String? = null
+                        var station = metadata?.station
+                        for (i in 0 until metadataEntries.length()) {
+                            when (val entry = metadataEntries.get(i)) {
+                                is IcyInfo -> title = entry.title
+                                is IcyHeaders -> entry.name?.let { station = it }
+                                else -> Unit
+                            }
+                        }
+                        IcyTitle.parse(title, station)?.let { metadata = it }
+                    }
+                })
                 setMediaItem(MediaItem.fromUri(uri))
                 // The speakers play; the phone does not. The sink still
                 // runs, because it is what paces the decoder.

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import org.openaudiolink.core.PcmRing
+import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.Station
 import org.openaudiolink.core.StationKind
 import org.openaudiolink.core.StationPlaylist
@@ -56,6 +57,17 @@ class RadioSource(
     override val isPlaying: Boolean get() = started && player?.isPlaying != false
 
     override val log: List<String> get() = listOfNotNull(note)
+
+    /*
+     * Forwarded from the player, with the station name as the floor.
+     *
+     * Plenty of stations send no track metadata at all, and for those the
+     * name in the saved list is the only true thing available — better
+     * than a blank banner on a wall, and it is what a listener would call
+     * this anyway.
+     */
+    override val nowPlaying: NowPlaying?
+        get() = player?.nowPlaying ?: NowPlaying(title = station.name, station = station.name)
 
     override fun start(ring: PcmRing) {
         if (started) return

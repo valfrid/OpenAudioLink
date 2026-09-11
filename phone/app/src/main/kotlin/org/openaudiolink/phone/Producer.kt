@@ -16,6 +16,7 @@ import org.openaudiolink.core.Announce
 import org.openaudiolink.core.Discovery
 import org.openaudiolink.core.DiscoveryClient
 import org.openaudiolink.core.NodeClient
+import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.RtpSender
@@ -111,6 +112,15 @@ object Producer {
          * authenticated and still silent is a different investigation.
          */
         val sourceReady: Boolean? = null,
+        /**
+         * What is playing, where the source can say.
+         *
+         * Null for a test tone, a vinyl node, a local file and any radio
+         * station that sends no metadata — all of which is normal rather
+         * than a failure, so the banner falls back to the source label
+         * instead of showing an apology.
+         */
+        val nowPlaying: NowPlaying? = null,
         /**
          * Whether audio is actually leaving the phone.
          *
@@ -427,6 +437,7 @@ object Producer {
                 sourceLabel = newSource.label,
                 sourceLog = emptyList(),
                 sourceReady = null,
+                nowPlaying = null,
                 sendingAudio = false,
                 packetsSent = 0,
                 packetsHeld = 0,
@@ -447,6 +458,7 @@ object Producer {
                 sourceLabel = null,
                 sourceLog = emptyList(),
                 sourceReady = null,
+                nowPlaying = null,
                 sendingAudio = false,
             )
         }
@@ -756,8 +768,13 @@ object Producer {
                 val playing = source
                 val said = playing?.log ?: emptyList()
                 val ready = playing?.ready
-                if (said != _state.value.sourceLog || ready != _state.value.sourceReady) {
-                    _state.update { it.copy(sourceLog = said, sourceReady = ready) }
+                val what = playing?.nowPlaying
+                if (said != _state.value.sourceLog || ready != _state.value.sourceReady
+                    || what != _state.value.nowPlaying
+                ) {
+                    _state.update {
+                        it.copy(sourceLog = said, sourceReady = ready, nowPlaying = what)
+                    }
                 }
 
                 /*

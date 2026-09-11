@@ -350,10 +350,46 @@ private fun NowPlaying(state: Producer.State) {
                 if (state.sendingAudio) "Playing" else "Published, waiting",
                 style = MaterialTheme.typography.labelLarge,
             )
+            /*
+             * The track, where anything can say what it is; the source
+             * otherwise.
+             *
+             * A wall panel is read from across a room, and "Spotify — OAL
+             * Phone" tells whoever is standing there nothing they did not
+             * know. Radio reports a title through ICY and Spotify through
+             * librespot's own log, so the banner leads with that and puts
+             * the source underneath, where it becomes context rather than
+             * the headline.
+             *
+             * Falls back silently. A test tone, a vinyl node, a local file
+             * and a station that sends no metadata all have nothing to say
+             * here, which is ordinary rather than a failure and should not
+             * read as one.
+             */
+            val playing = state.nowPlaying
             Text(
-                state.sourceLabel ?: "",
+                playing?.title ?: state.sourceLabel ?: "",
                 style = MaterialTheme.typography.titleMedium,
             )
+            playing?.artist?.takeIf { it.isNotBlank() }?.let { artist ->
+                Text(artist, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (playing != null) {
+                // Station and source together: "Radio Paradise · Internet
+                // radio" says both which station and which of the five
+                // sources this is, and neither alone does.
+                val where = listOfNotNull(
+                    playing.station?.takeIf { it != playing.title },
+                    state.sourceLabel,
+                ).distinct().joinToString(" · ")
+                if (where.isNotBlank()) {
+                    Text(
+                        where,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Text(
                 when {
                     state.sendingAudio && chosen > 0 -> "Playing on $chosen speaker(s)."

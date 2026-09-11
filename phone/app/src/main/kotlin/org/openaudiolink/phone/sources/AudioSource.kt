@@ -1,5 +1,6 @@
 package org.openaudiolink.phone.sources
 
+import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.PcmRing
 
 /**
@@ -64,4 +65,19 @@ interface AudioSource {
      * either plays or does not exist.
      */
     val ready: Boolean? get() = null
+
+    /**
+     * What is playing, where the source can say.
+     *
+     * Polled like [log] rather than pushed, because the two sources that
+     * answer at all answer on their own threads — librespot's stderr
+     * reader and Media3's metadata callback — and a poll keeps the state
+     * flow single-writer.
+     *
+     * Null means the source cannot say, which is honest for a test tone
+     * and for a vinyl node, and normal for a radio station that sends no
+     * metadata at all. A panel showing nothing is better than one showing
+     * a filename.
+     */
+    val nowPlaying: NowPlaying? get() = null
 }

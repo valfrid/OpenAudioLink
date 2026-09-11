@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.10.0, built by CI as one APK — see *One build* below.
+Version 0.11.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -232,6 +232,36 @@ looking identical. That cost a round: a fault reported "in 0.8.4" was
 0.8.3 still installed, and the only way to tell was noticing that a
 field 0.8.4 adds was absent from the screenshot. The Hub's footer prints
 name, version and protocol for the same reason.
+
+**The banner leads with the track, not the source.** A panel is read from
+across a room, and "Spotify — OAL Phone" tells whoever is standing there
+nothing they did not know. Two of the five sources can say more:
+
+- **Internet radio** — Media3 already parses Shoutcast and Icecast
+  metadata, so `IcyInfo` gives the interleaved `StreamTitle` and
+  `IcyHeaders` the station name. The Hub deliberately does *not* do this:
+  `RadioSource.cs` records that stripping a block every `icy-metaint`
+  bytes is arithmetic whose failures look exactly like a corrupt stream,
+  and that it was "worth adding once the GUI has somewhere to show a
+  title, and not before". The panel is that GUI, and on this side
+  ExoPlayer has already done the arithmetic.
+- **Spotify** — librespot narrates track changes to the stderr this app
+  already reads: `Loading <Everybody Hurts> with Spotify URI <…>` and
+  `<Everybody Hurts> (320266 ms) loaded`. Title and duration were on
+  screen all along as raw log lines. `--onevent` was the alternative and
+  is worse: it needs a second executable in the native library directory
+  because of W^X, and supplies position and track id rather than a name.
+
+So radio gets an artist and a title, Spotify gets a title, and **neither
+gets album art** — librespot never prints it and ICY has no field for it.
+Everything else — a test tone, a vinyl node, a local file, a station that
+sends nothing — falls back to the source label, which is ordinary rather
+than a failure and does not read as one.
+
+The parsing is in `core` and tested there: a track called `1950`, a title
+containing `>`, a stream title whose song name has a hyphen in it. Every
+librespot line in those tests was copied from a real screenshot rather
+than invented, because the format is documented nowhere.
 
 **Wall-panel mode**, one switch rather than a second build. On it the
 screen locks to landscape, stays lit with `FLAG_KEEP_SCREEN_ON`, and

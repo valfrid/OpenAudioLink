@@ -43,8 +43,8 @@ android {
         applicationId = "se.valfrid.openaudiolink"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
-        versionCode = 34
-        versionName = "0.10.0"
+        versionCode = 35
+        versionName = "0.11.0"
     }
 
     /*
@@ -273,4 +273,9 @@ dependencies {
     // interface is shaped the way it is.
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
+    // IcyInfo and IcyHeaders, for what a radio station says it is playing.
+    // It arrives transitively through exoplayer anyway; named here because
+    // the code imports from it directly, and a transitive dependency that
+    // something depends on by name is one upgrade away from vanishing.
+    implementation("androidx.media3:media3-extractor:1.4.1")
 }

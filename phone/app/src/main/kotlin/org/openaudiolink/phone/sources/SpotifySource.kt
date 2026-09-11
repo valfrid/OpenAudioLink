@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import org.openaudiolink.core.LibrespotPcm
 import org.openaudiolink.phone.WifiBinding
+import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.PcmRing
+import org.openaudiolink.core.SpotifyLog
 import org.openaudiolink.core.RationalResampler
 import org.openaudiolink.core.Rtp
 import java.io.File
@@ -63,6 +65,19 @@ class SpotifySource(
     @Synchronized private fun snapshot(): List<String> = recent.toList()
 
     override val log: List<String> get() = snapshot()
+
+    /*
+     * Folded as the lines arrive rather than re-parsed from the kept ten.
+     *
+     * The log is a ring of the last few lines, so a track that loaded
+     * twenty lines ago is no longer in it — and on a wall panel showing
+     * one album for six minutes, that is the common case rather than the
+     * edge one. Folding on arrival means what is playing outlives the line
+     * that said so.
+     */
+    @Volatile private var playing: NowPlaying? = null
+
+    override val nowPlaying: NowPlaying? get() = playing
 
     /**
      * Authentication is the fork in the road, so it is not left to be
@@ -277,6 +292,7 @@ class SpotifySource(
                  */
                 val text = line.substringAfterLast("] ").trim()
                 if (text.isBlank()) return@forEachLine
+                playing = SpotifyLog.update(playing, text)
                 val loud = line.contains(" ERROR") || line.contains(" WARN")
                 remember(if (loud) "! $text" else text)
             }
