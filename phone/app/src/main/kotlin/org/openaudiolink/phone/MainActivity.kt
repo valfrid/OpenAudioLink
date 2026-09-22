@@ -52,9 +52,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.Station
 import org.openaudiolink.phone.sources.LibrarySource
@@ -151,26 +148,32 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * What makes a screen a wall panel: landscape, lit, and undecorated.
+     * What makes a screen a wall panel: landscape and lit.
      *
-     * Three window properties and no separate build. Turning it off puts
-     * every one of them back, so the same APK is a phone in a pocket or a
-     * panel on a wall depending on one switch — which matters because the
-     * panel is expected to *be* a seven-year-old phone before it is ever a
-     * tablet.
+     * Two window properties and no separate build. Turning it off puts
+     * both back, so the same APK is a phone in a pocket or a panel on a
+     * wall depending on one switch.
      *
-     * **Landscape** is locked rather than preferred, since a device screwed
-     * to a wall has no way to be turned and its accelerometer will happily
-     * decide otherwise.
+     * **Landscape** is locked rather than preferred, since a device
+     * mounted on a wall has no way to be turned and its accelerometer will
+     * happily decide otherwise.
      *
      * **Lit** is `FLAG_KEEP_SCREEN_ON` rather than a wake lock: it is
      * scoped to this window, so it lapses the moment the app is not in
      * front, and there is nothing to leak or forget to release.
      *
-     * **Undecorated** hides the status and navigation bars, with a swipe
-     * bringing them back transiently — a panel showing a battery icon and
-     * three navigation buttons is a phone lying on a shelf, and the swipe
-     * is how somebody gets out without a factory reset.
+     * **There used to be a third.** It hid the status and navigation bars
+     * and relied on an edge swipe to bring them back. That is the standard
+     * kiosk move and it was the wrong default here: a device still being
+     * set up needs its navigation, the swipe is a thing somebody has to be
+     * told about, and hiding the clock and the battery on a panel whose
+     * whole job is to be glanced at removes information rather than
+     * clutter. Android's own bars are also how you leave, which matters
+     * most on a device you have owned for an hour.
+     *
+     * If a full kiosk is wanted later it belongs with lock-task mode and
+     * device owner, where leaving is a deliberate act with a way back —
+     * not with three window flags and a gesture.
      */
     private fun applyWallPanel() {
         val panel = Prefs.wallPanel(this)
@@ -185,15 +188,6 @@ class MainActivity : ComponentActivity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
-        val bars = WindowCompat.getInsetsController(window, window.decorView)
-        if (panel) {
-            bars.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            bars.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            bars.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -738,8 +732,8 @@ private fun Settings(state: Producer.State) {
             Column(Modifier.weight(1f)) {
                 Text("Wall panel", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "Landscape, screen always on, no status or navigation bars. " +
-                        "Swipe from an edge to get them back.",
+                    "Landscape and the screen always on, for a device that is " +
+                        "mounted rather than carried.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

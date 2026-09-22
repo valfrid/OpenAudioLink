@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.11.0, built by CI as one APK — see *One build* below.
+Version 0.11.1, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -264,12 +264,21 @@ librespot line in those tests was copied from a real screenshot rather
 than invented, because the format is documented nowhere.
 
 **Wall-panel mode**, one switch rather than a second build. On it the
-screen locks to landscape, stays lit with `FLAG_KEEP_SCREEN_ON`, and
-hides the status and navigation bars with a swipe bringing them back —
-because a device screwed to a wall cannot be turned, must not sleep, and
-showing a battery icon and three navigation buttons makes it a phone
-lying on a shelf. Off, every one of those goes back, so the same APK is
-a pocket app or a panel.
+screen locks to landscape — a mounted device cannot be turned and its
+accelerometer will decide otherwise — and stays lit with
+`FLAG_KEEP_SCREEN_ON`, which is scoped to the window and so lapses when
+the app is not in front rather than needing a wake lock somebody has to
+remember to release. Off puts both back, so the same APK is a pocket app
+or a panel.
+
+It also hid the system bars at first, with an edge swipe to bring them
+back. That is the standard kiosk move and it was the wrong default:
+a device still being set up needs its navigation, the swipe has to be
+explained to anybody who meets it, and hiding the clock and the battery
+on a panel whose job is to be glanced at removes information rather than
+clutter. A full kiosk belongs with lock-task mode and device owner, where
+leaving is deliberate and reversible, not with three window flags and a
+gesture.
 
 The manifest also offers the activity as a **home app**. That changes
 nothing on an ordinary phone — Android only asks which launcher to use
