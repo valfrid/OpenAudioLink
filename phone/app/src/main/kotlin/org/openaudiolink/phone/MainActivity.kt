@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,7 +55,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.Station
-import org.openaudiolink.phone.sources.LibrarySource
 import org.openaudiolink.phone.sources.RadioSource
 import org.openaudiolink.phone.sources.SpotifySource
 import org.openaudiolink.phone.sources.ToneSource
@@ -84,14 +84,38 @@ import kotlin.math.roundToInt
  */
 class MainActivity : ComponentActivity() {
 
+    /**
+     * The system document picker, entered deliberately and rarely.
+     *
+     * It used to be what the "A music file" tile did, and that was a
+     * one-way door: DocumentsUI is another app, it has no Cancel of its
+     * own, and on a device driven by gestures there is no visible way back
+     * out of it without choosing something. Nothing here could fix that —
+     * it is not this app's window. What this app *can* do is stop putting
+     * people in there for a file they have already played once, which is
+     * what [Producer.tracks] and the list under the tile are for.
+     *
+     * Cancelling has always worked; the null branch below is the whole of
+     * it. The problem was never that the app mishandled a cancel, it was
+     * that the other app gave no way to ask for one.
+     */
     private val pickTrack = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            /*
+             * Persistable, and now actually used.
+             *
+             * This grant is what lets a URI survive a reboot, and it is
+             * offered only to whoever received the result — so it has to be
+             * taken here, before the URI goes anywhere else. The app has
+             * always taken it and then thrown the URI away; the list is
+             * what makes it worth taking.
+             */
             contentResolver.takePersistableUriPermission(
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
-            Producer.startStream(LibrarySource(applicationContext, uri, nameOf(uri)))
+            Producer.addTrack(this, nameOf(uri), uri)
         }
     }
 
@@ -191,8 +215,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun nameOf(uri: Uri): String =
-        uri.lastPathSegment?.substringAfterLast('/') ?: "Track"
+    /**
+     * What the file is called, asked of the provider rather than guessed.
+     *
+     * This used to read the last path segment, which for a document URI is
+     * an opaque id — `audio%3A1000000123` — so every picked file was
+     * labelled with a number. That was survivable while the name was only
+     * a banner caption on a track playing right now; it is not survivable
+     * in a saved list, where the name is the only thing telling two rows
+     * apart.
+     *
+     * `DISPLAY_NAME` is the one column every document provider is required
+     * to answer, and it gives the file's real name. A provider that answers
+     * with nothing leaves the fallback in [Track] to salvage something.
+     */
+    private fun nameOf(uri: Uri): String {
+        try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) {
+                        cursor.getString(column)?.takeIf { it.isNotBlank() }?.let { return it }
+                    }
+                }
+        } catch (_: Exception) {
+            // A provider that will not answer a name query is not a reason
+            // to refuse the file it just handed over.
+        }
+        return ""
+    }
 }
 
 @Composable
@@ -470,6 +521,7 @@ private fun Rooms(state: Producer.State) {
 @Composable
 private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: () -> Unit) {
     var showStations by remember { mutableStateOf(false) }
+    var showTracks by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("What would you like to hear?", style = MaterialTheme.typography.titleLarge)
@@ -494,11 +546,25 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
                 onClick = onSpotify,
                 modifier = Modifier.weight(1f),
             )
+            /*
+             * Opens a list, not the system picker.
+             *
+             * This tile used to launch Android's document browser directly,
+             * which meant every play went through another app — and that
+             * app has no Cancel, so on a device with gesture navigation
+             * tapping this tile by mistake left somebody stuck in a file
+             * browser they could only leave by choosing a file.
+             *
+             * Behaving like Radio fixes it twice over: the tile now opens
+             * something with a way back, and a file played once is one tap
+             * away from now on rather than a trip through the browser.
+             */
             SourceTile(
                 glyph = Glyphs.MusicFile,
                 name = "A music file",
-                what = "From this phone.",
-                onClick = onPickTrack,
+                what = if (state.tracks.isEmpty()) "From this phone" else
+                    "${state.tracks.size} remembered",
+                onClick = { showTracks = !showTracks },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -520,6 +586,8 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             )
         }
 
+        if (showTracks) Tracks(state, onPickTrack)
+
         if (showStations) Stations(state)
 
         if (state.signingIn) {
@@ -530,6 +598,72 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             )
             OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) { Text("Cancel") }
         }
+    }
+}
+
+/**
+ * The files played before, and the one button that opens the picker.
+ *
+ * [Stations]'s shape deliberately — a row per thing with Play and Remove,
+ * and one control at the foot for adding another — because it is the same
+ * job and nobody should have to learn this screen twice.
+ *
+ * What differs is what "add" costs. A station is two fields typed here; a
+ * file means handing the screen to Android's document browser, which is
+ * another app with its own back behaviour and no Cancel. So the button
+ * that does it says so, and it is at the bottom rather than being what the
+ * tile does.
+ *
+ * **Newest first.** Playing from this list does not reorder it — only
+ * picking a file does — because a list that rearranges itself under a
+ * finger is a list people mis-tap.
+ */
+@Composable
+private fun Tracks(state: Producer.State, onPickTrack: () -> Unit) {
+    val context = LocalContext.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (track in state.tracks) {
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        Glyphs.MusicFile,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Text(
+                        track.name,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Button(onClick = { Producer.playTrack(context, track) }) { Text("Play") }
+                    TextButton(onClick = { Producer.removeTrack(context, track.id) }) {
+                        Text("Remove")
+                    }
+                }
+            }
+        }
+
+        Button(onClick = onPickTrack) { Text("Choose a file…") }
+
+        Text(
+            if (state.tracks.isEmpty()) {
+                "Nothing yet. Choosing a file opens the phone's own file browser — " +
+                    "which has no way out but picking something, so what is picked " +
+                    "is remembered here and needs choosing only once."
+            } else {
+                "Remembered, not copied: the audio stays where it is. A file that " +
+                    "has since been deleted or moved will publish and then play " +
+                    "nothing — Remove is the way out of that."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

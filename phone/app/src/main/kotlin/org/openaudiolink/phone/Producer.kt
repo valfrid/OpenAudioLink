@@ -1,6 +1,8 @@
 package org.openaudiolink.phone
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +23,9 @@ import org.openaudiolink.core.PcmRing
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.RtpSender
 import org.openaudiolink.core.Station
+import org.openaudiolink.core.Track
 import org.openaudiolink.phone.sources.AudioSource
+import org.openaudiolink.phone.sources.LibrarySource
 import org.openaudiolink.phone.sources.SpotifyAccount
 import java.net.InetAddress
 
@@ -195,6 +199,8 @@ object Producer {
         val castName: String = "",
         /** Saved radio stations, in the order they were added. */
         val stations: List<Station> = emptyList(),
+        /** Files picked before, newest first. See [Track]. */
+        val tracks: List<Track> = emptyList(),
         /** Whether the counters and logs are on screen — see [Prefs]. */
         val showDetails: Boolean = false,
     ) {
@@ -903,6 +909,7 @@ object Producer {
                 showDetails = Prefs.showDetails(context),
                 wallPanel = Prefs.wallPanel(context),
                 stations = Prefs.stations(context),
+                tracks = Prefs.tracks(context),
             )
         }
     }
@@ -968,6 +975,71 @@ object Producer {
         val updated = _state.value.stations.filterNot { it.id == id }
         Prefs.setStations(context, updated)
         _state.update { it.copy(stations = updated) }
+    }
+
+    /* ---------- files from this phone ---------- */
+
+    /**
+     * Remembers a file the picker just handed over, and plays it.
+     *
+     * The caller has already taken the persistable read grant — it has to,
+     * because the grant is only offered to whoever received the result —
+     * and this is what makes that grant worth taking. Before this existed
+     * the app took one on every pick and then dropped the URI on the floor,
+     * so the permission outlived the only thing that could have used it.
+     */
+    fun addTrack(context: Context, name: String, uri: Uri) {
+        val existing = _state.value.tracks
+        val updated = Track.add(existing, name, uri.toString())
+        if (updated === existing) return
+        saveTracks(context, existing, updated)
+        playTrack(context, updated.first())
+    }
+
+    /**
+     * Plays one that is already in the list.
+     *
+     * A dead URI — a deleted file, an unmounted card, a grant that did not
+     * survive — arrives here like any other and fails inside the decoder,
+     * where `LibrarySource` logs it and simply never starts playing. That
+     * shows up as a stream that publishes and sends nothing, which is the
+     * same picture as a station that will not open, and Remove is the way
+     * out of both.
+     */
+    fun playTrack(context: Context, track: Track) {
+        startStream(LibrarySource(context.applicationContext, Uri.parse(track.uri), track.name))
+    }
+
+    fun removeTrack(context: Context, id: String) {
+        val existing = _state.value.tracks
+        saveTracks(context, existing, existing.filterNot { it.id == id })
+    }
+
+    /**
+     * Writes the list, and gives back the grants nothing points at any more.
+     *
+     * One path for both ways an entry leaves — Remove, and falling off the
+     * end of [Track.LIMIT] — because the consequence is the same either
+     * way. A persistable grant that is not released is not harmless: a
+     * package may hold only so many, and once the system's own cap is
+     * reached it starts revoking the oldest, which would silently break
+     * entries still on this list.
+     */
+    private fun saveTracks(context: Context, before: List<Track>, after: List<Track>) {
+        Prefs.setTracks(context, after)
+        _state.update { it.copy(tracks = after) }
+
+        val kept = after.map { it.uri }.toSet()
+        for (gone in before.filterNot { it.uri in kept }) {
+            try {
+                context.contentResolver.releasePersistableUriPermission(
+                    Uri.parse(gone.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+                // Already gone — app data cleared, or the provider withdrew
+                // it. Releasing what we do not hold is not a failure.
+            }
+        }
     }
 
     /**

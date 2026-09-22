@@ -3,6 +3,7 @@ package org.openaudiolink.phone
 import android.content.Context
 import android.provider.Settings
 import org.openaudiolink.core.Station
+import org.openaudiolink.core.Track
 
 /**
  * The handful of things this app remembers between launches.
@@ -23,6 +24,7 @@ object Prefs {
     private const val KEY_DETAILS = "showDetails"
     private const val KEY_SELECTED = "selectedSpeakers"
     private const val KEY_STATIONS = "stations"
+    private const val KEY_TRACKS = "tracks"
     private const val KEY_WALL_PANEL = "wallPanel"
 
     /**
@@ -146,6 +148,29 @@ object Prefs {
     fun setStations(context: Context, stations: List<Station>) {
         prefs(context).edit()
             .putString(KEY_STATIONS, Station.encode(stations))
+            .apply()
+    }
+
+    /**
+     * Files from this phone that have been played once already.
+     *
+     * The same JSON treatment as the stations, and the same reason: what is
+     * stored is a `content://` URI, which can contain very nearly anything.
+     *
+     * **This is a list of addresses, not of files.** Nothing is copied and
+     * nothing is cached — each entry is a document URI the app holds a
+     * persistable read grant on, which is what lets it survive a reboot.
+     * The audio stays wherever it was, and clearing app data both empties
+     * this list and drops the grants, which is the right pairing.
+     */
+    fun tracks(context: Context): List<Track> {
+        val raw = prefs(context).getString(KEY_TRACKS, null)
+        return Track.decode(raw)
+    }
+
+    fun setTracks(context: Context, tracks: List<Track>) {
+        prefs(context).edit()
+            .putString(KEY_TRACKS, Track.encode(tracks))
             .apply()
     }
 }

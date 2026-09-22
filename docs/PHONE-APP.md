@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.11.1, built by CI as one APK — see *One build* below.
+Version 0.11.2, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -25,7 +25,7 @@ Five sources, and the first is the reason the app exists:
    phone. It signs in once, and then appears in the picker of the account
    that signed it in.
 2. **A vinyl node** already on the network, told where to send.
-3. **A music file** from this phone.
+3. **A music file** from this phone, from a remembered list.
 4. **Internet radio** — MP3, AAC and FLAC, from a saved station list.
 5. **A test tone**, which needs no permission, file or account.
 
@@ -621,7 +621,39 @@ about decoders.
 network right" from "is the decoder right" when a speaker is silent, which
 is the same reason the firmware carries one.
 
-**The phone's library.** The picker filters on `audio/*` and Media3 does
+**The phone's library.** The tile opens a **remembered list**, not the
+system picker. It used to open the picker directly, and that turned out to
+be a one-way door: Android's DocumentsUI is another app, it has no Cancel
+of its own, and on a device driven by gestures there is no visible way
+back out of it without choosing a file. Nothing in this app could fix
+that — it is not this app's window — so the fix is to stop sending people
+in there for a file they have already played once.
+
+A picked file is saved as a `Track` (`core/Track.kt`): an id, the display
+name read from the provider's `DISPLAY_NAME` column, and the `content://`
+URI exactly as the picker gave it. Newest first; re-picking a file that is
+already on the list moves it to the top rather than duplicating it, and
+playing from the list does not reorder it — a list that rearranges itself
+under a finger is a list people mis-tap. A **"Choose a file…"** button at
+the foot of the list is the deliberate way into the picker.
+
+Three things about it worth being plain about. **Nothing is copied**: an
+entry is an address, and the audio stays where it is. **The address can
+die** — a deleted file, an unmounted card, a grant that did not survive
+app data being cleared — and a dead entry publishes and then plays
+nothing, which is the same picture as a station that will not open; Remove
+is the way out of both. And **the list is capped at 50**, because the app
+holds a *persistable* read grant on every URI in it and Android caps how
+many of those a package may have (128 on older releases, 512 from API 30)
+before it starts silently revoking the oldest. Dropping the oldest here,
+where `Producer.saveTracks` can still release the grant, keeps the list
+well inside that limit. That same path releases the grant on Remove.
+
+The persistable grant was always taken — `takePersistableUriPermission`
+on every pick, from the first version — and then the URI was thrown away.
+The expensive half of this feature had been built and used once per play.
+
+The picker filters on `audio/*` and Media3 does
 the decoding, so the supported set is ExoPlayer's own extractors plus the
 phone's own decoders — no decoder extensions are bundled. In practice:
 **MP3, AAC** (M4A, MP4, ADTS), **FLAC, WAV, Ogg Vorbis, Opus** (in
