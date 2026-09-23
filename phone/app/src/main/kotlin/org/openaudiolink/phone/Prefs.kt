@@ -26,6 +26,7 @@ object Prefs {
     private const val KEY_STATIONS = "stations"
     private const val KEY_TRACKS = "tracks"
     private const val KEY_WALL_PANEL = "wallPanel"
+    private const val KEY_CAST_POINT = "castPoint"
 
     /**
      * What a cast point is called before anybody renames it.
@@ -103,6 +104,35 @@ object Prefs {
 
     fun setWallPanel(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY_WALL_PANEL, on).apply()
+    }
+
+    /**
+     * Whether the Spotify cast point is published whenever it can be.
+     *
+     * **On by default**, because a receiver that only appears after
+     * somebody presses a button on it is a receiver nobody discovers.
+     * Spotify Connect's model is that the device is already in the list
+     * and the phone initiates; requiring a press first inverts the order
+     * and means a guest can never find it at all.
+     *
+     * It is a switch rather than a fact so it can be turned off, and the
+     * reason to turn it off is worth stating plainly: while it is on,
+     * anyone on this Wi-Fi signed into the same Spotify account can play
+     * to these speakers without touching this device. That is what a
+     * Sonos does and it is the intent — but it is the household account,
+     * so it should be something somebody chose rather than something that
+     * quietly became true.
+     *
+     * Deliberately **not** folded into [wallPanel]. That switch is about
+     * how the screen behaves; this one puts a service on the network, and
+     * bundling unrelated behaviour behind one control is the mistake the
+     * kiosk mode already made once.
+     */
+    fun castPoint(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_CAST_POINT, true)
+
+    fun setCastPoint(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CAST_POINT, on).apply()
     }
 
     /**

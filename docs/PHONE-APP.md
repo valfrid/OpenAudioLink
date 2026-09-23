@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.11.3, built by CI as one APK — see *One build* below.
+Version 0.12.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -22,8 +22,8 @@ Version 0.11.3, built by CI as one APK — see *One build* below.
 Five sources, and the first is the reason the app exists:
 
 1. **Spotify Connect** — librespot publishes a cast point named after the
-   phone. It signs in once, and then appears in the picker of the account
-   that signed it in.
+   device. It signs in once, and then stays in the picker of that account
+   for as long as the app is running — see *The cast point is sticky*.
 2. **A vinyl node** already on the network, told where to send.
 3. **A music file** from this phone, from a remembered list.
 4. **Internet radio** — MP3, AAC and FLAC, from a saved station list.
@@ -598,6 +598,72 @@ can disappear because the air was busy. Three things now push back:
   device replies at once instead of waiting up to five seconds for its next
   scheduled announce — and it is rate-limited to one every five seconds,
   because a probe makes the whole network answer.
+
+## The cast point is sticky, and outlives the stream
+
+librespot used to be a source like any other: started when somebody chose
+Spotify, killed when they chose anything else. That made the tablet appear
+in Spotify's device list only *after* a person had walked to the wall and
+pressed Publish — which inverts Connect's whole model, where the receiver
+is already in the list and the phone initiates. A guest could never
+discover it, and the owner had to start the same playback twice: once on
+the panel and once in Spotify.
+
+So `SpotifySource` now runs on its own clock. `Producer` holds it in
+`castPoint`, separately from `source`, and it is *sometimes* also the
+source. Three states, which is what the Spotify tile reports:
+
+| State | Means |
+| --- | --- |
+| **No account** | Not signed in. Nothing is published and nothing can be. |
+| **Available** | Published, authenticated, in everybody's Spotify, silent. |
+| **Playing** | Somebody picked it and audio is arriving. |
+
+**Either end can take the speakers, and the last one to act wins.**
+Choosing radio, a file or the tone at the panel interrupts a cast; a cast
+arriving while radio plays takes it back. That symmetry is the point — the
+person in the room and the person on their phone are both entitled to the
+speakers, and neither has to find the other first.
+
+Four things that had to be got right for that to work:
+
+- **Detached does not mean discarded.** When the cast point is not the
+  source, `pump()` stops reading the pipe altogether, so the kernel buffer
+  fills and librespot blocks — the same back pressure as a full ring.
+  Reading and throwing away would let it free-run through somebody's queue
+  at whatever speed the CPU allows, burning their listening history on
+  audio nobody heard.
+- **An interrupted guest is ejected, not muted.** When the panel takes
+  over, librespot is restarted rather than merely detached. Leaving it
+  running reads far worse from the guest's side: their phone goes on
+  showing the track playing and the progress bar moving while nothing
+  comes out of anything. A device that vanishes for a second and returns
+  is a thing people understand; silent phantom playback is not. It comes
+  back unclaimed, so the device stays in the list.
+- **A grace window stops the two ends fighting.** An ejected phone may
+  transfer straight back onto the device as it reappears, taking the radio
+  away again, and round once more. For eight seconds after a choice at the
+  panel, arriving casts are ignored — settling it in favour of the person
+  standing in the room. `Play Spotify here now` overrides that by hand.
+- **Something has to be awake when nothing is playing.** `pollCounters`
+  runs `while (streaming)`, so it stops exactly when an idle cast point
+  needs watching. `watchCastPoint` runs for the life of the app: it
+  republishes a librespot that died (backed off, so a binary that cannot
+  exec does not become a restart storm), notices an arriving cast on
+  stderr, and drops back to *available* when a cast ends.
+
+That last one is a fix for something observed rather than imagined. An
+overnight run ended with Spotify's queue empty; librespot went inactive
+and the panel sat for hours with nothing published and no way back short
+of pressing a button. It now returns to *available* on its own.
+
+**The switch is sticky and defaults on**, in the Spotify panel rather than
+in Settings, because it belongs to the thing it controls. The reason to
+turn it off is stated on screen: while it is on, anyone on the Wi-Fi
+signed into the same Spotify account can play to these speakers without
+touching the device. That is what a Sonos does and it is the intent — but
+it is the household account, so it should be something somebody chose
+rather than something that quietly became true.
 
 ## Publishing is not playing
 

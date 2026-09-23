@@ -45,6 +45,38 @@ class SpotifySource(
     override val isPlaying: Boolean get() = running
 
     /**
+     * Where the audio goes, and null when it goes nowhere.
+     *
+     * **This is what lets the cast point outlive the stream.** librespot
+     * used to be started and killed with the stream like any other source,
+     * so the tablet appeared in Spotify's device list only after somebody
+     * had walked to the wall and pressed Publish — which is backwards, as
+     * Connect's whole model is that the receiver is already there and the
+     * phone initiates. Now the process runs on its own clock and this
+     * decides whether what it produces reaches the ring.
+     *
+     * Detached does **not** mean discarded, and that distinction is the
+     * flow control. [pump] stops reading the pipe entirely, so the kernel
+     * buffer fills and librespot blocks exactly as it does when the ring
+     * is full. Draining and throwing away would let it free-run through
+     * somebody's queue at whatever speed the CPU allows.
+     */
+    @Volatile private var sink: PcmRing? = null
+
+    /** Whether this is the source the stream is currently taking. */
+    val attached: Boolean get() = sink != null
+
+    /**
+     * Whether somebody is casting to it right now.
+     *
+     * Read off librespot's own narration rather than from the pipe: a
+     * track that is loading has been chosen, and that is the moment worth
+     * reacting to. [Producer] watches this to hand the stream back to
+     * Spotify when a cast arrives over the top of radio.
+     */
+    val casting: Boolean get() = playing != null
+
+    /**
      * The last few things librespot said, for the screen.
      *
      * Ten rather than one. A single line was enough to show that the
@@ -90,16 +122,60 @@ class SpotifySource(
      */
     override val ready: Boolean get() = authenticated
 
-    override fun start(ring: PcmRing) {
+    /**
+     * Runs librespot without taking the stream.
+     *
+     * The cast point, on its own: published, authenticated, visible in
+     * everybody's Spotify, and producing nothing until somebody casts to
+     * it. Safe to call when it is already up.
+     */
+    fun publish() {
         if (running) return
         running = true
         authenticated = false
+        playing = null
         synchronized(this) { recent.clear() }
-        thread = Thread({ run(ring) }, "oal-librespot").apply { start() }
+        thread = Thread({ run() }, "oal-librespot").apply { start() }
     }
 
+    /** Routes what librespot produces into the stream's ring. */
+    fun attach(ring: PcmRing) {
+        sink = ring
+    }
+
+    /** Stops routing, without touching the process or the cast point. */
+    fun detach() {
+        sink = null
+    }
+
+    /**
+     * [AudioSource]'s way in: publish if it is not up, then take the ring.
+     *
+     * Ordinary for the other sources and nearly a no-op here, because by
+     * the time anything selects Spotify the process has usually been
+     * running for hours.
+     */
+    override fun start(ring: PcmRing) {
+        publish()
+        attach(ring)
+    }
+
+    /**
+     * Releases the stream. **It does not stop the cast point.**
+     *
+     * Producer stops sources it is replacing, and doing that here would
+     * pull the tablet out of Spotify's device list every time somebody
+     * picked a radio station. [shutDown] is the one that really ends it.
+     */
     override fun stop() {
+        detach()
+    }
+
+    /** Ends the cast point: the process dies and the device disappears. */
+    fun shutDown() {
         running = false
+        sink = null
+        playing = null
         // The reader is blocked on a pipe that killing the process closes.
         process?.destroy()
         process = null
@@ -120,7 +196,7 @@ class SpotifySource(
     private fun binary(): File =
         File(context.applicationInfo.nativeLibraryDir, "liblibrespot.so")
 
-    private fun run(ring: PcmRing) {
+    private fun run() {
         val exe = binary()
         if (!exe.exists()) {
             /*
@@ -192,7 +268,7 @@ class SpotifySource(
         Thread({ drainErrors(process.errorStream) }, "oal-librespot-log")
             .apply { isDaemon = true }.start()
 
-        pump(process.inputStream, ring)
+        pump(process.inputStream)
 
         Log.i(TAG, "librespot ended")
         running = false
@@ -204,7 +280,7 @@ class SpotifySource(
      * Spotify is 44.1 kHz and the wire is 48, so every track goes through
      * the filter — this is the one source that needs it.
      */
-    private fun pump(output: InputStream, ring: PcmRing) {
+    private fun pump(output: InputStream) {
         val resampler = RationalResampler(SPOTIFY_RATE, Rtp.SAMPLE_RATE, Rtp.CHANNELS)
         resampler.reset()
 
@@ -216,6 +292,24 @@ class SpotifySource(
 
         var carried = 0
         while (running) {
+            /*
+             * Detached: do not read at all.
+             *
+             * The pipe is the flow control, so refusing to read is how a
+             * cast point that owns no stream holds librespot still. The
+             * alternative — reading and discarding — would let it run
+             * through somebody's queue as fast as the CPU allows, burning
+             * their listening history on audio nobody heard.
+             *
+             * When nothing is casting there is nothing in the pipe anyway,
+             * which is the ordinary case: a cast point waiting all evening
+             * costs this sleep and nothing else.
+             */
+            if (sink == null) {
+                Thread.sleep(20)
+                continue
+            }
+
             val read = try {
                 output.read(raw, carried, raw.size - carried)
             } catch (_: Exception) {
@@ -236,7 +330,7 @@ class SpotifySource(
             if (frames > 0) {
                 val samples = LibrespotPcm.decodeS16(raw, used, decoded)
                 val written = resampler.process(decoded, samples, resampled)
-                offer(resampled, written, ring)
+                offer(resampled, written)
             }
 
             carried = have - used
@@ -253,9 +347,10 @@ class SpotifySource(
      * buffer fills, and librespot waits. That is the whole flow-control
      * mechanism, and it is why nothing here needs a rate limiter.
      */
-    private fun offer(samples: FloatArray, count: Int, ring: PcmRing) {
+    private fun offer(samples: FloatArray, count: Int) {
         var written = 0
         while (running && written < count) {
+            val ring = sink ?: return   // released mid-buffer; the rest is stale
             val frames = ring.write(samples, count - written, written)
             written += frames * Rtp.CHANNELS
             if (frames == 0) Thread.sleep(2)

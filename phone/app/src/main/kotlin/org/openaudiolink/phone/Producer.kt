@@ -27,6 +27,7 @@ import org.openaudiolink.core.Track
 import org.openaudiolink.phone.sources.AudioSource
 import org.openaudiolink.phone.sources.LibrarySource
 import org.openaudiolink.phone.sources.SpotifyAccount
+import org.openaudiolink.phone.sources.SpotifySource
 import java.net.InetAddress
 
 /**
@@ -191,6 +192,26 @@ object Producer {
         val wallPanel: Boolean = false,
         /** Whether the cast point has ever been signed in. */
         val spotifySignedIn: Boolean = false,
+        /**
+         * The three states Spotify actually has, as two flags plus the
+         * sign-in above.
+         *
+         * *No account* — [spotifySignedIn] false. Nothing is published and
+         * nothing can be. *Available* — signed in and [castPointUp]: the
+         * device is in everybody's Spotify, waiting, costing nothing.
+         * *Playing* — [castPointCasting]: somebody has picked it and audio
+         * is arriving.
+         *
+         * Worth keeping apart from [streaming], which answers a different
+         * question: whether *this app* is sending RTP. A cast point can be
+         * up while the radio is playing, and that is the arrangement the
+         * whole sticky-cast-point design exists to allow.
+         */
+        val castPointUp: Boolean = false,
+        /** Whether somebody is casting to it right now. */
+        val castPointCasting: Boolean = false,
+        /** The sticky switch — see [Prefs.castPoint]. */
+        val castPointOn: Boolean = true,
         /** Set while the one-time sign-in is waiting for the browser. */
         val signingIn: Boolean = false,
         /** Something a person needs to be told, in their own words. */
@@ -253,6 +274,32 @@ object Producer {
     private var binding: WifiBinding? = null
     private var source: AudioSource? = null
 
+    /**
+     * librespot, running on its own clock rather than the stream's.
+     *
+     * Held here, apart from [source], and that separation is the whole of
+     * the sticky cast point. Everything else in this app is a source that
+     * exists while it plays; this is a service that exists while the app
+     * does, and is *sometimes* also the source.
+     *
+     * So it survives `startStream` replacing the source, it survives
+     * `stopStream`, and the only things that end it are the switch being
+     * turned off, the account being forgotten, and the app going away.
+     */
+    private var castPoint: SpotifySource? = null
+
+    /**
+     * Until when an arriving cast is ignored.
+     *
+     * A guard against the two ends fighting. Somebody at the panel picks
+     * radio, which ejects whoever was casting; their phone may then
+     * transfer straight back onto the device as it reappears, which would
+     * take the radio away again — and round once more. A few seconds of
+     * deafness after a deliberate choice at the panel settles it in
+     * favour of the person standing in the room.
+     */
+    private var ignoreCastsUntil = 0L
+
     /** Kept so a change of selection can be written down without a screen. */
     private var appContext: Context? = null
 
@@ -293,6 +340,16 @@ object Producer {
             selectedIds.addAll(Prefs.selected(context))
         }
         readSpotifyState(context)
+
+        /*
+         * The cast point comes up with the app, not with the stream.
+         *
+         * This one line is the difference between a device that is in
+         * everybody's Spotify all evening and one that has to be asked
+         * for first.
+         */
+        refreshCastPoint(context)
+        watchCastPoint()
 
         if (wifi.wifiNetwork() == null) {
             warn("No Wi-Fi. The speakers are on the Wi-Fi, so nothing can reach them yet.")
@@ -360,6 +417,8 @@ object Producer {
 
     fun detach() {
         stopStream()
+        castPoint?.shutDown()
+        castPoint = null
         discovery?.stop()
         discovery = null
         binding?.releaseLocks()
@@ -385,6 +444,17 @@ object Producer {
          */
         if (_state.value.selected.isEmpty()) {
             warn("Nothing is ticked, so this plays to nobody — tick a speaker when one appears.")
+        }
+
+        /*
+         * A deliberate choice at the panel outranks a remote cast, and
+         * whoever was casting is ejected rather than left playing into
+         * nothing. Not for Spotify itself, obviously — that would restart
+         * the very session being selected.
+         */
+        if (newSource !== castPoint) {
+            ignoreCastsUntil = System.currentTimeMillis() + CAST_GRACE_MS
+            ejectCast("${newSource.label} was chosen at the panel")
         }
 
         stopStream()
@@ -744,6 +814,92 @@ object Producer {
         }
     }
 
+    /**
+     * The cast point's supervisor, and the only thing awake when nothing
+     * is playing.
+     *
+     * [pollCounters] runs `while (streaming)`, so it stops the moment the
+     * music does — which is exactly when a published-but-idle cast point
+     * needs watching. This loop runs for the life of the app and does
+     * three things:
+     *
+     *  - **Republishes a dead one.** librespot exiting used to be the end
+     *    of it. The overnight run is the evidence: the queue emptied,
+     *    librespot went inactive, and the panel sat there for hours with
+     *    nothing published and no way back short of pressing a button.
+     *    Backed off, so a binary that cannot exec at all does not become a
+     *    restart storm.
+     *  - **Hands the stream back on an incoming cast.** Somebody picking
+     *    the device in Spotify is a request, and it arrives on librespot's
+     *    stderr rather than through this app — so this is where it is
+     *    noticed. Held off briefly after a choice at the panel, or the two
+     *    ends fight over the speakers.
+     *  - **Falls back to available when a cast ends.** Otherwise the
+     *    stream stays open forever and "published, waiting" becomes the
+     *    permanent state of the screen, which is what made an idle panel
+     *    look busy.
+     */
+    private fun watchCastPoint() {
+        scope.launch {
+            var everCast = false
+            var retryMs = CAST_RETRY_MIN_MS
+            var nextTryAt = 0L
+
+            while (isActive) {
+                val point = castPoint
+                val context = appContext
+                val now = System.currentTimeMillis()
+
+                if (point != null && context != null) {
+                    if (!point.isPlaying) {
+                        /*
+                         * Gone. Give the stream up if it was the source,
+                         * then put it back on the network.
+                         */
+                        if (source === point) stopStream()
+                        if (now >= nextTryAt) {
+                            Log.i(TAG, "cast point is down; republishing")
+                            point.shutDown()
+                            castPoint = null
+                            everCast = false
+                            refreshCastPoint(context)
+                            nextTryAt = now + retryMs
+                            retryMs = (retryMs * 2).coerceAtMost(CAST_RETRY_MAX_MS)
+                        }
+                    } else {
+                        retryMs = CAST_RETRY_MIN_MS
+
+                        if (point.casting) {
+                            everCast = true
+                            if (source !== point && now >= ignoreCastsUntil) {
+                                Log.i(TAG, "a cast arrived; Spotify takes the stream")
+                                startStream(point)
+                            }
+                        } else if (source === point && everCast) {
+                            /*
+                             * The queue ran out, or the phone that was
+                             * casting went away. Not a fault: back to
+                             * published and waiting, which is where this
+                             * device rests.
+                             */
+                            everCast = false
+                            stopStream()
+                        }
+                    }
+
+                    _state.update {
+                        it.copy(
+                            castPointUp = castPoint?.isPlaying == true,
+                            castPointCasting = castPoint?.casting == true,
+                        )
+                    }
+                }
+
+                delay(1_000)
+            }
+        }
+    }
+
     private fun pollCounters() {
         scope.launch {
             while (_state.value.streaming) {
@@ -844,6 +1000,9 @@ object Producer {
             _state.update {
                 it.copy(signingIn = false, spotifySignedIn = SpotifyAccount.isSignedIn(context))
             }
+            // Publish straight away, so the device is in Spotify's list by
+            // the time somebody looks for it rather than after one more press.
+            if (ok) refreshCastPoint(context)
             warn(
                 if (ok) {
                     /*
@@ -852,9 +1011,9 @@ object Producer {
                      * once it has the credential, so at this exact moment
                      * there is no receiver on the network at all.
                      */
-                    "Signed in. Now press \"Publish to Spotify\" and leave it " +
-                        "running — \"$name\" only shows in Spotify's device list " +
-                        "while it does."
+                    "Signed in. \"$name\" is now in Spotify's device list and " +
+                        "stays there — pick it on any phone signed into this " +
+                        "account and press play."
                 } else {
                     /*
                      * librespot's own words, on the phone.
@@ -890,7 +1049,17 @@ object Producer {
     fun forgetSpotify(context: Context) {
         SpotifyAccount.stopAnySignIn()
         SpotifyAccount.forget(context)
-        _state.update { it.copy(spotifySignedIn = false, signingIn = false) }
+        if (source === castPoint) stopStream()
+        castPoint?.shutDown()
+        castPoint = null
+        _state.update {
+            it.copy(
+                spotifySignedIn = false,
+                signingIn = false,
+                castPointUp = false,
+                castPointCasting = false,
+            )
+        }
         warn("Spotify account forgotten, and anything still running stopped. " +
             "Sign in again for a fresh attempt.")
     }
@@ -910,6 +1079,7 @@ object Producer {
                 wallPanel = Prefs.wallPanel(context),
                 stations = Prefs.stations(context),
                 tracks = Prefs.tracks(context),
+                castPointOn = Prefs.castPoint(context),
             )
         }
     }
@@ -926,6 +1096,8 @@ object Producer {
     fun setCastName(context: Context, name: String) {
         Prefs.setCastName(context, name)
         _state.update { it.copy(castName = Prefs.castName(context)) }
+        // The name is a process argument, so a rename is a new cast point.
+        refreshCastPoint(context)
     }
 
     fun setShowDetails(context: Context, show: Boolean) {
@@ -943,6 +1115,97 @@ object Producer {
     fun setWallPanel(context: Context, on: Boolean) {
         Prefs.setWallPanel(context, on)
         _state.update { it.copy(wallPanel = on) }
+    }
+
+    /* ---------- the cast point ---------- */
+
+    /**
+     * Brings librespot up or down to match the switch and the account.
+     *
+     * Called whenever any of the three things it depends on can have
+     * changed — the switch, the sign-in, the name — and safe to call when
+     * nothing has. It is the only place that decides whether the cast
+     * point should exist, so there is one answer rather than one per
+     * caller.
+     *
+     * A cast point that is currently *the source* is left alone even if
+     * the switch went off: pulling the stream out from under music that
+     * is playing is not what "stop offering this in future" means. It
+     * goes down when the stream does.
+     */
+    fun refreshCastPoint(context: Context) {
+        val app = context.applicationContext
+        val wanted = SpotifyAccount.isSignedIn(app) && Prefs.castPoint(app)
+        val up = castPoint
+
+        if (!wanted) {
+            if (up != null && up !== source) {
+                up.shutDown()
+                castPoint = null
+            }
+            _state.update { it.copy(castPointUp = false, castPointOn = Prefs.castPoint(app)) }
+            return
+        }
+
+        /*
+         * A rename means a new cast point, because the name is a process
+         * argument and librespot advertises the one it was started with.
+         * Rebuilt rather than renamed, which is also what the Settings
+         * text has always promised.
+         */
+        val name = Prefs.castName(app)
+        if (up != null && up.label != "Spotify — $name") {
+            if (up === source) stopStream()
+            up.shutDown()
+            castPoint = null
+        }
+
+        val point = castPoint ?: SpotifySource(app, name).also { castPoint = it }
+        point.publish()
+        _state.update { it.copy(castPointUp = true, castPointOn = true) }
+    }
+
+    /** The sticky switch, and the cast point follows it immediately. */
+    fun setCastPoint(context: Context, on: Boolean) {
+        Prefs.setCastPoint(context, on)
+        _state.update { it.copy(castPointOn = on) }
+        refreshCastPoint(context)
+    }
+
+    /**
+     * Hands the stream to Spotify, which is the cast point's way back in.
+     *
+     * The tile's Play button and the automatic take-back both land here,
+     * so there is one path and it cannot get out of step with itself.
+     */
+    fun playSpotify(context: Context) {
+        refreshCastPoint(context)
+        castPoint?.let { startStream(it) }
+    }
+
+    /**
+     * Ejects whoever is casting, without taking the device out of the list.
+     *
+     * Called when the panel chooses something else. The alternative —
+     * detaching and leaving librespot running — reads much worse from the
+     * guest's side: their phone goes on showing the track playing, the
+     * progress bar moving, while nothing comes out of anything. A device
+     * that disappears for a second and returns is a thing people
+     * understand; silent phantom playback is not.
+     *
+     * It comes straight back, unclaimed, so the cast point stays sticky
+     * and anyone can take it again — which is the point.
+     */
+    private fun ejectCast(reason: String) {
+        val point = castPoint ?: return
+        val context = appContext ?: return
+        if (!point.casting) return
+
+        Log.i(TAG, "restarting the cast point: $reason")
+        point.shutDown()
+        castPoint = null
+        ignoreCastsUntil = System.currentTimeMillis() + CAST_GRACE_MS
+        refreshCastPoint(context)
     }
 
     /* ---------- radio stations ---------- */
@@ -1066,6 +1329,19 @@ object Producer {
 
 /** How often a probe may be sent while something chosen is missing. */
 private const val PROBE_INTERVAL_MS = 5_000L
+
+/**
+ * How long a choice made at the panel outranks an arriving cast.
+ *
+ * Long enough for a phone that was ejected to finish transferring itself
+ * back to its own speaker and give up, short enough that somebody who
+ * genuinely wants to cast a moment later is not refused.
+ */
+private const val CAST_GRACE_MS = 8_000L
+
+/** How soon a cast point that went down is put back, and the ceiling. */
+private const val CAST_RETRY_MIN_MS = 3_000L
+private const val CAST_RETRY_MAX_MS = 60_000L
 
 /**
  * How long a chosen speaker may be silent before it is asked directly.

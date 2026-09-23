@@ -56,7 +56,6 @@ import androidx.compose.ui.unit.dp
 import org.openaudiolink.core.Rtp
 import org.openaudiolink.core.Station
 import org.openaudiolink.phone.sources.RadioSource
-import org.openaudiolink.phone.sources.SpotifySource
 import org.openaudiolink.phone.sources.ToneSource
 import kotlin.math.roundToInt
 
@@ -287,7 +286,7 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
             onPickTrack = onPickTrack,
             onSpotify = {
                 if (state.spotifySignedIn) {
-                    Producer.startStream(SpotifySource(context, state.castName))
+                    Producer.playSpotify(context)
                 } else {
                     Producer.signInToSpotify(context, state.castName) { url ->
                         context.startActivity(
@@ -575,10 +574,21 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             SourceTile(
                 glyph = Glyphs.Broadcast,
                 name = "Spotify",
+                /*
+                 * The three states Spotify has, said in one line.
+                 *
+                 * No account, available, playing — and "available" is the
+                 * one that used not to exist. It is also the one the whole
+                 * sticky cast point is for: the device sitting in
+                 * everybody's Spotify all evening, costing nothing, until
+                 * somebody picks it.
+                 */
                 what = when {
                     state.signingIn -> "Waiting for Spotify…"
-                    state.spotifySignedIn -> "Ready to publish"
-                    else -> "Sign in once, first"
+                    !state.spotifySignedIn -> "Sign in once, first"
+                    state.castPointCasting -> "Playing"
+                    state.castPointUp -> "Available"
+                    else -> "Not published"
                 },
                 selected = panel == Panel.SPOTIFY,
                 onClick = { panel = panel.toggle(Panel.SPOTIFY) },
@@ -645,29 +655,89 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
  */
 @Composable
 private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
+    val context = LocalContext.current
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            if (state.spotifySignedIn) {
-                "Publishes a cast point called \"${state.castName}\". Pick it in " +
-                    "Spotify, on any device signed into the same account, and press " +
-                    "play there."
-            } else {
+        if (!state.spotifySignedIn) {
+            Text(
                 "Signs in once, in Spotify's own page. No password is typed into " +
-                    "this app, and Premium is required — librespot cannot stream on " +
-                    "a free account."
+                    "this app, and Premium is required — librespot cannot stream " +
+                    "on a free account.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = onSpotify, enabled = !state.signingIn) { Text("Sign in") }
+
+            if (state.signingIn) {
+                Text(
+                    "Spotify's own page has opened. Take as long as you need — " +
+                        "this waits.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) { Text("Cancel") }
+            }
+            return@Column
+        }
+
+        /*
+         * Signed in: what the cast point is doing, in one sentence.
+         *
+         * There is deliberately no Publish button in the ordinary case.
+         * The whole point of the sticky cast point is that nobody has to
+         * press anything here for the device to be in Spotify's list —
+         * requiring a press first is what made a guest unable to discover
+         * it at all.
+         */
+        Text(
+            when {
+                state.castPointCasting ->
+                    "Somebody is casting to \"${state.castName}\"."
+                state.castPointUp ->
+                    "In Spotify as \"${state.castName}\", waiting. Pick it on any " +
+                        "phone signed into this account and press play — nothing " +
+                        "needs pressing here."
+                state.castPointOn ->
+                    "Not on the network yet. It comes back on its own; if it does " +
+                        "not, Show details has librespot's own words."
+                else ->
+                    "Switched off, so \"${state.castName}\" is not in anybody's " +
+                        "Spotify."
             },
             style = MaterialTheme.typography.bodySmall,
         )
-        Button(onClick = onSpotify, enabled = !state.signingIn) {
-            Text(if (state.spotifySignedIn) "Publish \"${state.castName}\"" else "Sign in")
-        }
-        if (state.signingIn) {
-            Text(
-                "Spotify's own page has opened. Take as long as you need — this " +
-                    "waits.",
-                style = MaterialTheme.typography.bodySmall,
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Available in Spotify", style = MaterialTheme.typography.titleSmall)
+                /*
+                 * The reason to turn it off, stated rather than implied.
+                 *
+                 * This is the one switch in the app that changes who else
+                 * can make noise in the house, so it says so.
+                 */
+                Text(
+                    "While this is on, anyone on this Wi-Fi signed into the same " +
+                        "Spotify account can play here without touching this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Switch(
+                checked = state.castPointOn,
+                onCheckedChange = { Producer.setCastPoint(context, it) },
             )
-            OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) { Text("Cancel") }
+        }
+
+        /*
+         * A way to take it back by hand, for the case the automatic one
+         * deliberately refuses: for a few seconds after somebody chooses
+         * something at the panel, an arriving cast is ignored so the two
+         * ends cannot fight over the speakers.
+         */
+        if (state.castPointUp && state.sourceLabel?.startsWith("Spotify") != true) {
+            Button(onClick = onSpotify) { Text("Play Spotify here now") }
         }
     }
 }
