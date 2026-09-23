@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.12.0, built by CI as one APK — see *One build* below.
+Version 0.13.0, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -27,7 +27,15 @@ Five sources, and the first is the reason the app exists:
 2. **A vinyl node** already on the network, told where to send.
 3. **A music file** from this phone, from a remembered list.
 4. **Internet radio** — MP3, AAC and FLAC, from a saved station list.
-5. **A test tone**, which needs no permission, file or account.
+5. **A test tone**, which needs no permission, file or account — and which
+   lives in Settings rather than on a tile, because it is a diagnostic
+   rather than something anybody wants to hear.
+
+The first four have a tile each, in a 2×2 grid. The turntable took the
+square the tone used to occupy, and that swap was overdue: a node with a
+pickup on it was listed under the *speakers*, as "already on the network",
+so the analogue input — half the reason this project exists — was the one
+thing not on offer when the screen asked what you would like to hear.
 
 The right-hand column stays the Hub's. A speaker holds its own room
 correction in NVS, so it travels to a party already corrected and the
@@ -236,12 +244,14 @@ Play buttons live. Two rules follow from one piece of state — a single
   saying which was which. Two booleans describe four states and three of
   them were wrong. Tapping the open tile closes it; tapping another moves
   there. The open tile is filled in the banner's colour.
-- **No tile starts audio.** Spotify and Test tone used to play the moment
-  they were touched while the other two opened a panel, so two of the four
-  were questions, two were commands, and they looked identical. The thing
-  that starts a stream is now always a button inside a panel, which also
-  means the tone can no longer be triggered by a mis-tap that replaces
-  whatever was playing.
+- **No tile starts audio.** Spotify and the test tone used to play the
+  moment they were touched while the other two opened a panel, so two of
+  the four were questions, two were commands, and they looked identical.
+  The thing that starts a stream is now always a button inside a panel.
+- **Every tile is a source somebody wants to hear.** Spotify, a music
+  file, radio and the turntable. The test tone is not one of those — it
+  answers "is the network right", so it sits in Settings with the counters
+  and the log, and the square it vacated went to the vinyl node.
 
 **Looking costs nothing.** The tiles used to vanish the moment a stream
 started, so seeing what else was available meant pressing Stop first —

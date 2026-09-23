@@ -504,14 +504,16 @@ private fun Rooms(state: Producer.State) {
             )
         }
 
+        /*
+         * Speakers only.
+         *
+         * A turntable node used to be listed here too, under "Already on
+         * the network", which put a *source* in the section headed "Play
+         * on" — the one part of the screen that answers where the sound
+         * goes rather than where it comes from. It has its own tile now,
+         * with the other four things somebody might want to hear.
+         */
         for (speaker in state.destinations) SpeakerCard(speaker)
-
-        if (state.sources.isNotEmpty()) {
-            Text("Already on the network", style = MaterialTheme.typography.titleLarge)
-            for (source in state.sources) {
-                SourceCard(source, enabled = state.selected.isNotEmpty())
-            }
-        }
     }
 }
 
@@ -530,7 +532,7 @@ private fun Rooms(state: Producer.State) {
  * `null` is "nothing open", which is what the screen starts as and what
  * tapping the open tile again returns to.
  */
-private enum class Panel { SPOTIFY, FILE, RADIO, TONE }
+private enum class Panel { SPOTIFY, FILE, RADIO, VINYL }
 
 /** Tap the open one to close it; tap another to move there. */
 private fun Panel?.toggle(tapped: Panel): Panel? = if (this == tapped) null else tapped
@@ -623,12 +625,28 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
                 onClick = { panel = panel.toggle(Panel.RADIO) },
                 modifier = Modifier.weight(1f),
             )
+            /*
+             * The turntable, finally where somebody would look for it.
+             *
+             * It is the one source this app does not produce: a node with
+             * a pickup on it makes its own sound and is merely *told* where
+             * to send it, so for a long time it was listed under the
+             * speakers as "already on the network". That put a source in
+             * the section headed "Play on", which answers the opposite
+             * question, and meant the analogue input — the reason half of
+             * this project exists — was the one thing not on offer when the
+             * screen asked what you would like to hear.
+             */
             SourceTile(
-                glyph = Glyphs.Tone,
-                name = "Test tone",
-                what = "Proves the wire",
-                selected = panel == Panel.TONE,
-                onClick = { panel = panel.toggle(Panel.TONE) },
+                glyph = Glyphs.Vinyl,
+                name = "Vinyl",
+                what = when (state.sources.size) {
+                    0 -> "None found"
+                    1 -> "1 turntable"
+                    else -> "${state.sources.size} turntables"
+                },
+                selected = panel == Panel.VINYL,
+                onClick = { panel = panel.toggle(Panel.VINYL) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -640,7 +658,7 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             Panel.SPOTIFY -> Spotify(state, onSpotify)
             Panel.FILE -> Tracks(state, onPickTrack)
             Panel.RADIO -> Stations(state)
-            Panel.TONE -> Tone()
+            Panel.VINYL -> Vinyl(state)
             null -> Unit
         }
     }
@@ -743,22 +761,46 @@ private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
 }
 
 /**
- * The tone, behind a Play button like everything else.
+ * The turntables on the network, and where to send each one.
  *
- * It used to start the moment the tile was touched, which made it the one
- * source that could be triggered by a mis-tap — and the mis-tap replaced
- * whatever was playing with a sine wave.
+ * **The only source this app does not produce.** A node with a pickup on
+ * it digitises its own audio and sends its own RTP; this phone is its
+ * Controller, not its producer, so "Play" here is one HTTP request telling
+ * it which speakers to send to — decision 19's split, on screen. Nothing
+ * flows through this device at all, which is why the packet counters stay
+ * at zero while a record is playing perfectly.
+ *
+ * It needs speakers ticked before it can be told anything, since the whole
+ * request is a destination list. That is the one case where a Play button
+ * here is disabled rather than merely unhelpful.
  */
 @Composable
-private fun Tone() {
+private fun Vinyl(state: Producer.State) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (state.sources.isEmpty()) {
+            Text(
+                "No turntable on the network. A node set up as a producer — one " +
+                    "with a pickup or a line input wired to it — appears here by " +
+                    "itself, with no setting to change on this device.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            return@Column
+        }
+
+        for (source in state.sources) {
+            SourceCard(source, enabled = state.selected.isNotEmpty())
+        }
+
         Text(
-            "A steady tone, generated here. No account, no file, no internet — so " +
-                "if the speakers play this and nothing else, the fault is in the " +
-                "source rather than in the network.",
+            if (state.selected.isEmpty()) {
+                "Tick a speaker first. Playing a turntable is telling it where to " +
+                    "send, so with nothing ticked there is nothing to tell it."
+            } else {
+                "It plays itself and this device only says where the sound goes, " +
+                    "so the counters under Show details stay at zero while it runs."
+            },
             style = MaterialTheme.typography.bodySmall,
         )
-        Button(onClick = { Producer.startStream(ToneSource()) }) { Text("Play the tone") }
     }
 }
 
@@ -1059,6 +1101,39 @@ private fun Settings(state: Producer.State) {
                 checked = state.wallPanel,
                 onCheckedChange = { Producer.setWallPanel(context, it) },
             )
+        }
+
+        /*
+         * The test tone, out of the tiles and in here.
+         *
+         * It was a quarter of the screen's "what would you like to hear",
+         * and nobody has ever wanted to hear it. It answers a question
+         * instead — is the network right — by being the one source with no
+         * account, no file and no internet behind it: if the speakers play
+         * this and nothing else, the fault is upstream of the wire rather
+         * than in it. That is a diagnostic, and diagnostics belong with the
+         * counters and the log rather than beside Spotify.
+         *
+         * Moving it also gave the vinyl node the tile it had never had,
+         * which is the better use of that square: a turntable is something
+         * somebody actually wants to listen to.
+         */
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Test tone", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Proves the wire. No account, no file and no internet, so if " +
+                        "this plays and nothing else does, the fault is in the " +
+                        "source rather than the network.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Button(onClick = { Producer.startStream(ToneSource()) }) { Text("Play") }
         }
 
         Spacer(Modifier.height(4.dp))
