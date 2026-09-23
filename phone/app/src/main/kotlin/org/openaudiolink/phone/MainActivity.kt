@@ -273,24 +273,31 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
 
         Rooms(state)
 
-        if (!state.streaming) {
-            Sources(
-                state = state,
-                onPickTrack = onPickTrack,
-                onSpotify = {
-                    if (state.spotifySignedIn) {
-                        Producer.startStream(SpotifySource(context, state.castName))
-                    } else {
-                        Producer.signInToSpotify(context, state.castName) { url ->
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
-                        }
+        /*
+         * Shown while something is playing, too.
+         *
+         * This used to be hidden the moment a stream started, so the only
+         * way to look at another source was to press Stop first — which
+         * silenced the room to answer the question "what else is there?".
+         * Browsing is not choosing: opening a panel changes nothing, and
+         * the music keeps playing until an actual Play is pressed.
+         */
+        Sources(
+            state = state,
+            onPickTrack = onPickTrack,
+            onSpotify = {
+                if (state.spotifySignedIn) {
+                    Producer.startStream(SpotifySource(context, state.castName))
+                } else {
+                    Producer.signInToSpotify(context, state.castName) { url ->
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
                     }
-                },
-            )
-        }
+                }
+            },
+        )
 
         Settings(state)
 
@@ -489,7 +496,7 @@ private fun Rooms(state: Producer.State) {
             Text(
                 if (state.discovering) {
                     "No speakers yet. They have to be on this Wi-Fi — and if this " +
-                        "phone is the hotspot, it has to be 2.4 GHz."
+                        "device is the hotspot, it has to be 2.4 GHz."
                 } else {
                     "Not looking for speakers. Reopening the app is the quickest " +
                         "thing to try."
@@ -512,22 +519,55 @@ private fun Rooms(state: Producer.State) {
 /* ------------------------------------------------------------- sources */
 
 /**
- * "What would you like to hear?", as tiles.
+ * Which of the four tiles is open.
+ *
+ * One value rather than a boolean per tile, and that is the whole fix for
+ * what was wrong here. Radio and A music file each had their own switch,
+ * so both panels could be open at once and the space under the tiles
+ * became a station list and a file list stacked together with nothing
+ * saying which belonged to which. Two independent booleans describe four
+ * states, and three of them were wrong.
+ *
+ * `null` is "nothing open", which is what the screen starts as and what
+ * tapping the open tile again returns to.
+ */
+private enum class Panel { SPOTIFY, FILE, RADIO, TONE }
+
+/** Tap the open one to close it; tap another to move there. */
+private fun Panel?.toggle(tapped: Panel): Panel? = if (this == tapped) null else tapped
+
+/**
+ * "What would you like to hear?", as tiles, with one panel under them.
  *
  * `play.html`'s question and `play.html`'s shape. A tile carries a mark, a
- * name and one line about what it is — never a paragraph. Everything that
- * used to be a paragraph here is now either in Settings or gone.
+ * name and one line about what it is — never a paragraph. The paragraphs
+ * live in the panel that tile opens.
+ *
+ * **Every tile behaves the same way**, which is the second thing that was
+ * wrong. Radio and A music file opened a panel; Spotify and Test tone
+ * started playing on the spot. So two of the four tiles were questions and
+ * two were commands, they looked identical, and the only way to find out
+ * which was which was to press one. Now all four open, and the thing that
+ * starts audio is always a Play button inside.
+ *
+ * That also means **looking costs nothing**. This whole block used to
+ * vanish while a stream was running, so changing your mind meant pressing
+ * Stop to see what else there was. Now the tiles stay, the panels open and
+ * close over a playing stream, and the music stops only when something
+ * else is actually started.
  */
 @Composable
 private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: () -> Unit) {
-    var showStations by remember { mutableStateOf(false) }
-    var showTracks by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf<Panel?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("What would you like to hear?", style = MaterialTheme.typography.titleLarge)
+        Text(
+            if (state.streaming) "Play something else" else "What would you like to hear?",
+            style = MaterialTheme.typography.titleLarge,
+        )
 
         /*
-         * Four tiles, two rows. One row of four on a phone leaves each
+         * Four tiles, two rows. One row of four on a handset leaves each
          * about seventy pixels wide, which is a mark with a caption
          * squeezed under it rather than something anybody reads.
          */
@@ -535,15 +575,13 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
             SourceTile(
                 glyph = Glyphs.Broadcast,
                 name = "Spotify",
-                what = if (state.signingIn) {
-                    "Waiting for Spotify…"
-                } else if (state.spotifySignedIn) {
-                    "Publish \"${state.castName}\""
-                } else {
-                    "Sign in once, first"
+                what = when {
+                    state.signingIn -> "Waiting for Spotify…"
+                    state.spotifySignedIn -> "Ready to publish"
+                    else -> "Sign in once, first"
                 },
-                enabled = !state.signingIn,
-                onClick = onSpotify,
+                selected = panel == Panel.SPOTIFY,
+                onClick = { panel = panel.toggle(Panel.SPOTIFY) },
                 modifier = Modifier.weight(1f),
             )
             /*
@@ -554,17 +592,14 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
              * app has no Cancel, so on a device with gesture navigation
              * tapping this tile by mistake left somebody stuck in a file
              * browser they could only leave by choosing a file.
-             *
-             * Behaving like Radio fixes it twice over: the tile now opens
-             * something with a way back, and a file played once is one tap
-             * away from now on rather than a trip through the browser.
              */
             SourceTile(
                 glyph = Glyphs.MusicFile,
                 name = "A music file",
-                what = if (state.tracks.isEmpty()) "From this phone" else
+                what = if (state.tracks.isEmpty()) "From this device" else
                     "${state.tracks.size} remembered",
-                onClick = { showTracks = !showTracks },
+                selected = panel == Panel.FILE,
+                onClick = { panel = panel.toggle(Panel.FILE) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -574,30 +609,86 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
                 name = "Radio",
                 what = if (state.stations.isEmpty()) "Add a station" else
                     "${state.stations.size} saved",
-                onClick = { showStations = !showStations },
+                selected = panel == Panel.RADIO,
+                onClick = { panel = panel.toggle(Panel.RADIO) },
                 modifier = Modifier.weight(1f),
             )
             SourceTile(
                 glyph = Glyphs.Tone,
                 name = "Test tone",
-                what = "Proves the wire.",
-                onClick = { Producer.startStream(ToneSource()) },
+                what = "Proves the wire",
+                selected = panel == Panel.TONE,
+                onClick = { panel = panel.toggle(Panel.TONE) },
                 modifier = Modifier.weight(1f),
             )
         }
 
-        if (showTracks) Tracks(state, onPickTrack)
+        /*
+         * Exactly one, or none. A `when` on one value cannot draw two.
+         */
+        when (panel) {
+            Panel.SPOTIFY -> Spotify(state, onSpotify)
+            Panel.FILE -> Tracks(state, onPickTrack)
+            Panel.RADIO -> Stations(state)
+            Panel.TONE -> Tone()
+            null -> Unit
+        }
+    }
+}
 
-        if (showStations) Stations(state)
-
+/**
+ * The cast point, and the one button that publishes it.
+ *
+ * Everything here used to be squeezed onto the tile's single caption line
+ * or dropped underneath all four tiles, where the sign-in explanation
+ * appeared with nothing tying it to the tile it belonged to.
+ */
+@Composable
+private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            if (state.spotifySignedIn) {
+                "Publishes a cast point called \"${state.castName}\". Pick it in " +
+                    "Spotify, on any device signed into the same account, and press " +
+                    "play there."
+            } else {
+                "Signs in once, in Spotify's own page. No password is typed into " +
+                    "this app, and Premium is required — librespot cannot stream on " +
+                    "a free account."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = onSpotify, enabled = !state.signingIn) {
+            Text(if (state.spotifySignedIn) "Publish \"${state.castName}\"" else "Sign in")
+        }
         if (state.signingIn) {
             Text(
                 "Spotify's own page has opened. Take as long as you need — this " +
-                    "waits, and no password is typed into this app.",
+                    "waits.",
                 style = MaterialTheme.typography.bodySmall,
             )
             OutlinedButton(onClick = { Producer.cancelSpotifySignIn() }) { Text("Cancel") }
         }
+    }
+}
+
+/**
+ * The tone, behind a Play button like everything else.
+ *
+ * It used to start the moment the tile was touched, which made it the one
+ * source that could be triggered by a mis-tap — and the mis-tap replaced
+ * whatever was playing with a sine wave.
+ */
+@Composable
+private fun Tone() {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "A steady tone, generated here. No account, no file, no internet — so " +
+                "if the speakers play this and nothing else, the fault is in the " +
+                "source rather than in the network.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Button(onClick = { Producer.startStream(ToneSource()) }) { Text("Play the tone") }
     }
 }
 
@@ -654,7 +745,7 @@ private fun Tracks(state: Producer.State, onPickTrack: () -> Unit) {
 
         Text(
             if (state.tracks.isEmpty()) {
-                "Nothing yet. Choosing a file opens the phone's own file browser — " +
+                "Nothing yet. Choosing a file opens this device's own file browser — " +
                     "which has no way out but picking something, so what is picked " +
                     "is remembered here and needs choosing only once."
             } else {
@@ -741,6 +832,14 @@ private fun Stations(state: Producer.State) {
     }
 }
 
+/**
+ * One tile, and whether its panel is the one open.
+ *
+ * [selected] is filled rather than outlined, because an outline on a Card
+ * that already has an edge is a difference people have to look for. The
+ * colour is the banner's, so "this is the thing you are looking at" reads
+ * the same in both places.
+ */
 @Composable
 private fun SourceTile(
     glyph: ImageVector,
@@ -748,9 +847,24 @@ private fun SourceTile(
     what: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true,
+    selected: Boolean = false,
 ) {
-    Card(modifier.clickable(enabled = enabled, onClick = onClick)) {
+    /*
+     * Always clickable. The tile used to be disabled while Spotify's
+     * sign-in was in flight, which made the one tile you wanted to look at
+     * the one tile you could not open. Opening a panel is safe at any
+     * moment; it is the button inside that knows when it cannot act.
+     */
+    Card(
+        modifier.clickable(onClick = onClick),
+        colors = if (selected) {
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            )
+        } else {
+            CardDefaults.cardColors()
+        },
+    ) {
         Column(
             Modifier.padding(12.dp).fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -841,7 +955,7 @@ private fun Settings(state: Producer.State) {
         Text(
             if (state.spotifySignedIn) {
                 "Signed in. The cast point belongs to that account, so forget it " +
-                    "before handing this phone on."
+                    "before handing this device on."
             } else {
                 "Not signed in. An unclaimed receiver is invisible in Spotify, " +
                     "however well it announces itself."
@@ -1051,7 +1165,7 @@ private fun SourceCard(source: Producer.Speaker, enabled: Boolean) {
             Column(Modifier.weight(1f)) {
                 Text(source.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Makes its own sound. This phone only says where it goes.",
+                    "Makes its own sound. This device only says where it goes.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

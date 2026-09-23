@@ -5,7 +5,7 @@ just enough control to get one running. Decision 19 sets the scope,
 decision 20 the network rules and decision 21 the Spotify build; this is
 how the thing is built and how to run it.
 
-Version 0.11.2, built by CI as one APK — see *One build* below.
+Version 0.11.3, built by CI as one APK — see *One build* below.
 
 ## What it does, and what it deliberately does not
 
@@ -224,6 +224,30 @@ Shaped like the Hub's `play.html`, because it is the same job for the same
 person and two products that do one thing should not have to be learned
 twice: a brand line with a health dot, a banner for what is playing, the
 rooms, and a row of tiles answering *what would you like to hear*.
+
+**Four tiles, one panel, and every tile behaves the same way.** Each tile
+opens a panel underneath it; the panel is where the explanation and the
+Play buttons live. Two rules follow from one piece of state — a single
+`Panel?` rather than a boolean per tile:
+
+- **Only one panel is open at a time.** Radio and A music file used to
+  have a switch each, so both could be open together and the space under
+  the tiles became a station list and a file list stacked with nothing
+  saying which was which. Two booleans describe four states and three of
+  them were wrong. Tapping the open tile closes it; tapping another moves
+  there. The open tile is filled in the banner's colour.
+- **No tile starts audio.** Spotify and Test tone used to play the moment
+  they were touched while the other two opened a panel, so two of the four
+  were questions, two were commands, and they looked identical. The thing
+  that starts a stream is now always a button inside a panel, which also
+  means the tone can no longer be triggered by a mis-tap that replaces
+  whatever was playing.
+
+**Looking costs nothing.** The tiles used to vanish the moment a stream
+started, so seeing what else was available meant pressing Stop first —
+silencing the room to answer a question. They stay now. Panels open and
+close over a playing stream and the music stops only when something else
+is actually started.
 
 **The version is on the brand line, always.** Not behind the details
 switch and not only in the announce, because this app is installed by
