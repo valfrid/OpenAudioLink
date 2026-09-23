@@ -929,6 +929,46 @@ home; **Spotify Jam** covers a party, with guests joining the host's
 session and adding to the queue. "Forget account" clears the credential
 before handing the phone on.
 
+## Installing a build by hand
+
+This app is installed from a CI artefact, so every install is a sideload,
+and sideloading has two traps that both fail with no useful message.
+
+**"Install unknown apps" belongs to the app you install *from*.** Not to
+the APK, not to the device in general — to Files, or Chrome, or Drive,
+individually. An app without it produces a package-installer sheet that
+appears, says *Avbryter…*, and vanishes; or, if you are lucky, "App not
+installed". Nothing anywhere names the missing permission.
+
+This cost most of an evening on a Lenovo Tab M9. A build that had
+installed days earlier suddenly would not, and neither would an older
+one, nor one published under a different application id — which looked
+exactly like a poisoned package record or a signing fault and was
+neither. **The device had not changed; the app doing the installing had.**
+The earlier install came from Chrome, the failing ones from the Files
+app. The test that would have found it in one minute is *does an
+unrelated APK install* — F-Droid failed the same way, and that was the
+whole answer.
+
+So: **Inställningar → Appar → Särskild appåtkomst → Installera okända
+appar**, and grant it to whatever is doing the opening. Installing from
+Google Drive works well on a tablet — upload the extracted APK, tap it
+there — and avoids the Files app entirely.
+
+**Every CI debug build is signed with a different key.** GitHub runners
+have no debug keystore, so the Android plugin generates a fresh one on
+every run. Two consequences, both of which look like something else:
+
+- An APK cannot be installed over a previous one. Android refuses an
+  update signed by a different key, with no way round it but uninstalling
+  — which takes the Spotify sign-in and the saved stations with it.
+- Play Protect sees each build as a brand-new app from an unknown signer
+  and never accumulates any reputation for it, so the warnings never stop.
+
+A release keystore fixes both, and a tagged release also downloads without
+a GitHub sign-in, which an Actions artefact does not — see
+`release-phone.yml` and *Releases and updating* below.
+
 ## One build, and what that costs
 
 Decision 21: **one APK**, with the producer, the control surface, the
