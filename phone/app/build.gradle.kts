@@ -40,11 +40,44 @@ android {
          * the device and the store use. Keeping them apart means the
          * store identity could be settled without moving every file.
          */
-        applicationId = "se.valfrid.openaudiolink"
+        /*
+         * ============================================================
+         *  TEMPORARY — A PROBE BUILD. REVERT BEFORE ANYTHING ELSE.
+         * ============================================================
+         *
+         * The real id is `se.valfrid.openaudiolink`, one line down in
+         * spirit and one commit away in fact. The `2` is here to answer
+         * one question and nothing else:
+         *
+         *   Is it *this package name* that a tablet refuses to install,
+         *   or is it every install?
+         *
+         * Symptoms so far: the installer's progress sheet appears and
+         * then vanishes with no message, for 0.12.0 and equally for
+         * 0.11.2 — a build that installed on the same device days ago.
+         * Play Protect scanning is off, the download is intact, 39 GB is
+         * free, and Settings lists no app by that name. A package record
+         * can survive an uninstall without appearing anywhere in the UI,
+         * and one would block every build of this id for ever while
+         * leaving every other app installable. A different id walks
+         * straight past such a record — so if this one installs, that is
+         * what was happening.
+         *
+         * **Changing the id is cheap right now and will not stay cheap.**
+         * Nothing has been published to Google Play, so today the id is
+         * just a string; the moment a listing exists it is the permanent
+         * identity of the app, and a new one is a different app that no
+         * installation upgrades to. See the note this comment replaces.
+         */
+        applicationId = "se.valfrid.openaudiolink2"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
         versionCode = 39
-        versionName = "0.12.0"
+        // Marked in the name too, so the artifact and the app's own
+        // brand line both say which build this is. A probe that cannot
+        // be told apart from the real thing on screen is how "it is
+        // fixed in 0.8.4" turned out to be 0.8.3 still installed.
+        versionName = "0.12.0-probe"
     }
 
     /*
