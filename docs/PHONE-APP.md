@@ -934,26 +934,44 @@ before handing the phone on.
 This app is installed from a CI artefact, so every install is a sideload,
 and sideloading has two traps that both fail with no useful message.
 
-**"Install unknown apps" belongs to the app you install *from*.** Not to
-the APK, not to the device in general — to Files, or Chrome, or Drive,
-individually. An app without it produces a package-installer sheet that
-appears, says *Avbryter…*, and vanishes; or, if you are lucky, "App not
-installed". Nothing anywhere names the missing permission.
+**The install route matters, and the failure never says so.** On a Lenovo
+Tab M9 the route that had installed several builds — download the CI zip
+in the browser, unzip in Google Files, tap the APK — stopped working. The
+package-installer sheet appeared, said *Avbryter…*, and vanished; a second
+attempt managed "App not installed". Uploading the same APK to Google
+Drive and tapping it there installed it immediately.
 
-This cost most of an evening on a Lenovo Tab M9. A build that had
-installed days earlier suddenly would not, and neither would an older
-one, nor one published under a different application id — which looked
-exactly like a poisoned package record or a signing fault and was
-neither. **The device had not changed; the app doing the installing had.**
-The earlier install came from Chrome, the failing ones from the Files
-app. The test that would have found it in one minute is *does an
-unrelated APK install* — F-Droid failed the same way, and that was the
-whole answer.
+**Why that route stopped is not established.** The likeliest explanation
+is a stale MediaStore entry: tapping an APK in Files hands the installer a
+`content://` URI resolved through the media index, and by then the
+Downloads folder held several near-identical files — two copies of one
+build, a zip and an extracted APK of another. An index out of step with
+the filesystem gives the installer a URI that resolves to nothing, and the
+session aborts. That fits the timing, since it degrades as files
+accumulate rather than failing from the start. A Files or Play Services
+update breaking the handoff fits equally well and cannot be told apart
+after the fact. Clearing Downloads and retrying would separate them.
 
-So: **Inställningar → Appar → Särskild appåtkomst → Installera okända
-appar**, and grant it to whatever is doing the opening. Installing from
-Google Drive works well on a tablet — upload the extracted APK, tap it
-there — and avoids the Files app entirely.
+What *is* established is what the fault was not, and it cost an evening to
+get there: not the APK, not the application id, not the signing key, not
+storage, not Play Protect, not a corrupt download. The symptom impersonated
+every one of those, because a build that had installed days earlier no
+longer would, an older known-good build failed identically, and so did one
+published under a different application id.
+
+**The test that settles it in a minute is whether an unrelated APK
+installs.** F-Droid failed the same way, and that was the whole answer —
+the device, not the build. It is written here because it was listed as a
+check twice and never insisted on, while three plausible theories about
+this project's own code were pursued instead.
+
+Two practical notes. **"Install unknown apps" is granted per source app** —
+to Files, Chrome or Drive individually, not to the device — so it is worth
+confirming under **Inställningar → Appar → Särskild appåtkomst → Installera
+okända appar** before anything else, though on the occasion above it was
+already granted. And **Drive is the better route on a tablet**: upload the
+extracted APK from a desktop, tap it in Drive, and no unzipping happens on
+the device at all.
 
 **Every CI debug build is signed with a different key.** GitHub runners
 have no debug keystore, so the Android plugin generates a fresh one on
