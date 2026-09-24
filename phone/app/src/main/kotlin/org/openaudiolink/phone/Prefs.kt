@@ -117,8 +117,11 @@ object Prefs {
      *
      * It is a switch rather than a fact so it can be turned off, and the
      * reason to turn it off is worth stating plainly: while it is on,
-     * anyone on this Wi-Fi signed into the same Spotify account can play
-     * to these speakers without touching this device. That is what a
+     * anyone on this network signed into the same Spotify account can
+     * play to these speakers without touching this device. A network,
+     * not a band — librespot advertises the cast point by mDNS, which is
+     * subnet-scoped, so a phone on 5 GHz finds a cast point on 2.4 GHz
+     * whenever the router bridges the two. That is what a
      * Sonos does and it is the intent — but it is the household account,
      * so it should be something somebody chose rather than something that
      * quietly became true.

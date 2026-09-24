@@ -497,8 +497,34 @@ private fun Rooms(state: Producer.State) {
         if (state.destinations.isEmpty()) {
             Text(
                 if (state.discovering) {
-                    "No speakers yet. They have to be on this Wi-Fi — and if this " +
-                        "device is the hotspot, it has to be 2.4 GHz."
+                    /*
+                     * A subnet, not a band — and the difference is not
+                     * pedantry, it is the arrangement this project
+                     * recommends.
+                     *
+                     * This used to say "they have to be on this Wi-Fi",
+                     * which is narrower than the truth and contradicted
+                     * the project's own measurements: Run 43 in
+                     * LINK-MEASUREMENTS is a phone producer on 5 GHz
+                     * driving speakers on 2.4 GHz, and it matched a wired
+                     * Hub. Splitting the bands is *better* here, because
+                     * the producer's uplink is the hop that showed up in
+                     * the numbers and the ESP32-S3's radio has no say in
+                     * the matter.
+                     *
+                     * What actually matters is that discovery is a
+                     * multicast announce, and multicast does not cross a
+                     * subnet boundary. Bridged bands are one network;
+                     * routed ones — a guest SSID, a separate IoT network,
+                     * some mesh defaults — are two, and no amount of
+                     * waiting will join them.
+                     */
+                    "No speakers yet. They have to share a subnet with this device " +
+                        "rather than a band: speakers on 2.4 GHz while this is on " +
+                        "5 GHz is fine, and is the better arrangement, so long as " +
+                        "the router bridges the two rather than routing them apart. " +
+                        "If this device is the hotspot it has to be 2.4 GHz, " +
+                        "because the speakers' radio is."
                 } else {
                     "Not looking for speakers. Reopening the app is the quickest " +
                         "thing to try."
@@ -740,8 +766,9 @@ private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
                  * can make noise in the house, so it says so.
                  */
                 Text(
-                    "While this is on, anyone on this Wi-Fi signed into the same " +
-                        "Spotify account can play here without touching this device.",
+                    "While this is on, anyone on this network signed into the " +
+                        "same Spotify account can play here without touching this " +
+                        "device.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
