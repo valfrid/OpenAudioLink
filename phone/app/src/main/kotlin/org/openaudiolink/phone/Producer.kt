@@ -1011,9 +1011,19 @@ object Producer {
                      * once it has the credential, so at this exact moment
                      * there is no receiver on the network at all.
                      */
-                    "Signed in. \"$name\" is now in Spotify's device list and " +
-                        "stays there — pick it on any phone signed into this " +
-                        "account and press play."
+                    /*
+                     * Short, because a lamp now says the lasting part.
+                     *
+                     * This used to explain that the device was in
+                     * Spotify's list and would stay there — true, and the
+                     * wrong shape for it: a card delivered once to
+                     * whoever was holding the tablet, then dismissed for
+                     * ever, for a fact that remains true all evening. The
+                     * indicator beside the brand line carries it now, so
+                     * this confirms the one thing that genuinely happened
+                     * at this moment and gets out of the way.
+                     */
+                    "Signed in as the account that will own \"$name\"."
                 } else {
                     /*
                      * librespot's own words, on the phone.

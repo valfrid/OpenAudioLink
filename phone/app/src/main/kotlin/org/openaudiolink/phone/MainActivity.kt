@@ -357,24 +357,90 @@ private fun Brand(state: Producer.State) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .background(
-                        if (state.discovering) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.error,
-                        CircleShape,
-                    )
-            )
-            Spacer(Modifier.size(6.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            CastPointLamp(state)
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .background(
+                            if (state.discovering) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error,
+                            CircleShape,
+                        )
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    when {
+                        !state.discovering -> "Not listening"
+                        state.destinations.isEmpty() -> "Listening"
+                        state.destinations.size == 1 -> "1 speaker"
+                        else -> "${state.destinations.size} speakers"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Whether this device is offering itself to Spotify, as a standing lamp.
+ *
+ * **It replaces an announcement.** Signing in used to raise a full-width
+ * card saying the device was now in Spotify's list and would stay there —
+ * a sentence delivered once, to whoever happened to be holding the tablet,
+ * and then dismissed for ever. That is the wrong shape for a fact that
+ * remains true all evening and that anybody walking past might want to
+ * check. A lamp is either lit or it is not.
+ *
+ * Spotify's own device list is the model: a screen outline, the name
+ * beside it, and a line underneath saying what that device is doing. The
+ * convention is borrowed; the glyph is drawn from scratch, because the
+ * mark in that list is a trademark and this project has no licence to it.
+ *
+ * Shown only when the cast point is actually up, so it means something by
+ * being present. Absent covers three different situations — no account,
+ * the switch off, librespot not yet started — and the Spotify panel is
+ * where those are told apart, because a lamp that tries to explain itself
+ * is a paragraph again.
+ */
+@Composable
+private fun CastPointLamp(state: Producer.State) {
+    if (!state.castPointUp) return
+
+    val lit = if (state.castPointCasting) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Glyphs.CastPoint,
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = lit,
+        )
+        Column(horizontalAlignment = Alignment.Start) {
             Text(
-                when {
-                    !state.discovering -> "Not listening"
-                    state.destinations.isEmpty() -> "Listening"
-                    else -> "${state.destinations.size} speaker(s)"
-                },
+                state.castName,
+                style = MaterialTheme.typography.bodyMedium,
+                color = lit,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (state.castPointCasting) "Casting" else "In Spotify",
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

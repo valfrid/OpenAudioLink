@@ -149,6 +149,58 @@ object Glyphs {
         }
     }
 
+    /**
+     * A screen with a signal coming out of it: the cast point, published.
+     *
+     * Spotify's own device list draws a monitor outline for a receiver and
+     * a small cast mark beside it, and that pairing is worth borrowing as
+     * *grammar* — a rectangle is a device, arcs are something being
+     * offered to the room. The shapes here are drawn from scratch; what is
+     * taken is the convention, which is nobody's trademark.
+     *
+     * It exists because "this device is in Spotify's list" needed to stop
+     * being an announcement and become a standing indicator. A banner says
+     * it once and is dismissed; a lamp is either lit or it is not, and
+     * anybody walking past can see which.
+     */
+    val CastPoint: ImageVector = glyph("oal.castpoint") {
+        // The screen, hollow: a device rather than a solid block.
+        path(fill = SolidColor(Color.Black), pathFillType = PathFillType.EvenOdd) {
+            moveTo(3f, 5f)
+            lineTo(21f, 5f)
+            lineTo(21f, 17f)
+            lineTo(3f, 17f)
+            close()
+            moveTo(5f, 7f)
+            lineTo(19f, 7f)
+            lineTo(19f, 15f)
+            lineTo(5f, 15f)
+            close()
+        }
+        // The stand, so it reads as standing in a room.
+        path(fill = SolidColor(Color.Black)) {
+            moveTo(8f, 19f)
+            lineTo(16f, 19f)
+            lineTo(16f, 20.8f)
+            lineTo(8f, 20.8f)
+            close()
+        }
+        // Two arcs over a point, inside the screen: it is offering itself.
+        path(fill = SolidColor(Color.Black)) {
+            circle(8.6f, 13f, 1.05f)
+        }
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.3f,
+            strokeLineCap = StrokeCap.Round,
+        ) {
+            moveTo(8.6f, 10.6f)
+            arcToRelative(2.4f, 2.4f, 0f, false, true, 2.4f, 2.4f)
+            moveTo(8.6f, 8.4f)
+            arcToRelative(4.6f, 4.6f, 0f, false, true, 4.6f, 4.6f)
+        }
+    }
+
     /** A wave: the test tone, which is a wave and nothing else. */
     val Tone: ImageVector = glyph("oal.tone") {
         path(
