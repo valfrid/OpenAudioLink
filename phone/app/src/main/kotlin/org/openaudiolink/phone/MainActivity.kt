@@ -40,6 +40,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -413,35 +414,61 @@ private fun Brand(state: Producer.State) {
 private fun CastPointLamp(state: Producer.State) {
     if (!state.castPointUp) return
 
-    val lit = if (state.castPointCasting) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val casting = state.castPointCasting
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    /*
+     * Lit, not merely present.
+     *
+     * The first version drew the whole thing in `onSurfaceVariant` unless
+     * somebody was casting, which made the ordinary state — published and
+     * waiting, which is what it is nearly all the time — render as muted
+     * grey. Grey on a dark panel is the colour of something switched off,
+     * so the indicator for "this is available" looked like the indicator
+     * for "this is not".
+     *
+     * Available is now genuinely lit: the mark in the accent, the name at
+     * full strength, on a panel of its own so it reads as an instrument
+     * rather than a caption. Casting adds an accent outline and turns the
+     * status word accent too, so there is still a clear difference between
+     * offered and in use — two degrees of on, rather than off and on.
+     */
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        border = if (casting) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
     ) {
-        Icon(
-            Glyphs.CastPoint,
-            contentDescription = null,
-            modifier = Modifier.size(22.dp),
-            tint = lit,
-        )
-        Column(horizontalAlignment = Alignment.Start) {
-            Text(
-                state.castName,
-                style = MaterialTheme.typography.bodyMedium,
-                color = lit,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                Glyphs.CastPoint,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
             )
-            Text(
-                if (state.castPointCasting) "Casting" else "In Spotify",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Column(horizontalAlignment = Alignment.Start) {
+                Text(
+                    state.castName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (casting) "Casting" else "In Spotify",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (casting) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
     }
 }

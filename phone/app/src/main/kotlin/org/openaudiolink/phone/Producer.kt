@@ -1002,44 +1002,38 @@ object Producer {
             }
             // Publish straight away, so the device is in Spotify's list by
             // the time somebody looks for it rather than after one more press.
-            if (ok) refreshCastPoint(context)
-            warn(
-                if (ok) {
-                    /*
-                     * Not "it will now appear". Nothing appears until
-                     * something is publishing: the sign-in run is killed
-                     * once it has the credential, so at this exact moment
-                     * there is no receiver on the network at all.
-                     */
-                    /*
-                     * Short, because a lamp now says the lasting part.
-                     *
-                     * This used to explain that the device was in
-                     * Spotify's list and would stay there — true, and the
-                     * wrong shape for it: a card delivered once to
-                     * whoever was holding the tablet, then dismissed for
-                     * ever, for a fact that remains true all evening. The
-                     * indicator beside the brand line carries it now, so
-                     * this confirms the one thing that genuinely happened
-                     * at this moment and gets out of the way.
-                     */
-                    "Signed in as the account that will own \"$name\"."
-                } else {
-                    /*
-                     * librespot's own words, on the phone.
-                     *
-                     * Sending somebody to `adb logcat` is sending them to
-                     * find a computer, and the lines that explain a failed
-                     * sign-in belong on the handset that failed.
-                     */
-                    val said = SpotifyAccount.lastOutput()
-                        .filter { it.isNotBlank() }
-                        .takeLast(4)
-                        .joinToString("\n")
+            /*
+             * Success says nothing, and that is the point.
+             *
+             * A card announcing the sign-in worked was made redundant the
+             * moment the cast point became a standing indicator: the lamp
+             * appears, carrying the name, and goes on saying so for as
+             * long as it is true. Following that with a sentence saying
+             * the same thing — and a Dismiss button, so the person has to
+             * put away a message about something that is still the case —
+             * is noise stacked on top of the signal.
+             *
+             * The best confirmation an action can have is the thing it was
+             * supposed to do, visibly having happened.
+             *
+             * Failure is the opposite and keeps its card. Nothing else on
+             * the screen can explain why librespot did not authenticate,
+             * and its own last words are the only evidence there is —
+             * sending somebody to `adb logcat` is sending them to find a
+             * computer.
+             */
+            if (ok) {
+                refreshCastPoint(context)
+            } else {
+                val said = SpotifyAccount.lastOutput()
+                    .filter { it.isNotBlank() }
+                    .takeLast(4)
+                    .joinToString("\n")
+                warn(
                     "Sign-in did not finish." +
                         if (said.isNotEmpty()) "\n\nlibrespot said:\n$said" else ""
-                }
-            )
+                )
+            }
         }
     }
 
