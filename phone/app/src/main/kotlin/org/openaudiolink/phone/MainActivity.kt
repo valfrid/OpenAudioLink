@@ -11,6 +11,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -969,14 +970,28 @@ private fun SourceTile(
      * the one tile you could not open. Opening a panel is safe at any
      * moment; it is the button inside that knows when it cannot act.
      */
+    /*
+     * Selected is a border, not a fill, and the fill is why.
+     *
+     * This used to swap the container to `secondaryContainer`, which the
+     * theme maps to `Oal.Panel2` — and so does `surfaceVariant`, while a
+     * Card's own default container is derived a shade lighter. So the
+     * *selected* tile came out darker than the three beside it, which
+     * reads as disabled rather than chosen: the one tile being looked at
+     * was the one that appeared switched off.
+     *
+     * A border in the accent settles it without depending on which of two
+     * greys is lighter, and it is legible from across a room, which a
+     * three-percent difference in fill is not. The theme is dark only, so
+     * there is no second scheme for this to be wrong in.
+     */
     Card(
         modifier.clickable(onClick = onClick),
-        colors = if (selected) {
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            )
+        colors = CardDefaults.cardColors(),
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
         } else {
-            CardDefaults.cardColors()
+            null
         },
     ) {
         Column(
