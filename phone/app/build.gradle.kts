@@ -43,8 +43,8 @@ android {
         applicationId = "se.valfrid.openaudiolink"
         minSdk = 26          // AudioTrack float output, notification channels
         targetSdk = 35
-        versionCode = 46
-        versionName = "0.14.1"
+        versionCode = 47
+        versionName = "0.14.2"
     }
 
     /*

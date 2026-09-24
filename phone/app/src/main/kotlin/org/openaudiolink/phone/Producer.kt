@@ -1200,14 +1200,27 @@ object Producer {
     }
 
     /**
-     * Hands the stream to Spotify, which is the cast point's way back in.
+     * The Stop button, which had to learn about the cast point.
      *
-     * The tile's Play button and the automatic take-back both land here,
-     * so there is one path and it cannot get out of step with itself.
+     * `stopStream()` releases the stream, and for anything this device
+     * produces that is the whole of stopping. For a cast it was not even
+     * close: the watcher would see a cast still in progress a second
+     * later, find that nothing held the stream, and hand it straight back.
+     * Stop appeared to do nothing at all.
+     *
+     * So stopping a cast ejects it — librespot restarts and whoever was
+     * casting is dropped cleanly — and the guard window keeps them from
+     * transferring straight back onto a device that has just reappeared.
+     * The cast point returns unclaimed a second later, still in the list,
+     * which is what the switch is for if somebody wants it gone for good.
+     *
+     * Everything else stops the way it always did.
      */
-    fun playSpotify(context: Context) {
-        refreshCastPoint(context)
-        castPoint?.let { startStream(it) }
+    fun stopPlayback() {
+        if (source === castPoint && castPoint != null) {
+            ejectCast("stopped at the panel")
+        }
+        stopStream()
     }
 
     /**

@@ -288,16 +288,20 @@ private fun Screen(modifier: Modifier = Modifier, onPickTrack: () -> Unit) {
         Sources(
             state = state,
             onPickTrack = onPickTrack,
-            onSpotify = {
-                if (state.spotifySignedIn) {
-                    Producer.playSpotify(context)
-                } else {
-                    Producer.signInToSpotify(context, state.castName) { url ->
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
+            /*
+             * Signing in is the only thing Spotify needs a button for.
+             *
+             * Once an account is attached the cast point publishes itself
+             * and stays published; after that, playing is something done
+             * in Spotify on whichever phone has the music, and this screen
+             * only reports it.
+             */
+            onSignIn = {
+                Producer.signInToSpotify(context, state.castName) { url ->
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
                 }
             },
         )
@@ -568,7 +572,7 @@ private fun NowPlaying(state: Producer.State) {
                 )
             }
 
-            Button(onClick = { Producer.stopStream() }) { Text("Stop") }
+            Button(onClick = { Producer.stopPlayback() }) { Text("Stop") }
         }
     }
 }
@@ -680,7 +684,7 @@ private fun Panel?.toggle(tapped: Panel): Panel? = if (this == tapped) null else
  * else is actually started.
  */
 @Composable
-private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: () -> Unit) {
+private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSignIn: () -> Unit) {
     var panel by remember { mutableStateOf<Panel?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -777,7 +781,7 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
          * Exactly one, or none. A `when` on one value cannot draw two.
          */
         when (panel) {
-            Panel.SPOTIFY -> Spotify(state, onSpotify)
+            Panel.SPOTIFY -> Spotify(state, onSignIn)
             Panel.FILE -> Tracks(state, onPickTrack)
             Panel.RADIO -> Stations(state)
             Panel.VINYL -> Vinyl(state)
@@ -794,7 +798,7 @@ private fun Sources(state: Producer.State, onPickTrack: () -> Unit, onSpotify: (
  * appeared with nothing tying it to the tile it belonged to.
  */
 @Composable
-private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
+private fun Spotify(state: Producer.State, onSignIn: () -> Unit) {
     val context = LocalContext.current
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -805,7 +809,7 @@ private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
                     "on a free account.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = onSpotify, enabled = !state.signingIn) { Text("Sign in") }
+            Button(onClick = onSignIn, enabled = !state.signingIn) { Text("Sign in") }
 
             if (state.signingIn) {
                 Text(
@@ -872,14 +876,20 @@ private fun Spotify(state: Producer.State, onSpotify: () -> Unit) {
         }
 
         /*
-         * A way to take it back by hand, for the case the automatic one
-         * deliberately refuses: for a few seconds after somebody chooses
-         * something at the panel, an arriving cast is ignored so the two
-         * ends cannot fight over the speakers.
+         * No Play button, deliberately.
+         *
+         * There was one, to override the few seconds after a choice at the
+         * panel during which an arriving cast is ignored. It was answering
+         * a question nobody asks: with the cast point published, playing
+         * Spotify here is something you do *in Spotify*, on whichever
+         * phone has the music. Pressing a button on the tablet when nobody
+         * is casting merely opens a stream that sends silence — the
+         * "publish and wait" state the sticky cast point exists to abolish.
+         *
+         * And the case it was for resolves itself: the watcher re-checks
+         * every second, so a cast that arrives inside the guard window is
+         * picked up as soon as the window closes.
          */
-        if (state.castPointUp && state.sourceLabel?.startsWith("Spotify") != true) {
-            Button(onClick = onSpotify) { Text("Play Spotify here now") }
-        }
     }
 }
 
