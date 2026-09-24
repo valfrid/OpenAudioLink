@@ -1456,6 +1456,13 @@ private fun SourceCard(source: Producer.Speaker, enabled: Boolean) {
             Icon(Glyphs.Vinyl, contentDescription = null, modifier = Modifier.size(28.dp))
             Column(Modifier.weight(1f)) {
                 Text(source.name, style = MaterialTheme.typography.titleMedium)
+                source.fw.takeIf { it.isNotBlank() }?.let { version ->
+                    Text(
+                        "v$version",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     "Makes its own sound. This device only says where it goes.",
                     style = MaterialTheme.typography.bodySmall,
@@ -1483,6 +1490,25 @@ private fun SpeakerCard(speaker: Producer.Speaker) {
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(speaker.name, style = MaterialTheme.typography.titleMedium)
+                    /*
+                     * The firmware, under the name, exactly as this app
+                     * prints its own version under its own name.
+                     *
+                     * Two reasons beyond symmetry. A house accumulates
+                     * nodes flashed at different times and there is
+                     * otherwise nowhere to see which is behind. And
+                     * `protocol/OTA.md` warns that an update to the
+                     * version already installed completes, reboots and
+                     * changes nothing — which cannot be told from a
+                     * successful update unless the version is on screen.
+                     */
+                    speaker.fw.takeIf { it.isNotBlank() }?.let { version ->
+                        Text(
+                            "v$version",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (!speaker.online) {
                         /*
                          * Still ticked, still being sent to, and said so.

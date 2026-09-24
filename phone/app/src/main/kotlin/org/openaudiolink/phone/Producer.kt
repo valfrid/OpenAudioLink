@@ -74,6 +74,20 @@ object Producer {
          */
         val answered: Boolean = false,
         /**
+         * What firmware it is running, straight from its announce.
+         *
+         * Carried rather than derived, and shown on the card, because the
+         * failure it guards against is silent: `protocol/OTA.md` records
+         * that installing an image carrying the version already running
+         * completes normally, reboots, and leaves the device reporting
+         * exactly what it reported before — indistinguishable from an
+         * update that did nothing, unless the version is on screen.
+         *
+         * It has been in every announce since the protocol had a `fw`
+         * field. It was simply thrown away here.
+         */
+        val fw: String = "",
+        /**
          * Whether anything has been heard from it lately.
          *
          * A ticked speaker that goes quiet stays on the list, marked, and
@@ -706,6 +720,7 @@ object Producer {
                 controlPort = peer.controlPort,
                 canReceiveAudio = peer.announce.canReceiveAudio,
                 canBeToldToPlay = peer.announce.canBeToldToPlay,
+                fw = peer.announce.fw,
                 selected = peer.id in chosen,
                 volume = existing?.volume ?: -1,
                 roomCorrection = existing?.roomCorrection ?: false,
