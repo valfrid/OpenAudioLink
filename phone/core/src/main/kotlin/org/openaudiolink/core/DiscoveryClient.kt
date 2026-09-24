@@ -21,7 +21,7 @@ import java.net.NetworkInterface
  * one part of this that is not portable.
  */
 class DiscoveryClient(
-    private val self: Announce?,
+    self: Announce?,
     private val networkInterface: NetworkInterface? = null,
     private val table: PeerTable = PeerTable(),
     private val clock: () -> Long = { System.currentTimeMillis() },
@@ -35,6 +35,26 @@ class DiscoveryClient(
      */
     private val bindSocket: ((MulticastSocket) -> Unit)? = null,
 ) {
+    /**
+     * What this device says it is — and it can change while running.
+     *
+     * It used to be a constructor `val`, captured once when the client was
+     * built. On the phone that is the moment the service starts, so the
+     * name a device advertised was the name it had at launch and nothing
+     * could alter it: renaming the cast point updated the preference, the
+     * screen and librespot, and this went on telling the whole network the
+     * old one until the app was restarted. The Hub and every other phone
+     * kept showing the previous name, which reads as a rename that did not
+     * take.
+     *
+     * Volatile because the announcing thread reads it and the caller
+     * writes it from wherever a person pressed Rename. Only the *name* is
+     * ever expected to change; the id must not, since every peer table on
+     * the network keys this device on it.
+     */
+    @Volatile
+    var self: Announce? = self
+
     /** Called when the visible set changed in a way worth redrawing. */
     var onChange: (() -> Unit)? = null
 
@@ -209,9 +229,22 @@ class DiscoveryClient(
     }
 
     private fun announce(open: MulticastSocket, group: InetAddress) {
-        val message = self ?: return
-        val payload = Discovery.encode(message).toByteArray(Charsets.UTF_8)
+        if (self == null) return
         while (running) {
+            /*
+             * Encoded every time round, not once before the loop.
+             *
+             * Making [self] mutable achieves nothing on its own: this used
+             * to build the payload once and then send that same array
+             * every five seconds for the life of the process, so a rename
+             * would have updated the field and changed nothing that went
+             * out on the wire. Two halves of one bug, and fixing either
+             * alone leaves it.
+             *
+             * It is a few hundred bytes of JSON once per five seconds.
+             */
+            val message = self ?: return
+            val payload = Discovery.encode(message).toByteArray(Charsets.UTF_8)
             try {
                 open.send(DatagramPacket(payload, payload.size, group, Discovery.PORT))
                 announcesSent++

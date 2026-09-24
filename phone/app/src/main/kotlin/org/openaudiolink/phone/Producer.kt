@@ -1095,8 +1095,31 @@ object Producer {
      */
     fun setCastName(context: Context, name: String) {
         Prefs.setCastName(context, name)
-        _state.update { it.copy(castName = Prefs.castName(context)) }
-        // The name is a process argument, so a rename is a new cast point.
+        val renamed = Prefs.castName(context)
+        _state.update { it.copy(castName = renamed) }
+
+        /*
+         * The announce, which used to be the one place a rename did not
+         * reach.
+         *
+         * `ProducerService` builds an `Announce` once and hands it to
+         * `attach`, so the name this phone puts on the network was the one
+         * it had when the service started. Renaming updated the
+         * preference, the screen and librespot, and left every other
+         * device on the network — the Hub included — showing the old name
+         * until the app was restarted. From outside, a rename that did not
+         * take.
+         *
+         * The id is deliberately untouched. Every peer table out there
+         * keys this device on it, and changing it would make the rename
+         * look like a new device arriving beside a ghost of the old one.
+         */
+        discovery?.let { client ->
+            client.self = client.self?.copy(name = renamed)
+        }
+
+        // The name is a process argument to librespot, so a rename is a
+        // new cast point rather than a running one told otherwise.
         refreshCastPoint(context)
     }
 
