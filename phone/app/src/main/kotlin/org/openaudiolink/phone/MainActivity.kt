@@ -30,6 +30,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -1322,6 +1324,7 @@ private fun SourceCard(source: Producer.Speaker, enabled: Boolean) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SpeakerCard(speaker: Producer.Speaker) {
     Card(Modifier.fillMaxWidth()) {
@@ -1366,38 +1369,79 @@ private fun SpeakerCard(speaker: Producer.Speaker) {
                 }
             }
 
-            if (speaker.hasVolume) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Slider(
-                        value = speaker.volume.toFloat(),
-                        onValueChange = { Producer.setVolume(speaker.id, it.roundToInt()) },
-                        valueRange = 0f..100f,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.size(8.dp))
-                    Text("${speaker.volume}", style = MaterialTheme.typography.bodySmall)
-                }
-            } else if (speaker.volumeUnsupported) {
-                // Firmware older than 0.11.0 has no volume at all, and a
-                // slider at zero would be a lie about a speaker playing
-                // perfectly well.
-                Text(
-                    "This speaker's firmware has no volume control",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+            /*
+             * Volume and room correction on one line, not two.
+             *
+             * Room correction used to have a row of its own: the words on
+             * the far left, a full-size Switch on the far right, and on a
+             * 1340 px tablet a thousand pixels of nothing between them.
+             * That gave it the same visual weight as the volume — and a
+             * switch on its own row reads as a setting somebody is
+             * expected to decide, when it is an occasional per-speaker
+             * preference that is usually just left alone.
+             *
+             * A chip is the right shape for that: compact, optional by
+             * convention, and it takes the space at the end of the volume
+             * line that was empty anyway. It also takes a row off every
+             * speaker card, which is worth having on a screen that has to
+             * be scrolled to reach the sources.
+             */
+            if (speaker.hasVolume || speaker.volumeUnsupported || !speaker.unreachable) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (speaker.hasVolume) {
+                        Slider(
+                            value = speaker.volume.toFloat(),
+                            onValueChange = { Producer.setVolume(speaker.id, it.roundToInt()) },
+                            valueRange = 0f..100f,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text("${speaker.volume}", style = MaterialTheme.typography.bodySmall)
+                    } else if (speaker.volumeUnsupported) {
+                        // Firmware older than 0.11.0 has no volume at all,
+                        // and a slider at zero would be a lie about a
+                        // speaker playing perfectly well.
+                        Text(
+                            "This speaker's firmware has no volume control",
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
 
-            if (!speaker.unreachable) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Room correction",
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Switch(
-                        checked = speaker.roomCorrection,
-                        onCheckedChange = { Producer.setRoomCorrection(speaker.id, it) },
-                    )
+                    if (!speaker.unreachable) {
+                        /*
+                         * The state is in the words as well as in the fill.
+                         *
+                         * A selected chip differs from an unselected one by
+                         * container colour, and in dark mode that
+                         * difference is slight — the same weakness the
+                         * selected source tile has. A panel on a wall is
+                         * read from across a room and at a glance, so the
+                         * label says which way it is set rather than
+                         * leaving it to a shade of grey.
+                         */
+                        FilterChip(
+                            selected = speaker.roomCorrection,
+                            onClick = {
+                                Producer.setRoomCorrection(
+                                    speaker.id, !speaker.roomCorrection
+                                )
+                            },
+                            label = {
+                                Text(
+                                    if (speaker.roomCorrection) {
+                                        "Room correction on"
+                                    } else {
+                                        "Room correction off"
+                                    }
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
