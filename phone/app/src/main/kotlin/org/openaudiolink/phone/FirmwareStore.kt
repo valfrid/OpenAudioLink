@@ -29,12 +29,19 @@ object FirmwareStore {
     private const val TAG = "oal.firmware"
 
     /**
-     * Where CI publishes. The rolling `hub-latest` release is republished
-     * on every build of the default branch, so "latest" is genuinely the
-     * newest image rather than the newest tagged one.
+     * Every release, because the firmware is not in the "latest" one.
+     *
+     * `/releases/latest` was the first attempt and it fails here for a
+     * reason specific to how this project publishes: CI writes the rolling
+     * build to `hub-latest` with `prerelease: true`, and that endpoint
+     * skips prereleases. It answered with a librespot release — a real
+     * release carrying no firmware — so the check reported "no image
+     * published" while the image sat in a release the query had declined
+     * to look at. [Firmware.parseReleases] picks by version across the
+     * whole list instead.
      */
-    private const val LATEST =
-        "https://api.github.com/repos/valfrid/OpenAudioLink/releases/latest"
+    private const val RELEASES =
+        "https://api.github.com/repos/valfrid/OpenAudioLink/releases?per_page=30"
 
     /** What a check found, and whether it can be installed. */
     data class Available(
@@ -53,13 +60,29 @@ object FirmwareStore {
         File(context.filesDir, "firmware").apply { mkdirs() }
 
     /**
-     * Asks GitHub what the newest image is. Network call; not for the main
-     * thread.
+     * What a check came back with.
+     *
+     * Three outcomes rather than a nullable, because the first version
+     * collapsed two of them into one message — "Could not reach GitHub, or
+     * it published no image" — and when it appeared there was no way to
+     * tell a tablet with no internet from a query looking in the wrong
+     * place. It was the second, and the sentence that should have
+     * distinguished them was the sentence hiding it.
      */
-    fun check(): Available? {
-        val release = Firmware.parseRelease(fetchText(LATEST)) ?: return null
+    sealed interface Outcome {
+        data class Found(val available: Available) : Outcome
+        /** Nothing answered: no network, or GitHub refused. */
+        data object Unreachable : Outcome
+        /** GitHub answered, and no release holds a firmware image. */
+        data object NoImage : Outcome
+    }
+
+    /** Asks GitHub what is published. Network call; not for the main thread. */
+    fun check(): Outcome {
+        val body = fetchText(RELEASES) ?: return Outcome.Unreachable
+        val release = Firmware.parseReleases(body) ?: return Outcome.NoImage
         val sums = release.checksumUrl?.let { fetchText(it) }
-        return Available(release, Firmware.sha256For(sums, release.imageName))
+        return Outcome.Found(Available(release, Firmware.sha256For(sums, release.imageName)))
     }
 
     /**

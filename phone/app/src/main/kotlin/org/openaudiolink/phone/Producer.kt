@@ -1323,16 +1323,22 @@ object Producer {
         _state.update { it.copy(firmwareBusy = true, firmwareStatus = "Asking GitHub…") }
 
         scope.launch {
-            val found = FirmwareStore.check()
-            if (found == null) {
+            val outcome = FirmwareStore.check()
+            if (outcome !is FirmwareStore.Outcome.Found) {
                 _state.update {
                     it.copy(
                         firmwareBusy = false,
-                        firmwareStatus = "Could not reach GitHub, or it published no image.",
+                        firmwareStatus = when (outcome) {
+                            FirmwareStore.Outcome.Unreachable ->
+                                "Could not reach GitHub. Is this device online?"
+                            else ->
+                                "GitHub answered, but no release holds a firmware image."
+                        },
                     )
                 }
                 return@launch
             }
+            val found = outcome.available
 
             val behind = _state.value.speakers.count {
                 Firmware.isNewer(found.release.version, it.fw)
@@ -1373,7 +1379,8 @@ object Producer {
         _state.update { it.copy(firmwareBusy = true, firmwareStatus = "Fetching the image…") }
 
         scope.launch {
-            val found = FirmwareStore.check()
+            val outcome = FirmwareStore.check()
+            val found = (outcome as? FirmwareStore.Outcome.Found)?.available
             if (found == null || !found.installable) {
                 _state.update {
                     it.copy(

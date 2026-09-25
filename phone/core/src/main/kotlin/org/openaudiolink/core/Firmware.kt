@@ -1,6 +1,7 @@
 package org.openaudiolink.core
 
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -75,6 +76,10 @@ object Firmware {
             return null
         }
 
+        return firmwareIn(release)
+    }
+
+    private fun firmwareIn(release: Release): FirmwareRelease? {
         val image = release.assets.firstNotNullOfOrNull { asset ->
             OTA_IMAGE.find(asset.name)?.let { match -> asset to match.groupValues[1] }
         } ?: return null
@@ -90,6 +95,40 @@ object Firmware {
                 .firstOrNull { it.name == "testnode-esp32s3-$version.sha256" }
                 ?.url,
         )
+    }
+
+    /**
+     * The newest firmware among a list of releases.
+     *
+     * **Not "the newest release", which is wrong twice over here.**
+     *
+     * `/releases/latest` was the obvious endpoint and it does not work:
+     * CI publishes the rolling build as `hub-latest` with
+     * `prerelease: true`, and that endpoint skips prereleases. It returned
+     * a librespot release instead — a real release with no firmware in it
+     * — so an update check reported "no image published" while the image
+     * sat in a release the query had declined to look at.
+     *
+     * Sorting the full list by date fails differently. `hub-latest` is
+     * republished in place, so its `created_at` stays at whenever it was
+     * first made while its contents are from the most recent build: a
+     * release created in August carrying an image built today, ranked
+     * below releases from September that hold no firmware at all.
+     *
+     * So neither recency nor rank decides it. The version in the file name
+     * does, which is the only thing here that describes the firmware
+     * rather than the release wrapped around it.
+     */
+    fun parseReleases(body: String?): FirmwareRelease? {
+        if (body.isNullOrBlank()) return null
+        val releases = try {
+            json.decodeFromString(ListSerializer(Release.serializer()), body)
+        } catch (_: Exception) {
+            return null
+        }
+        return releases
+            .mapNotNull { firmwareIn(it) }
+            .maxWithOrNull { a, b -> if (isNewer(a.version, b.version)) 1 else -1 }
     }
 
     /**
