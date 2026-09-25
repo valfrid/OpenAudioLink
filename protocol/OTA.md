@@ -91,14 +91,26 @@ That is why this document says "over HTTP" and means it.
 Closing it is small: enable the certificate bundle and attach it. Two
 things to test rather than assume before relying on it:
 
-- **Redirects.** GitHub sends release downloads to
-  `objects.githubusercontent.com`, so the fetch is cross-host and lands on
-  a different certificate than the one first presented.
+- **Redirects.** GitHub answers a release download with a 302 to a
+  different host, so the fetch is cross-host and lands on a certificate
+  other than the one first presented. Measured 2026-09-25: the target is
+  `release-assets.githubusercontent.com` with a signed, expiring query
+  string — this document previously named `objects.githubusercontent.com`,
+  which GitHub has since changed. Nothing should match on that hostname;
+  it is evidence that the hop exists, not a value to depend on.
 - **Memory.** A TLS handshake wants tens of kilobytes, and the OTA path
   already carries a note about `esp_https_ota` allocating from the pool
   that leaves a node unable to be updated when it is short.
 
-What it would buy is worth the work: the Hub would stop needing to be a
+The phone app takes the other route and does not need either: it fetches
+over HTTPS itself, verifies the image against the `.sha256` published
+beside it, and serves the bytes to nodes over plain HTTP from the address
+discovery already announces from. That puts a real integrity check in the
+path without any firmware change, which is something the direct route
+cannot do until a device can verify an image itself. See
+`docs/PHONE-APP.md`.
+
+What the direct route would buy is still worth the work: the Hub would stop needing to be a
 file host, a phone or any other Controller could drive an update without
 serving anything itself, and an image would be fetched from the same
 place CI published it rather than from a copy somebody uploaded by hand.
