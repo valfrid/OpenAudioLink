@@ -60,6 +60,22 @@ class NodeClient(
 
     fun stopStream(): Boolean = post("/stream/stop", "{}")
 
+    /**
+     * Tells the node to fetch and install an image.
+     *
+     * One request and then nothing: `protocol/OTA.md` says the device
+     * answers `accepted` and does the work asynchronously, so a true here
+     * means the node took the instruction, not that it updated. What
+     * reports the outcome is the version in its next announce — which is
+     * why the cards show it.
+     *
+     * **Plain HTTP, and that is the device's limit rather than a
+     * preference.** `ota_task()` calls `esp_https_ota()` with no
+     * certificate bundle compiled in, so there is nothing to verify a
+     * server against. Whoever calls this must serve the image over http.
+     */
+    fun ota(url: String): Boolean = post("/ota", Control.ota(url))
+
     /** Adding or removing a speaker mid-song, without interrupting it. */
     fun changeDestinations(add: List<String> = emptyList(),
                            remove: List<String> = emptyList()): Boolean =
@@ -117,6 +133,8 @@ object Requests {
 
     fun roomCorrection(enabled: Boolean): String = """{"eqEnabled":$enabled}"""
 
+    fun ota(url: String): String = """{"url":${quote(url)}}"""
+
     fun streamStart(destinations: List<String>, source: String): String {
         require(destinations.isNotEmpty()) { "a stream needs somewhere to go" }
         return """{"destinations":${quoted(destinations)},""" +
@@ -139,4 +157,18 @@ object Requests {
 
     private fun quoted(values: List<String>): String =
         values.joinToString(",", "[", "]") { "\"$it\"" }
+
+    /**
+     * One string, escaped enough for the two characters that matter.
+     *
+     * The other values this builder handles are device ids and numbers,
+     * which cannot contain either. A URL can: the image is served from an
+     * address and a path this app composes, so a backslash is impossible
+     * and a quote would have to be deliberate — but writing a JSON string
+     * by concatenation without escaping anything is how a builder becomes
+     * an injection point later, when somebody passes it something that
+     * did not come from here.
+     */
+    private fun quote(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
