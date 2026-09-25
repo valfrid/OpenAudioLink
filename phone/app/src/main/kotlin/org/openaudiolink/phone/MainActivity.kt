@@ -1251,6 +1251,44 @@ private fun Settings(state: Producer.State) {
         }
 
         /*
+         * Firmware, in the admin drawer with the tone and the counters.
+         *
+         * Two buttons and a line of text, deliberately. The interesting
+         * output of an update is not here at all — it is the version under
+         * each speaker's name changing a minute later, which is the only
+         * evidence that an image was actually installed rather than
+         * merely offered.
+         */
+        Spacer(Modifier.height(4.dp))
+        Text("Firmware", style = MaterialTheme.typography.titleSmall)
+        Text(
+            state.firmwareStatus
+                ?: "Checks what CI has published and offers it to any device that " +
+                    "is behind. The image is verified against its SHA256 on this " +
+                    "device before any speaker is told about it.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { Producer.checkFirmware() },
+                enabled = !state.firmwareBusy,
+            ) { Text("Check") }
+            Button(
+                onClick = { Producer.updateFirmware(context) },
+                /*
+                 * Only offered once a check has found something newer than
+                 * something. Updating to a version already installed
+                 * completes, reboots and changes nothing — the silent
+                 * no-op protocol/OTA.md warns about — so the button does
+                 * not exist until there is a reason to press it.
+                 */
+                enabled = !state.firmwareBusy && state.speakers.any {
+                    org.openaudiolink.core.Firmware.isNewer(state.firmwareLatest, it.fw)
+                },
+            ) { Text("Update devices") }
+        }
+
+        /*
          * The test tone, out of the tiles and in here.
          *
          * It was a quarter of the screen's "what would you like to hear",

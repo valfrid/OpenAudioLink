@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.openaudiolink.core.Announce
 import org.openaudiolink.core.Discovery
 import org.openaudiolink.core.DiscoveryClient
+import org.openaudiolink.core.Firmware
 import org.openaudiolink.core.NodeClient
 import org.openaudiolink.core.NowPlaying
 import org.openaudiolink.core.PcmRing
@@ -226,6 +227,19 @@ object Producer {
         val castPointCasting: Boolean = false,
         /** The sticky switch — see [Prefs.castPoint]. */
         val castPointOn: Boolean = true,
+        /**
+         * The newest firmware CI has published, once somebody has asked.
+         *
+         * Null until a check runs. Deliberately not checked on launch: an
+         * app that phones a release server every time it starts is doing
+         * something the person did not ask for, on a device that is
+         * mounted on a wall and never closed.
+         */
+        val firmwareLatest: String? = null,
+        /** Set while a check or an update is in flight. */
+        val firmwareBusy: Boolean = false,
+        /** The last thing the firmware machinery has to say, for the screen. */
+        val firmwareStatus: String? = null,
         /** Set while the one-time sign-in is waiting for the browser. */
         val signingIn: Boolean = false,
         /** Something a person needs to be told, in their own words. */
@@ -1295,6 +1309,172 @@ object Producer {
         _state.update { it.copy(stations = updated) }
     }
 
+    /* ---------- firmware ---------- */
+
+    /**
+     * Asks what the newest published image is, and says who is behind.
+     *
+     * A button rather than a schedule. The Hub checks nothing on its own
+     * either, and a wall panel quietly contacting a release server every
+     * few hours is a behaviour somebody should have to choose.
+     */
+    fun checkFirmware() {
+        if (_state.value.firmwareBusy) return
+        _state.update { it.copy(firmwareBusy = true, firmwareStatus = "Asking GitHub…") }
+
+        scope.launch {
+            val found = FirmwareStore.check()
+            if (found == null) {
+                _state.update {
+                    it.copy(
+                        firmwareBusy = false,
+                        firmwareStatus = "Could not reach GitHub, or it published no image.",
+                    )
+                }
+                return@launch
+            }
+
+            val behind = _state.value.speakers.count {
+                Firmware.isNewer(found.release.version, it.fw)
+            }
+            _state.update {
+                it.copy(
+                    firmwareBusy = false,
+                    firmwareLatest = found.release.version,
+                    firmwareStatus = when {
+                        !found.installable ->
+                            "${found.release.version} is published but has no SHA256 " +
+                                "beside it, so it will not be installed."
+                        behind == 0 -> "Everything is on ${found.release.version}."
+                        behind == 1 -> "1 device can go to ${found.release.version}."
+                        else -> "$behind devices can go to ${found.release.version}."
+                    },
+                )
+            }
+        }
+    }
+
+    /**
+     * Downloads the image, serves it, and tells every node that is behind.
+     *
+     * The whole two-step in one function, and the order matters: nothing
+     * is offered to a node until the hash has been checked, and the server
+     * is stopped again once the nodes have had their chance at it.
+     *
+     * Verification of *installation* is not here and cannot be: the node
+     * answers `accepted` and works on its own. What reports the outcome is
+     * the version in its next announce, which the cards show — so a
+     * successful update appears as the number under a speaker's name
+     * changing, a minute or so later.
+     */
+    fun updateFirmware(context: Context) {
+        if (_state.value.firmwareBusy) return
+        val app = context.applicationContext
+        _state.update { it.copy(firmwareBusy = true, firmwareStatus = "Fetching the image…") }
+
+        scope.launch {
+            val found = FirmwareStore.check()
+            if (found == null || !found.installable) {
+                _state.update {
+                    it.copy(
+                        firmwareBusy = false,
+                        firmwareStatus = "No image with a published SHA256 to install.",
+                    )
+                }
+                return@launch
+            }
+
+            val image = FirmwareStore.download(app, found)
+            if (image == null) {
+                _state.update {
+                    it.copy(
+                        firmwareBusy = false,
+                        firmwareStatus = "The download did not match its SHA256, " +
+                            "so nothing was offered to any device.",
+                    )
+                }
+                return@launch
+            }
+
+            /*
+             * The address a node can actually reach.
+             *
+             * protocol/OTA.md warns that a Controller must advertise an
+             * address on the device's own network, and that a host with a
+             * VPN or a Docker bridge often prefers one that is not. A
+             * tablet bound to one Wi-Fi network does not have that
+             * problem, and this is the same address discovery announces
+             * from — so if a node can hear us at all, it can fetch from
+             * here.
+             */
+            val host = binding?.localAddress()
+            if (host == null) {
+                _state.update {
+                    it.copy(
+                        firmwareBusy = false,
+                        firmwareStatus = "No Wi-Fi address to serve the image from.",
+                    )
+                }
+                return@launch
+            }
+
+            val server = FirmwareServer(image)
+            val port = server.start()
+            if (port == null) {
+                _state.update {
+                    it.copy(firmwareBusy = false, firmwareStatus = "Could not open a port.")
+                }
+                return@launch
+            }
+
+            val url = "http://$host:$port/${image.name}"
+            val behind = _state.value.speakers.filter {
+                Firmware.isNewer(found.release.version, it.fw)
+            }
+
+            var told = 0
+            for (node in behind) {
+                _state.update {
+                    it.copy(firmwareStatus = "Telling ${node.name} to update…")
+                }
+                if (client(node).ota(url)) told++
+            }
+
+            /*
+             * Held open afterwards, because the POST returns before the
+             * fetch begins. A server closed the moment the last node was
+             * told would be closed before the first one connected.
+             */
+            _state.update {
+                it.copy(
+                    firmwareStatus = if (told == 0) {
+                        "No device took the instruction."
+                    } else {
+                        "$told told to fetch ${found.release.version}. " +
+                            "Watch the version under each name."
+                    },
+                )
+            }
+            delay(FIRMWARE_SERVE_MS)
+            Log.i(TAG, "firmware server fetched by ${server.served} device(s)")
+            server.stop()
+
+            _state.update {
+                it.copy(
+                    firmwareBusy = false,
+                    firmwareStatus = when {
+                        told == 0 -> "No device took the instruction."
+                        server.served == 0 ->
+                            "$told device(s) were told, but none fetched the image. " +
+                                "They may be on a different subnet from this device."
+                        else -> "${server.served} device(s) fetched it. " +
+                            "Each reboots and announces its new version."
+                    },
+                )
+            }
+        }
+    }
+
     /* ---------- files from this phone ---------- */
 
     /**
@@ -1393,6 +1573,16 @@ private const val PROBE_INTERVAL_MS = 5_000L
  * genuinely wants to cast a moment later is not refused.
  */
 private const val CAST_GRACE_MS = 8_000L
+
+/**
+ * How long the image stays on offer after the last node has been told.
+ *
+ * The POST returns before the node has begun fetching — it answers
+ * `accepted` and works asynchronously — so a server closed when the last
+ * instruction went out would be closed before the first device connected.
+ * Long enough for several nodes to each pull a megabyte or so over Wi-Fi.
+ */
+private const val FIRMWARE_SERVE_MS = 120_000L
 
 /** How soon a cast point that went down is put back, and the ceiling. */
 private const val CAST_RETRY_MIN_MS = 3_000L
