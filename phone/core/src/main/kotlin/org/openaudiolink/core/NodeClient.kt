@@ -74,7 +74,7 @@ class NodeClient(
      * certificate bundle compiled in, so there is nothing to verify a
      * server against. Whoever calls this must serve the image over http.
      */
-    fun ota(url: String): Boolean = post("/ota", Control.ota(url))
+    fun ota(url: String): Boolean = post("/ota", Requests.ota(url))
 
     /** Adding or removing a speaker mid-song, without interrupting it. */
     fun changeDestinations(add: List<String> = emptyList(),
