@@ -306,7 +306,18 @@ class SpotifySource(
              * costs this sleep and nothing else.
              */
             if (sink == null) {
-                Thread.sleep(20)
+                /*
+                 * A quarter of a second, not twenty milliseconds.
+                 *
+                 * The first version slept 20 ms, which is fifty wakeups a
+                 * second on a thread with nothing to do — and the cast
+                 * point is idle nearly all the time, so that was the
+                 * app's steady state. Nothing here is latency-sensitive:
+                 * a cast is noticed on librespot's stderr, not by this
+                 * loop, so the only thing the interval decides is how
+                 * quickly reading resumes once the stream is already ours.
+                 */
+                Thread.sleep(250)
                 continue
             }
 

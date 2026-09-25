@@ -532,6 +532,9 @@ object Producer {
         rtp.start()
         sender = rtp
 
+        // Power save off for the duration, and not a moment longer.
+        wifi.holdHighPerformance(true)
+
         newSource.start(ring)
         source = newSource
 
@@ -556,6 +559,7 @@ object Producer {
         source = null
         sender?.stop()
         sender = null
+        binding?.holdHighPerformance(false)
         _state.update {
             it.copy(
                 streaming = false,

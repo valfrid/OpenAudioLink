@@ -231,6 +231,14 @@ class WifiBinding(context: Context) {
         }
     }
 
+    /**
+     * The multicast lock, which has to be held whenever discovery runs.
+     *
+     * Without it the radio filters multicast frames before any socket sees
+     * them and nothing is ever found — one of the three Android faults
+     * that produce no error anywhere. It is cheap: it stops a filter, it
+     * does not stop power save.
+     */
     fun acquireLocks() {
         if (multicastLock == null) {
             multicastLock = wifi.createMulticastLock("oal-discovery").apply {
@@ -238,12 +246,39 @@ class WifiBinding(context: Context) {
                 acquire()
             }
         }
-        if (wifiLock == null) {
-            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "oal-audio")
-                .apply {
-                    setReferenceCounted(false)
-                    acquire()
-                }
+    }
+
+    /**
+     * Wi-Fi power save off, and **only while audio is actually flowing**.
+     *
+     * `WIFI_MODE_FULL_HIGH_PERF` keeps the radio out of power save. That
+     * is worth real battery, which is the point: station power save
+     * batches frames into beacon intervals, and a stream of 200 packets a
+     * second wants none of that.
+     *
+     * It used to be taken in `acquireLocks()` beside the multicast lock
+     * and held for the life of the app — so a panel sitting idle all
+     * evening, streaming nothing, kept its radio awake for a stream that
+     * was not happening. On a wall socket that costs nothing worth
+     * measuring; on a tablet somebody picked up, it is the largest
+     * non-screen drain in the app, for no benefit at all.
+     *
+     * Discovery is unaffected. Announces are five seconds apart and a
+     * beacon interval is about a tenth of a second, so power save costs
+     * them nothing that matters — it is only the audio that cares.
+     */
+    fun holdHighPerformance(on: Boolean) {
+        if (on) {
+            if (wifiLock == null) {
+                wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "oal-audio")
+                    .apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+            }
+        } else {
+            wifiLock?.let { if (it.isHeld) it.release() }
+            wifiLock = null
         }
     }
 

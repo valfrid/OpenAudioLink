@@ -268,10 +268,20 @@ class DiscoveryClient(
             } catch (e: Exception) {
                 lastError = "expiring peers: ${e.message}"
             }
-            // Every 5 seconds, as the protocol specifies.
-            for (i in 0 until 50) {
+            /*
+             * Every 5 seconds, as the protocol specifies — counted in
+             * half-seconds rather than tenths.
+             *
+             * The wait is broken up so `stop()` is not left waiting five
+             * seconds for a thread to notice, and the first version used
+             * 100 ms, which is ten wakeups a second spent entirely on
+             * asking whether to stop. On a phone that is a background
+             * thread preventing deeper CPU idle for no work. Half a
+             * second still makes stopping feel immediate.
+             */
+            for (i in 0 until 10) {
                 if (!running) return
-                Thread.sleep(100)
+                Thread.sleep(500)
             }
         }
     }
